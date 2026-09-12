@@ -424,10 +424,7 @@ func excerptKnowledgeSection(section knowledgeSection, terms []string, maxChars 
 
 	start := 0
 	if best > 0 {
-		start = best - maxChars/4
-		if start < 0 {
-			start = 0
-		}
+		start = max(best-maxChars/4, 0)
 	}
 	end := start + maxChars
 	if end > len(text) {
@@ -442,11 +439,4 @@ func excerptKnowledgeSection(section knowledgeSection, terms []string, maxChars 
 		snippet += "\n..."
 	}
 	return snippet
-}
-
-func max(a, b int) int {
-	if a > b {
-		return a
-	}
-	return b
 }

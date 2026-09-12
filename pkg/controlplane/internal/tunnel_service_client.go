@@ -279,17 +279,11 @@ func learnedProxyPollTimeoutFromDisconnect(elapsed, attemptedTimeout, guardrail 
 	if elapsed <= minimumAdaptiveProxyPollMargin || elapsed >= pollDeadline || attemptedTimeout <= minimumAdaptiveProxyPollTimeout {
 		return 0
 	}
-	margin := guardrail
-	if margin < minimumAdaptiveProxyPollMargin {
-		margin = minimumAdaptiveProxyPollMargin
-	}
+	margin := max(guardrail, minimumAdaptiveProxyPollMargin)
 	if halfElapsed := elapsed / 2; margin > halfElapsed {
 		margin = halfElapsed
 	}
-	learned := (elapsed - margin).Truncate(time.Millisecond)
-	if learned < minimumAdaptiveProxyPollTimeout {
-		learned = minimumAdaptiveProxyPollTimeout
-	}
+	learned := max((elapsed - margin).Truncate(time.Millisecond), minimumAdaptiveProxyPollTimeout)
 	if learned >= attemptedTimeout {
 		return 0
 	}

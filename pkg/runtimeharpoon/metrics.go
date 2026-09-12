@@ -186,10 +186,7 @@ func (s *Server) recordCallMetrics(
 	if startedAt.IsZero() {
 		startedAt = time.Now()
 	}
-	latency := time.Since(startedAt)
-	if latency < 0 {
-		latency = 0
-	}
+	latency := max(time.Since(startedAt), 0)
 	s.metrics.recordCall(ctx, label, statusCode, outcome, responseBytes, latency)
 }
 
