@@ -278,11 +278,19 @@ func TestSupervisorMonitorKeepsExitFailureAfterInFlightReadyProbe(t *testing.T) 
 }
 
 func TestSupervisorForcesManagementDiagnosticsOffInChild(t *testing.T) {
-	t.Setenv("TUNNEL_MANAGEMENT_DIAGNOSTICS", "true")
-	t.Setenv("tunnel_management_diagnostics", "1")
-	t.Setenv("Tunnel_Management_Diagnostics", "false")
+	t.Parallel()
 
 	supervisor, state := newTestSupervisor(t, io.Discard, "secret-cloudflared-token", "--helper-mode", "ready", "--helper-require-management-diagnostics-disabled", "1")
+	newCommand := supervisor.newCommand
+	supervisor.newCommand = func(path string, args ...string) *exec.Cmd {
+		cmd := newCommand(path, args...)
+		cmd.Env = append(cmd.Environ(),
+			"TUNNEL_MANAGEMENT_DIAGNOSTICS=true",
+			"tunnel_management_diagnostics=1",
+			"Tunnel_Management_Diagnostics=false",
+		)
+		return cmd
+	}
 	require.NoError(t, startTestSupervisor(supervisor))
 
 	ready, reason := state.Readiness()
