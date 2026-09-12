@@ -28,6 +28,7 @@ const (
 var codexAssistantTurnIdleTimeout = 2 * time.Minute
 
 type codexAssistantOptions struct {
+	lookupEnv             func(string) (string, bool)
 	CWD                   string
 	Model                 string
 	ModelProvider         string
@@ -48,8 +49,9 @@ type codexAssistantWaitingRenderer struct {
 	promptShown bool
 }
 
-func newCodexAssistantCommand(stdout io.Writer, stderr io.Writer) *cobra.Command {
+func newCodexAssistantCommand(lookupEnv func(string) (string, bool), stdout io.Writer, stderr io.Writer) *cobra.Command {
 	options := codexAssistantOptions{
+		lookupEnv:      lookupEnv,
 		ApprovalPolicy: defaultCodexAssistantApprovalPolicy,
 		SandboxType:    defaultCodexAssistantSandboxType,
 		Effort:         defaultCodexAssistantEffort,
@@ -96,7 +98,7 @@ func runCodexAssistant(
 		ctx = context.Background()
 	}
 
-	bridge := codexappserver.NewBridge(nil, nil)
+	bridge := codexappserver.NewBridgeWithLookupEnv(nil, nil, options.lookupEnv)
 	defer func() {
 		stopCtx, stopCancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer stopCancel()
@@ -255,7 +257,7 @@ func startCodexAssistantThread(
 	bridge *codexappserver.Bridge,
 	options codexAssistantOptions,
 ) (string, error) {
-	workingDir := assistantWorkingDirectory(options.CWD)
+	workingDir := assistantWorkingDirectoryWithLookupEnv(options.CWD, options.lookupEnv)
 	result, err := bridge.StartThread(ctx, codexappserver.ThreadStartParams{
 		CWD:                   workingDir,
 		Model:                 strings.TrimSpace(options.Model),
@@ -358,7 +360,7 @@ func runCodexAssistantPrompt(
 	if prompt == "" {
 		return errors.New("assistant prompt is required")
 	}
-	workingDir := assistantWorkingDirectory(options.CWD)
+	workingDir := assistantWorkingDirectoryWithLookupEnv(options.CWD, options.lookupEnv)
 	if item := buildCodexAssistantKnowledgeItem(prompt); item != nil {
 		if err := bridge.InjectThreadItems(ctx, threadID, []map[string]any{item}); err != nil {
 			return fmt.Errorf("inject assistant knowledge base context: %w", err)
@@ -628,11 +630,18 @@ func buildCodexCLITextInput(prompt string) map[string]any {
 }
 
 func assistantWorkingDirectory(raw string) string {
+	return assistantWorkingDirectoryWithLookupEnv(raw, os.LookupEnv)
+}
+
+func assistantWorkingDirectoryWithLookupEnv(raw string, lookupEnv func(string) (string, bool)) string {
 	raw = strings.TrimSpace(raw)
 	if raw != "" {
 		return raw
 	}
-	if bazelCWD := strings.TrimSpace(os.Getenv("BUILD_WORKING_DIRECTORY")); bazelCWD != "" {
+	if lookupEnv == nil {
+		lookupEnv = os.LookupEnv
+	}
+	if bazelCWD, ok := lookupEnv("BUILD_WORKING_DIRECTORY"); ok && strings.TrimSpace(bazelCWD) != "" {
 		return inferTunnelClientWorkspace(bazelCWD)
 	}
 	cwd, err := os.Getwd()

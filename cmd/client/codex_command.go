@@ -100,7 +100,7 @@ func newCodexCommand(lookupEnv func(string) (string, bool), stdout io.Writer, st
 	cmd.SetErr(stderr)
 	cmd.AddCommand(newCodexStatusCommand(lookupEnv, stdout, stderr))
 	cmd.AddCommand(newCodexDiagnoseCommand(lookupEnv, stdout, stderr))
-	cmd.AddCommand(newCodexAssistantCommand(stdout, stderr))
+	cmd.AddCommand(newCodexAssistantCommand(lookupEnv, stdout, stderr))
 	cmd.AddCommand(newCodexPluginCommand(lookupEnv, stdout, stderr))
 	cmd.AddCommand(newCodexGuideCommand("install", "Show official Codex CLI install commands", func() string {
 		return "Install Codex with one of the supported package managers below."
