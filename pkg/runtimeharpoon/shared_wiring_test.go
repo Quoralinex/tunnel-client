@@ -226,6 +226,155 @@ func TestLegacyProtocolForTestingDoesNotLetSelfContainedRequestCreateSession(t *
 	require.NoError(t, postInitializeResponse.Error, "an established legacy session should accept request metadata")
 }
 
+func TestLegacyProtocolForTestingInitializeResponsePublication(t *testing.T) {
+	t.Parallel()
+
+	initializeID, err := jsonrpc.MakeID("initialize")
+	require.NoError(t, err)
+	unrelatedID, err := jsonrpc.MakeID("unrelated")
+	require.NoError(t, err)
+	requestID, err := jsonrpc.MakeID("follow-up")
+	require.NoError(t, err)
+	for _, test := range []struct {
+		name            string
+		response        *jsonrpc.Response
+		writeErr        error
+		wantGuarded     bool
+		wantInitialized bool
+	}{
+		{
+			name:            "successful_initialize",
+			response:        &jsonrpc.Response{ID: initializeID, Result: json.RawMessage(`{}`)},
+			wantGuarded:     true,
+			wantInitialized: true,
+		},
+		{
+			name:        "failed_initialize_write",
+			response:    &jsonrpc.Response{ID: initializeID, Result: json.RawMessage(`{}`)},
+			writeErr:    io.ErrClosedPipe,
+			wantGuarded: true,
+		},
+		{
+			name: "error_initialize_response",
+			response: &jsonrpc.Response{ID: initializeID, Error: &jsonrpc.Error{
+				Code: jsonrpc.CodeInvalidRequest, Message: "initialize rejected",
+			}},
+		},
+		{
+			name:     "unrelated_response",
+			response: &jsonrpc.Response{ID: unrelatedID, Result: json.RawMessage(`{}`)},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			followUp := &jsonrpc.Request{
+				ID: requestID, Method: "tools/list",
+				Params: json.RawMessage(`{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28"}}`),
+			}
+			base := &initializePublicationConnection{
+				request: followUp, response: test.response, writeErr: test.writeErr,
+				published: make(chan struct{}), release: make(chan struct{}),
+				writes: make(chan jsonrpc.Message, 2),
+			}
+			release := sync.OnceFunc(func() { close(base.release) })
+			t.Cleanup(release)
+			connection := &legacyProtocolForTestingConnection{
+				base: base, pendingInitialize: initializeID, hasPendingInit: true,
+			}
+			writeResult := make(chan error, 1)
+			go func() { writeResult <- connection.Write(ctx, test.response) }()
+			select {
+			case <-base.published:
+			case <-ctx.Done():
+				t.Fatal(ctx.Err())
+			}
+
+			// A peer can already see the response while the underlying Write
+			// is finishing. The state guard must prevent classifying a follow-up
+			// against stale initialization state during that exact interval.
+			unlocked := connection.mu.TryLock()
+			if unlocked {
+				connection.mu.Unlock()
+			}
+			require.Equal(t, test.wantGuarded, !unlocked, "only a matching successful initialize response should guard session state")
+
+			type readResult struct {
+				message jsonrpc.Message
+				err     error
+			}
+			read := make(chan readResult, 1)
+			go func() {
+				message, err := connection.Read(ctx)
+				read <- readResult{message, err}
+			}()
+			release()
+			select {
+			case err := <-writeResult:
+				require.ErrorIs(t, err, test.writeErr)
+			case <-ctx.Done():
+				t.Fatal(ctx.Err())
+			}
+			require.Equal(t, test.wantInitialized, connection.isInitialized())
+			select {
+			case result := <-read:
+				if test.wantInitialized {
+					require.NoError(t, result.err)
+					require.Same(t, followUp, result.message)
+				} else {
+					require.ErrorIs(t, result.err, io.EOF)
+					require.Nil(t, result.message)
+				}
+			case <-ctx.Done():
+				t.Fatal(ctx.Err())
+			}
+			require.Same(t, test.response, <-base.writes)
+			if !test.wantInitialized {
+				rejected := (<-base.writes).(*jsonrpc.Response)
+				var protocolErr *jsonrpc.Error
+				require.ErrorAs(t, rejected.Error, &protocolErr)
+				require.EqualValues(t, jsonrpc.CodeInvalidRequest, protocolErr.Code)
+			}
+			require.Empty(t, base.writes, "accepted follow-up must not emit a protocol rejection")
+		})
+	}
+}
+
+type initializePublicationConnection struct {
+	request   *jsonrpc.Request
+	response  *jsonrpc.Response
+	writeErr  error
+	published chan struct{}
+	release   chan struct{}
+	writes    chan jsonrpc.Message
+}
+
+func (c *initializePublicationConnection) Read(context.Context) (jsonrpc.Message, error) {
+	if c.request == nil {
+		return nil, io.EOF
+	}
+	request := c.request
+	c.request = nil
+	return request, nil
+}
+
+func (c *initializePublicationConnection) Write(ctx context.Context, message jsonrpc.Message) error {
+	c.writes <- message
+	if message == c.response {
+		close(c.published)
+		select {
+		case <-c.release:
+			return c.writeErr
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+	return nil
+}
+
+func (c *initializePublicationConnection) Close() error      { return nil }
+func (c *initializePublicationConnection) SessionID() string { return "" }
+
 func newAdditionalStreamableTransportEndpoint(t *testing.T) string {
 	t.Helper()
 
