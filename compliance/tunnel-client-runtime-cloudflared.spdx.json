@@ -47,18 +47,18 @@
     "SPDXRef-File-staged-eaa6d92f581dd35c",
     "SPDXRef-File-staged-eeccef2d83bc2bef"
   ],
-  "documentNamespace": "https://github.com/openai/tunnel-client/sbom/baseline/d965adca56e635582198d4dc7496e1388a6a6bb2421e62307a2e7112fffd8632",
+  "documentNamespace": "https://github.com/openai/tunnel-client/sbom/baseline/70ad212251428b3de3ac9a0fa64bd5a1cf687cde2c47e49cc2afdd803b6f224d",
   "files": [
     {
       "SPDXID": "SPDXRef-File-...tunnel-client-runtime-cloudflared-578d98514f0afd75",
       "checksums": [
         {
           "algorithm": "SHA1",
-          "checksumValue": "c6f92f94b0693a8ee66de4b5206ecbc3f79443a8"
+          "checksumValue": "fd836612babb483b1d52edcfa383389b6f10dc4c"
         },
         {
           "algorithm": "SHA256",
-          "checksumValue": "370224320d3219b7d500e3c4e7b8a9ca50063c4371893ce896d61cb034ce9512"
+          "checksumValue": "4634c313375493f0a34ab060c67033929db099fc5565d1a7c9ddc029c8c77f46"
         }
       ],
       "copyrightText": "NOASSERTION",
@@ -77,11 +77,11 @@
       "checksums": [
         {
           "algorithm": "SHA1",
-          "checksumValue": "1eb7e482fd897d4b677d638ac3b1e539d4b68c7b"
+          "checksumValue": "9391404ef69fdb961665c69e62eb606f9b9a2476"
         },
         {
           "algorithm": "SHA256",
-          "checksumValue": "294291fd36a9fcee83480e6a3a41bff074e4a77d00279a7f345d762b6f7b049f"
+          "checksumValue": "e7f465fffeb677f4257c2f2952ebced20bebf64db0897a7c4aba64afaeaf0fab"
         }
       ],
       "copyrightText": "NOASSERTION",
@@ -169,11 +169,11 @@
       "checksums": [
         {
           "algorithm": "SHA1",
-          "checksumValue": "f20a11ed19fad2aba113fd24bd2c66d23e4a67c3"
+          "checksumValue": "408d8ee5c2745d259a193eeb384886430d124c90"
         },
         {
           "algorithm": "SHA256",
-          "checksumValue": "5c12ffb9e42dcc2819eb9276d68a24d18bfb9b4912f2873213eceed3d760ac8d"
+          "checksumValue": "fa24079f056cd1b8cdc3d2b5cc49a5915b95dd99931b8f2de016a83eb49bc803"
         }
       ],
       "copyrightText": "NOASSERTION",

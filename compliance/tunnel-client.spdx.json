@@ -35,7 +35,7 @@
     "SPDXRef-File-staged-be4e6770f63ad0f8",
     "SPDXRef-File-staged-db7af02381876a75"
   ],
-  "documentNamespace": "https://github.com/openai/tunnel-client/sbom/baseline/6bb18be9084f3dbc27b56674e22922c6a1b3dc2152d664bf1186b3c6ad427a0b",
+  "documentNamespace": "https://github.com/openai/tunnel-client/sbom/baseline/60ee49a560c7191c51c420a5c163d3357f45801bbd6a7f3c596655543f614884",
   "files": [
     {
       "SPDXID": "SPDXRef-File-...windows-amd64-tunnel-client.exe-7b46ff3bb27157eb",
@@ -65,11 +65,11 @@
       "checksums": [
         {
           "algorithm": "SHA1",
-          "checksumValue": "8e574f7ed8f824be3d30949beb7c369a7036a2ed"
+          "checksumValue": "92d462b4d35c1061c51bb9feb78048639dd9d400"
         },
         {
           "algorithm": "SHA256",
-          "checksumValue": "3bd85a1603f54fecc2fb0be17829935eb93a5047374fbd09aa45b0720483efe9"
+          "checksumValue": "f9294beaeff86d6f4ca7829af41d309ad213e594e30bd255e522b0eb85b45605"
         }
       ],
       "copyrightText": "NOASSERTION",
@@ -157,11 +157,11 @@
       "checksums": [
         {
           "algorithm": "SHA1",
-          "checksumValue": "29fecb232b6f20b3961a0cdda1ac87e7fd3055b3"
+          "checksumValue": "e664466fdf2e5ec5b13bb6c949b748ed353f6493"
         },
         {
           "algorithm": "SHA256",
-          "checksumValue": "9367d753e020b56b9512fb3629cd6dde8160198d22d145115c2b61256c010b71"
+          "checksumValue": "232ac27fe15144d892016f143b40e3c399e79e875e81c3596fd40c0dedcf2b95"
         }
       ],
       "copyrightText": "NOASSERTION",
@@ -249,11 +249,11 @@
       "checksums": [
         {
           "algorithm": "SHA1",
-          "checksumValue": "22a19f3529eea71e7c5c8a8b9c42bc13924f25a7"
+          "checksumValue": "f0f12f8b7a2db70bdf9978c68c99f9a5a72a44ad"
         },
         {
           "algorithm": "SHA256",
-          "checksumValue": "6acae1be1335f2b786c1e624506b5a0e0fc7daff7d5ddefce22663ecc2ab4c66"
+          "checksumValue": "3126a023acd048a8817b68093f9e039674d858dae6924b3ecc98b68c6853f925"
         }
       ],
       "copyrightText": "NOASSERTION",

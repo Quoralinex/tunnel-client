@@ -35,7 +35,7 @@
     "SPDXRef-File-staged-f3f34f07fa1db2aa",
     "SPDXRef-File-staged-f4a38024c5849e81"
   ],
-  "documentNamespace": "https://github.com/openai/tunnel-client/sbom/baseline/7b5068d08a4c695330a3718c5ea312b40a401c5d8a6fe6d235c9440c588921ba",
+  "documentNamespace": "https://github.com/openai/tunnel-client/sbom/baseline/4f246942510f86531e223bf7cc541a4aeb2d3050333755f99e45bbe7bffe4dd7",
   "files": [
     {
       "SPDXID": "SPDXRef-File-...darwin-amd64-tunnel-client-runtime-4213e131154ced46",
@@ -65,11 +65,11 @@
       "checksums": [
         {
           "algorithm": "SHA1",
-          "checksumValue": "091f90ef505ef0d342fc668bde42d8095a575de8"
+          "checksumValue": "6c407e6c250192f852c94ea46b0529e5b2399124"
         },
         {
           "algorithm": "SHA256",
-          "checksumValue": "dd869592a896ac1ab2eded0beadf62d60441fd9723d043f22ebd89f1989fd502"
+          "checksumValue": "6fbd9c92bb3900dac603a62e53b423585db2a8fdf5254deb3efc3b58ac0a6d28"
         }
       ],
       "copyrightText": "NOASSERTION",
@@ -111,11 +111,11 @@
       "checksums": [
         {
           "algorithm": "SHA1",
-          "checksumValue": "0d12932dd5663c25d875faf6bb378664e5bb4f38"
+          "checksumValue": "1f7eacb1dd9e623c076492a1ef0a089a61e61ffe"
         },
         {
           "algorithm": "SHA256",
-          "checksumValue": "7109243c1783aa1dd467c059320abebc53036af245870971cad6f35a2267c519"
+          "checksumValue": "5bc593b263bb5017a7782ff05ac10d03b3a71db04d98c8df7f0f8ccddba5ff20"
         }
       ],
       "copyrightText": "NOASSERTION",
@@ -134,11 +134,11 @@
       "checksums": [
         {
           "algorithm": "SHA1",
-          "checksumValue": "6cfec30c56884d21ca1da40a567850c5145629ac"
+          "checksumValue": "6103e456d506c442c32d417864097a800fde25f0"
         },
         {
           "algorithm": "SHA256",
-          "checksumValue": "af5bb73f33dbef0134d4026b452e56aa13051e48148d6cca45c3f4302a887324"
+          "checksumValue": "2f5e920cc1b2c500ac446d79237fa54699d924eca39327afaeff83967e010a62"
         }
       ],
       "copyrightText": "NOASSERTION",

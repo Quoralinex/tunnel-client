@@ -315,7 +315,7 @@ func TestTemplatePatternsArePortableToDiscovery(t *testing.T) {
 func TestTemplateBounds(t *testing.T) {
 	t.Run("parameter count", func(t *testing.T) {
 		cfg := templateTestConfig()
-		for i := 0; i < maxTemplateParameters; i++ {
+		for i := range maxTemplateParameters {
 			cfg.Parameters["parameter"+string(rune('A'+i))] = cfg.Parameters["resourceId"]
 		}
 		_, err := CompileTargetTemplate(cfg)

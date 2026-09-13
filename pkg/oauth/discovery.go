@@ -258,7 +258,7 @@ func doWithRetryForTimeout(
 	}
 
 	var lastErr error
-	for attempt := 0; attempt < oauthMetadataRequestRetryCount; attempt++ {
+	for attempt := range oauthMetadataRequestRetryCount {
 		timeout := timeoutBackoff.Duration()
 		reqCtx, cancel := context.WithTimeout(baseReq.Context(), timeout)
 		req := baseReq.Clone(reqCtx)
