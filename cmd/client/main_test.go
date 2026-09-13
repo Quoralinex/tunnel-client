@@ -24,7 +24,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/stretchr/testify/require"
+	otelprometheus "go.opentelemetry.io/otel/exporters/prometheus"
+	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	"go.uber.org/fx"
 	"go.uber.org/fx/fxtest"
 
@@ -32,6 +36,7 @@ import (
 	"github.com/openai/tunnel-client/pkg/config"
 	"github.com/openai/tunnel-client/pkg/health"
 	"github.com/openai/tunnel-client/pkg/healthurl"
+	"github.com/openai/tunnel-client/pkg/metrics"
 	"github.com/openai/tunnel-client/pkg/types"
 )
 
@@ -194,10 +199,43 @@ func TestAppBoots(t *testing.T) {
 	require.ErrorIs(t, err, os.ErrNotExist, "health URL file removed on shutdown")
 }
 
+func isolatedAppMetrics() fx.Option {
+	return fx.Decorate(func(lc fx.Lifecycle) (*sdkmetric.MeterProvider, metrics.MetricsExporter, error) {
+		registry := prometheus.NewRegistry()
+		registry.MustRegister(
+			prometheus.NewGoCollector(),
+			prometheus.NewProcessCollector(prometheus.ProcessCollectorOpts{}),
+		)
+		exporter, err := otelprometheus.New(otelprometheus.WithRegisterer(registry))
+		if err != nil {
+			return nil, nil, err
+		}
+		provider := sdkmetric.NewMeterProvider(sdkmetric.WithReader(exporter))
+		lc.Append(fx.Hook{OnStop: provider.Shutdown})
+		handler := promhttp.InstrumentMetricHandler(
+			registry, promhttp.HandlerFor(registry, promhttp.HandlerOpts{}),
+		)
+		return provider, handler, nil
+	})
+}
+
+func requireAppLivenessMetric(t *testing.T, client *http.Client, baseURL string) {
+	t.Helper()
+	resp, err := client.Get(baseURL + "/metrics")
+	require.NoError(t, err)
+	body, readErr := io.ReadAll(resp.Body)
+	closeErr := resp.Body.Close()
+	require.NoError(t, readErr)
+	require.NoError(t, closeErr)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Contains(t, string(body), "liveness")
+}
+
 func TestAppBindsHealthBeforeCloudflaredReadiness(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("test helper uses a Unix executable wrapper")
 	}
+	t.Parallel()
 
 	tempDir := t.TempDir()
 	healthURLPath := filepath.Join(tempDir, "health_url")
@@ -258,6 +296,7 @@ func TestAppBindsHealthBeforeCloudflaredReadiness(t *testing.T) {
 		cfg,
 		fx.StopTimeout(5*time.Second),
 		fx.NopLogger,
+		isolatedAppMetrics(),
 	)...)
 	require.Equal(t, 35*time.Second, fxApp.StartTimeout())
 
@@ -319,6 +358,7 @@ func TestAppBindsHealthBeforeCloudflaredReadiness(t *testing.T) {
 	require.NoError(t, closeErr)
 	require.Equal(t, http.StatusServiceUnavailable, resp.StatusCode)
 	require.Contains(t, string(readyBody), "cloudflared startup pending")
+	requireAppLivenessMetric(t, client, baseURL)
 
 	require.NoError(t, os.WriteFile(readyGatePath, []byte("ready"), 0o600))
 	select {
@@ -339,6 +379,7 @@ func TestAppManagedCloudflaredFetchesRuntimeAndBecomesReady(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("test helper uses a Unix executable wrapper")
 	}
+	t.Parallel()
 
 	tempDir := t.TempDir()
 	healthURLPath := filepath.Join(tempDir, "health_url")
@@ -422,6 +463,7 @@ func TestAppManagedCloudflaredFetchesRuntimeAndBecomesReady(t *testing.T) {
 		cfg,
 		fx.StopTimeout(5*time.Second),
 		fx.NopLogger,
+		isolatedAppMetrics(),
 	)...)
 	require.Equal(t, 25*time.Second+200*time.Millisecond, fxApp.StartTimeout())
 
@@ -474,6 +516,7 @@ func TestAppManagedCloudflaredFetchesRuntimeAndBecomesReady(t *testing.T) {
 	require.NoError(t, err)
 	baseURL := strings.TrimSpace(string(data))
 	require.NoError(t, waitForReady(&http.Client{Timeout: 2 * time.Second}, baseURL, 5*time.Second))
+	requireAppLivenessMetric(t, &http.Client{Timeout: 2 * time.Second}, baseURL)
 
 	stopCtx, stopCancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer stopCancel()

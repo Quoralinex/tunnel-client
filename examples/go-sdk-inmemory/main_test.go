@@ -6,14 +6,17 @@ import (
 )
 
 func TestConfigFromEnvironment(t *testing.T) {
-	t.Setenv("CONTROL_PLANE_TUNNEL_ID", "tunnel_exampleaaaaaaaaaaaaaaaaaaaaaaaa")
-	t.Setenv("CONTROL_PLANE_API_KEY", "sdk-example-key")
-	t.Setenv("CONTROL_PLANE_BASE_URL", "https://example.invalid")
-	t.Setenv("CONTROL_PLANE_ORGANIZATION_ID", "org_example")
-	t.Setenv("CONTROL_PLANE_POLL_TIMEOUT", "250ms")
-	t.Setenv("CONTROL_PLANE_EXTRA_HEADERS", "X-Test-One: one; X-Test-Two: two")
+	t.Parallel()
+	env := map[string]string{
+		"CONTROL_PLANE_TUNNEL_ID":       "tunnel_exampleaaaaaaaaaaaaaaaaaaaaaaaa",
+		"CONTROL_PLANE_API_KEY":         "sdk-example-key",
+		"CONTROL_PLANE_BASE_URL":        "https://example.invalid",
+		"CONTROL_PLANE_ORGANIZATION_ID": "org_example",
+		"CONTROL_PLANE_POLL_TIMEOUT":    "250ms",
+		"CONTROL_PLANE_EXTRA_HEADERS":   "X-Test-One: one; X-Test-Two: two",
+	}
 
-	cfg, err := configFromEnvironment()
+	cfg, err := configFromEnvironment(func(name string) string { return env[name] })
 	if err != nil {
 		t.Fatalf("configFromEnvironment returned error: %v", err)
 	}
@@ -41,9 +44,10 @@ func TestConfigFromEnvironment(t *testing.T) {
 }
 
 func TestHeadersFromEnvironmentRejectsMalformedEntry(t *testing.T) {
-	t.Setenv("CONTROL_PLANE_EXTRA_HEADERS", "missing-value")
+	t.Parallel()
+	env := map[string]string{"CONTROL_PLANE_EXTRA_HEADERS": "missing-value"}
 
-	_, err := headersFromEnvironment("CONTROL_PLANE_EXTRA_HEADERS")
+	_, err := headersFromEnvironment(func(name string) string { return env[name] }, "CONTROL_PLANE_EXTRA_HEADERS")
 	if err == nil {
 		t.Fatal("expected malformed header error")
 	}

@@ -49,7 +49,7 @@ func run(ctx context.Context) error {
 		serverDone <- server.Run(serverCtx, serverTransport)
 	}()
 
-	cfg, err := configFromEnvironment()
+	cfg, err := configFromEnvironment(os.Getenv)
 	if err != nil {
 		return err
 	}
@@ -87,39 +87,39 @@ func run(ctx context.Context) error {
 	}
 }
 
-func configFromEnvironment() (tunnelclient.Config, error) {
-	tunnelID := strings.TrimSpace(os.Getenv("CONTROL_PLANE_TUNNEL_ID"))
+func configFromEnvironment(getenv func(string) string) (tunnelclient.Config, error) {
+	tunnelID := strings.TrimSpace(getenv("CONTROL_PLANE_TUNNEL_ID"))
 	if tunnelID == "" {
 		return tunnelclient.Config{}, errors.New("CONTROL_PLANE_TUNNEL_ID is required")
 	}
-	apiKey := strings.TrimSpace(os.Getenv("CONTROL_PLANE_API_KEY"))
+	apiKey := strings.TrimSpace(getenv("CONTROL_PLANE_API_KEY"))
 	if apiKey == "" {
-		apiKey = strings.TrimSpace(os.Getenv("OPENAI_API_KEY"))
+		apiKey = strings.TrimSpace(getenv("OPENAI_API_KEY"))
 	}
 	if apiKey == "" {
 		return tunnelclient.Config{}, errors.New("CONTROL_PLANE_API_KEY or OPENAI_API_KEY is required")
 	}
 
-	pollTimeout, err := durationFromEnvironment("CONTROL_PLANE_POLL_TIMEOUT")
+	pollTimeout, err := durationFromEnvironment(getenv, "CONTROL_PLANE_POLL_TIMEOUT")
 	if err != nil {
 		return tunnelclient.Config{}, err
 	}
-	extraHeaders, err := headersFromEnvironment("CONTROL_PLANE_EXTRA_HEADERS")
+	extraHeaders, err := headersFromEnvironment(getenv, "CONTROL_PLANE_EXTRA_HEADERS")
 	if err != nil {
 		return tunnelclient.Config{}, err
 	}
 	return tunnelclient.Config{
 		TunnelID:                 tunnelID,
 		APIKey:                   apiKey,
-		ControlPlaneBaseURL:      os.Getenv("CONTROL_PLANE_BASE_URL"),
-		OrganizationID:           os.Getenv("CONTROL_PLANE_ORGANIZATION_ID"),
+		ControlPlaneBaseURL:      getenv("CONTROL_PLANE_BASE_URL"),
+		OrganizationID:           getenv("CONTROL_PLANE_ORGANIZATION_ID"),
 		ControlPlaneExtraHeaders: extraHeaders,
 		PollTimeout:              pollTimeout,
 	}, nil
 }
 
-func durationFromEnvironment(name string) (time.Duration, error) {
-	raw := strings.TrimSpace(os.Getenv(name))
+func durationFromEnvironment(getenv func(string) string, name string) (time.Duration, error) {
+	raw := strings.TrimSpace(getenv(name))
 	if raw == "" {
 		return 0, nil
 	}
@@ -144,8 +144,8 @@ func writeReadyFile(path string) error {
 	return nil
 }
 
-func headersFromEnvironment(name string) (map[string]string, error) {
-	raw := strings.TrimSpace(os.Getenv(name))
+func headersFromEnvironment(getenv func(string) string, name string) (map[string]string, error) {
+	raw := strings.TrimSpace(getenv(name))
 	if raw == "" {
 		return nil, nil
 	}
