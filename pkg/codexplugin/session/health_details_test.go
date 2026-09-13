@@ -17,6 +17,8 @@ import (
 )
 
 func TestDiscoverHealthDetailsCompatibility(t *testing.T) {
+	t.Parallel()
+
 	for _, tc := range []struct {
 		name      string
 		status    int
@@ -58,6 +60,8 @@ func TestDiscoverHealthDetailsUnix(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("Unix health socket is unavailable on Windows")
 	}
+	t.Parallel()
+
 	// Keep the socket path short even when the test runner has a long TMPDIR.
 	dir, err := os.MkdirTemp("/tmp", "health-details-")
 	require.NoError(t, err)
@@ -79,6 +83,8 @@ func TestDiscoverHealthDetailsUnix(t *testing.T) {
 }
 
 func TestDiscoverHealthDetailsDoesNotFollowRedirectsOrRemoteURLs(t *testing.T) {
+	t.Parallel()
+
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/health/mcp" {
 			t.Error("followed diagnostic redirect")

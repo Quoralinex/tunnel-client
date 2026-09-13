@@ -29,6 +29,8 @@ func TestMain(m *testing.M) {
 // Cmd.Start path. The payload must reach the re-executed tunnel-client as one
 // literal profile-dir argument, not shell syntax or a selectable executable.
 func TestStartProcessReexecsCurrentExecutableWithFixedArgs(t *testing.T) {
+	t.Parallel()
+
 	tempDir := t.TempDir()
 	markerPath := filepath.Join(tempDir, "injected")
 	argsPath := filepath.Join(tempDir, "argv")

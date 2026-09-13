@@ -393,9 +393,17 @@ func TestRunHelpMentionsProfileEnvironment(t *testing.T) {
 }
 
 func TestValidateProfileConfigChecksTemplatePolicyWithoutResolvingSecrets(t *testing.T) {
-	// Reading this environment value would make header validation fail. The
+	t.Parallel()
+
+	// Resolving an absent environment value would fail. The
 	// nonexistent file likewise proves profile validation does not read secrets.
-	t.Setenv("TEMPLATE_PROFILE_CREDENTIAL", "private\ninvalid-header-value")
+	credentialEnv := "TEMPLATE_PROFILE_CREDENTIAL"
+	for {
+		if _, present := os.LookupEnv(credentialEnv); !present {
+			break
+		}
+		credentialEnv += "_"
+	}
 	profile := `config_version: 2
 harpoon:
   targets:
@@ -412,7 +420,7 @@ harpoon:
             pattern: '[A-Za-z0-9_-]+'
             max_length: 64
         headers:
-          Authorization: 'ENV: TEMPLATE_PROFILE_CREDENTIAL'
+          Authorization: 'ENV: ` + credentialEnv + `'
           X-Session: 'FILE: ` + filepath.Join(t.TempDir(), "missing-credential") + `'
         allowed_headers: [Accept]
 `
@@ -426,10 +434,12 @@ harpoon:
 		{"undeclared parameter", "/cases/{case_id}", "/cases/{other_id}", "undeclared parameter"},
 		{"redirects", "        allowed_headers:", "        follow_redirects: true\n        allowed_headers:", "redirects must be disabled"},
 		{"caller credentials", "allowed_headers: [Accept]", "allowed_headers: [X-AuthToken]", "authentication headers must be fixed"},
-		{"invalid secret reference", "TEMPLATE_PROFILE_CREDENTIAL", "NOT-AN-ENV-NAME", "environment variable name is invalid"},
-		{"invalid fixed header", "          Authorization: 'ENV: TEMPLATE_PROFILE_CREDENTIAL'", "          Authorization: \"private\\tcredential\"", "invalid template header value"},
+		{"invalid secret reference", credentialEnv, "NOT-AN-ENV-NAME", "environment variable name is invalid"},
+		{"invalid fixed header", "          Authorization: 'ENV: " + credentialEnv + "'", "          Authorization: \"private\\tcredential\"", "invalid template header value"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
 			contents := profile
 			if tc.from != "" {
 				contents = strings.Replace(contents, tc.from, tc.to, 1)

@@ -480,6 +480,32 @@ func StartOrReuseWithExistingRuntime(
 	existing ExistingRuntime,
 	replaceExisting bool,
 ) (LaunchResult, error) {
+	return startOrReuseWithExistingRuntime(
+		rt,
+		alias,
+		profileName,
+		profileDir,
+		tunnelClientBin,
+		root,
+		envOverrides,
+		existing,
+		replaceExisting,
+		os.Getenv,
+	)
+}
+
+func startOrReuseWithExistingRuntime(
+	rt Runtime,
+	alias string,
+	profileName string,
+	profileDir string,
+	tunnelClientBin string,
+	root state.Root,
+	envOverrides map[string]string,
+	existing ExistingRuntime,
+	replaceExisting bool,
+	getenv func(string) string,
+) (LaunchResult, error) {
 	if err := validateTunnelClientBin(tunnelClientBin); err != nil {
 		return LaunchResult{}, err
 	}
@@ -497,7 +523,7 @@ func StartOrReuseWithExistingRuntime(
 		if err != nil {
 			return LaunchResult{}, err
 		}
-		tmuxSocket, hasSession, err := FindOwnedLegacyTmuxSession(rt, sessionName, existing.TmuxSocket)
+		tmuxSocket, hasSession, err := findOwnedLegacyTmuxSession(rt, sessionName, existing.TmuxSocket, getenv)
 		if err != nil {
 			return LaunchResult{}, fmt.Errorf("inspect legacy tmux session: %w", err)
 		}
@@ -626,7 +652,7 @@ func TmuxHasSessionName(rt Runtime, sessionName string) (bool, error) {
 // legacy socket. An empty socket recovers the ambient $TMUX socket when one is
 // available, otherwise it selects tmux's default socket explicitly.
 func TmuxHasSessionNameAt(rt Runtime, sessionName string, socketPath string) (bool, error) {
-	socketPath = resolveLegacyTmuxSocket(socketPath)
+	socketPath = resolveLegacyTmuxSocket(socketPath, os.Getenv)
 	if socketPath != "" {
 		if err := validateTmuxSocketPath(socketPath); err != nil {
 			return false, err
@@ -645,7 +671,7 @@ func TmuxHasSessionNameStrict(rt Runtime, sessionName string) (bool, error) {
 // recorded or recovered tmux socket. An empty socket recovers the ambient
 // $TMUX socket when one is available, otherwise it selects the default.
 func TmuxHasSessionNameStrictAt(rt Runtime, sessionName string, socketPath string) (bool, error) {
-	socketPath = resolveLegacyTmuxSocket(socketPath)
+	socketPath = resolveLegacyTmuxSocket(socketPath, os.Getenv)
 	if socketPath != "" {
 		if err := validateTmuxSocketPath(socketPath); err != nil {
 			return false, err
@@ -659,12 +685,16 @@ func TmuxHasSessionNameStrictAt(rt Runtime, sessionName string, socketPath strin
 // ambient $TMUX socket and then check the default socket. If neither contains
 // the session, fail closed: an older custom socket may still own it.
 func FindOwnedLegacyTmuxSession(rt Runtime, sessionName string, recordedSocket string) (string, bool, error) {
+	return findOwnedLegacyTmuxSession(rt, sessionName, recordedSocket, os.Getenv)
+}
+
+func findOwnedLegacyTmuxSession(rt Runtime, sessionName string, recordedSocket string, getenv func(string) string) (string, bool, error) {
 	if socket := strings.TrimSpace(recordedSocket); socket != "" {
 		running, err := TmuxHasSessionNameStrictAt(rt, sessionName, socket)
 		return socket, running, err
 	}
 	candidates := []string{}
-	if ambient := resolveLegacyTmuxSocket(""); ambient != "" {
+	if ambient := resolveLegacyTmuxSocket("", getenv); ambient != "" {
 		candidates = append(candidates, ambient)
 	}
 	candidates = append(candidates, "")
@@ -707,11 +737,11 @@ func tmuxSessionIsKnownAbsent(result CompletedProcess) bool {
 		(strings.Contains(message, "error connecting to ") && strings.Contains(message, "no such file or directory"))
 }
 
-func resolveLegacyTmuxSocket(recorded string) string {
+func resolveLegacyTmuxSocket(recorded string, getenv func(string) string) string {
 	if socket := strings.TrimSpace(recorded); socket != "" {
 		return socket
 	}
-	value := strings.TrimSpace(os.Getenv("TMUX"))
+	value := strings.TrimSpace(getenv("TMUX"))
 	if value == "" {
 		return ""
 	}
@@ -851,7 +881,7 @@ func StopTmux(rt Runtime, sessionName string) (CompletedProcess, error) {
 // An empty socket recovers the ambient $TMUX socket when one is available,
 // otherwise it selects tmux's default socket explicitly.
 func StopTmuxAt(rt Runtime, sessionName string, socketPath string) (CompletedProcess, error) {
-	socketPath = resolveLegacyTmuxSocket(socketPath)
+	socketPath = resolveLegacyTmuxSocket(socketPath, os.Getenv)
 	if socketPath != "" {
 		if err := validateTmuxSocketPath(socketPath); err != nil {
 			return CompletedProcess{}, err
