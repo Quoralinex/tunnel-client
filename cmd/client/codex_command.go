@@ -91,36 +91,36 @@ type codexDiagnoseReport struct {
 
 var codexStatusAssistantProbeTimeout = 5 * time.Second
 
-func newCodexCommand(lookupEnv func(string) (string, bool), stdout io.Writer, stderr io.Writer) *cobra.Command {
+func newCodexCommand(lookupEnv func(string) (string, bool), stdout io.Writer, stderr io.Writer, lookPath func(string) (string, error)) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "codex",
 		Short: "Use the Codex assistant surface and inspect CLI/app-server/plugin wiring",
 	}
 	cmd.SetOut(stdout)
 	cmd.SetErr(stderr)
-	cmd.AddCommand(newCodexStatusCommand(lookupEnv, stdout, stderr))
-	cmd.AddCommand(newCodexDiagnoseCommand(lookupEnv, stdout, stderr))
+	cmd.AddCommand(newCodexStatusCommand(lookupEnv, stdout, stderr, lookPath))
+	cmd.AddCommand(newCodexDiagnoseCommand(lookupEnv, stdout, stderr, lookPath))
 	cmd.AddCommand(newCodexAssistantCommand(lookupEnv, stdout, stderr))
 	cmd.AddCommand(newCodexPluginCommand(lookupEnv, stdout, stderr))
 	cmd.AddCommand(newCodexGuideCommand("install", "Show official Codex CLI install commands", func() string {
 		return "Install Codex with one of the supported package managers below."
-	}, stdout, stderr))
+	}, stdout, stderr, lookPath))
 	cmd.AddCommand(newCodexGuideCommand("upgrade", "Show official Codex CLI upgrade commands", func() string {
 		return "Upgrade Codex using the same package manager that installed it."
-	}, stdout, stderr))
+	}, stdout, stderr, lookPath))
 	cmd.AddCommand(newCodexGuideCommand("uninstall", "Show official Codex CLI uninstall commands", func() string {
 		return "Remove Codex with the same package manager that installed it."
-	}, stdout, stderr))
+	}, stdout, stderr, lookPath))
 	return cmd
 }
 
-func newCodexStatusCommand(lookupEnv func(string) (string, bool), stdout io.Writer, stderr io.Writer) *cobra.Command {
+func newCodexStatusCommand(lookupEnv func(string) (string, bool), stdout io.Writer, stderr io.Writer, lookPath func(string) (string, error)) *cobra.Command {
 	var jsonOutput bool
 	cmd := &cobra.Command{
 		Use:   "status",
 		Short: "Report Codex discovery, app-server availability, login state, and plugin wiring",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			report := inspectCodexStatus(lookupEnv)
+			report := inspectCodexStatus(lookupEnv, lookPath)
 			if jsonOutput {
 				return writeJSON(cmd.OutOrStdout(), report)
 			}
@@ -134,7 +134,7 @@ func newCodexStatusCommand(lookupEnv func(string) (string, bool), stdout io.Writ
 	return cmd
 }
 
-func newCodexDiagnoseCommand(lookupEnv func(string) (string, bool), stdout io.Writer, stderr io.Writer) *cobra.Command {
+func newCodexDiagnoseCommand(lookupEnv func(string) (string, bool), stdout io.Writer, stderr io.Writer, lookPath func(string) (string, error)) *cobra.Command {
 	var jsonOutput bool
 	var alias string
 	var pluginRoot string
@@ -147,7 +147,7 @@ func newCodexDiagnoseCommand(lookupEnv func(string) (string, bool), stdout io.Wr
 			if len(args) == 1 && strings.TrimSpace(alias) == "" {
 				alias = args[0]
 			}
-			report := inspectCodexDiagnose(lookupEnv, alias, pluginRoot, healthURL)
+			report := inspectCodexDiagnose(lookupEnv, alias, pluginRoot, healthURL, lookPath)
 			if jsonOutput {
 				return writeJSON(cmd.OutOrStdout(), report)
 			}
@@ -164,14 +164,14 @@ func newCodexDiagnoseCommand(lookupEnv func(string) (string, bool), stdout io.Wr
 	return cmd
 }
 
-func newCodexGuideCommand(use string, short string, intro func() string, stdout io.Writer, stderr io.Writer) *cobra.Command {
+func newCodexGuideCommand(use string, short string, intro func() string, stdout io.Writer, stderr io.Writer, lookPath func(string) (string, error)) *cobra.Command {
 	var jsonOutput bool
 	cmd := &cobra.Command{
 		Use:   use,
 		Short: short,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			methods := availableCodexInstallMethods()
-			preferred := preferredCodexInstallMethod(methods)
+			preferred := preferredCodexInstallMethod(methods, lookPath)
 			if jsonOutput {
 				payload := map[string]any{
 					"action":           use,
@@ -201,7 +201,7 @@ func newCodexGuideCommand(use string, short string, intro func() string, stdout 
 	return cmd
 }
 
-func inspectCodexDiagnose(lookupEnv func(string) (string, bool), alias string, pluginRoot string, healthURL string) codexDiagnoseReport {
+func inspectCodexDiagnose(lookupEnv func(string) (string, bool), alias string, pluginRoot string, healthURL string, lookPath func(string) (string, error)) codexDiagnoseReport {
 	detection := codexplugin.Detect(lookupEnv)
 	root := pluginstate.ResolveRoot(lookupEnv)
 	profileDir, profileErr := session.DefaultProfileDir(lookupEnv)
@@ -225,7 +225,7 @@ func inspectCodexDiagnose(lookupEnv func(string) (string, bool), alias string, p
 		StalePluginConfigEntries: detection.StaleConfigEntries,
 		BinaryVersion:            tunnelClientVersion(),
 		StateRoot:                root.Path,
-		CodexBridge:              inspectCodexStatus(lookupEnv),
+		CodexBridge:              inspectCodexStatus(lookupEnv, lookPath),
 	}
 	if profileErr != nil {
 		report.ProfileDirError = profileErr.Error()
@@ -262,9 +262,9 @@ func inspectCodexDiagnose(lookupEnv func(string) (string, bool), alias string, p
 	return report
 }
 
-func inspectCodexStatus(lookupEnv func(string) (string, bool)) codexStatusReport {
+func inspectCodexStatus(lookupEnv func(string) (string, bool), lookPath func(string) (string, error)) codexStatusReport {
 	methods := availableCodexInstallMethods()
-	preferred := preferredCodexInstallMethod(methods)
+	preferred := preferredCodexInstallMethod(methods, lookPath)
 	report := codexStatusReport{
 		State:                       "missing",
 		DocsURL:                     codexCLIDocsURL,
@@ -303,7 +303,7 @@ func inspectCodexStatus(lookupEnv func(string) (string, bool)) codexStatusReport
 		}
 	}
 
-	path, err := exec.LookPath("codex")
+	path, err := lookPath("codex")
 	if err != nil {
 		return report
 	}
@@ -319,7 +319,7 @@ func inspectCodexStatus(lookupEnv func(string) (string, bool)) codexStatusReport
 	}
 
 	report.AppServerSupported = true
-	bridge := codexappserver.NewBridge(nil, nil)
+	bridge := codexappserver.NewBridgeWithLookupEnv(nil, nil, lookupEnv)
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	if err := bridge.EnsureStarted(ctx); err != nil {
@@ -562,9 +562,9 @@ func availableCodexInstallMethods() []codexInstallMethod {
 	}
 }
 
-func preferredCodexInstallMethod(methods []codexInstallMethod) codexInstallMethod {
-	brewAvailable := commandAvailable("brew")
-	npmAvailable := commandAvailable("npm")
+func preferredCodexInstallMethod(methods []codexInstallMethod, lookPath func(string) (string, error)) codexInstallMethod {
+	brewAvailable := commandAvailable("brew", lookPath)
+	npmAvailable := commandAvailable("npm", lookPath)
 	switch {
 	case runtime.GOOS == "darwin" && brewAvailable:
 		return methods[0]
@@ -599,8 +599,8 @@ func commandForAction(method codexInstallMethod, action string) string {
 	}
 }
 
-func commandAvailable(name string) bool {
-	_, err := exec.LookPath(name)
+func commandAvailable(name string, lookPath func(string) (string, error)) bool {
+	_, err := lookPath(name)
 	return err == nil
 }
 
