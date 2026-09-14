@@ -121,7 +121,7 @@ func runHarpoonChannelReconnectAfterTTLs(t *testing.T, ttlCycles int) {
 			release()
 			timer := time.NewTimer(5 * time.Second)
 			defer timer.Stop()
-			for i := 0; i < ttlCycles; i++ {
+			for i := range ttlCycles {
 				select {
 				case <-handlerDone:
 				case <-timer.C:
