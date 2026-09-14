@@ -471,7 +471,7 @@ func compareSemverPrerelease(left string, right string) int {
 	leftParts := strings.Split(left, ".")
 	rightParts := strings.Split(right, ".")
 	limit := min(len(leftParts), len(rightParts))
-	for i := 0; i < limit; i++ {
+	for i := range limit {
 		if cmp := compareSemverPrereleaseIdentifier(leftParts[i], rightParts[i]); cmp != 0 {
 			return cmp
 		}
