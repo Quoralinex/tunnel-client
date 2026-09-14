@@ -30,9 +30,12 @@ func (c *fixedHealthComponent) Snapshot(time.Time) healthstate.ComponentSnapshot
 }
 
 func TestComponentHealthRepresentationAndReadiness(t *testing.T) {
+	t.Parallel()
+
 	for _, defaultDetails := range []bool{false, true} {
 		for _, ready := range []bool{false, true} {
 			t.Run(fmt.Sprintf("details=%t/ready=%t", defaultDetails, ready), func(t *testing.T) {
+				t.Parallel()
 				observed := time.Date(2026, 9, 10, 20, 55, 45, 0, time.UTC)
 				component := &fixedHealthComponent{name: "mcp", value: healthstate.ComponentSnapshot{Status: healthstate.StatusUnknown, State: "not_observed", ObservedAt: &observed}}
 				h, err := newComponentHealth([]healthstate.Component{component}, defaultDetails, func() bool { return ready })
@@ -85,6 +88,8 @@ func TestComponentHealthRepresentationAndReadiness(t *testing.T) {
 }
 
 func TestComponentHealthJSONOrder(t *testing.T) {
+	t.Parallel()
+
 	const timestamp = `"2026-09-10T20:55:45Z"`
 	const alpha = `{"status":"disabled","state":"disabled","limited":false}`
 	const middle = `{"status":"ok","state":"buffering","observed_at":` + timestamp + `,"limited":false,"details":{"depth":2,"capacity":8,"utilization":0.25,"enqueued":3,"dequeued":1,"backpressure_seconds":0}}`
@@ -126,6 +131,7 @@ func TestComponentHealthJSONOrder(t *testing.T) {
 	for _, order := range [][]int{{0, 1, 2}, {0, 2, 1}, {1, 0, 2}, {1, 2, 0}, {2, 0, 1}, {2, 1, 0}} {
 		for _, defaultDetails := range []bool{false, true} {
 			t.Run(fmt.Sprintf("order=%v/details=%t", order, defaultDetails), func(t *testing.T) {
+				t.Parallel()
 				observed := time.Date(2026, 9, 10, 20, 55, 45, 0, time.UTC)
 				components := []healthstate.Component{
 					&fixedHealthComponent{name: "alpha", value: healthstate.ComponentSnapshot{Status: healthstate.StatusDisabled, State: "disabled"}},
@@ -159,10 +165,13 @@ func TestComponentHealthJSONOrder(t *testing.T) {
 }
 
 func TestComponentHealthRejectsInvalidRequests(t *testing.T) {
+	t.Parallel()
+
 	h, err := newComponentHealth(nil, false, func() bool { return true })
 	require.NoError(t, err)
 	for _, path := range []string{"/health?details=", "/health?details", "/health?details=1", "/health?details=TRUE", "/health?details=true&details=false", "/health?other=true", "/health?details=true&other=false", "/health?details=%zz", "/health/mcp?details=true", "/health/mcp?", "/health?"} {
 		t.Run(path, func(t *testing.T) {
+			t.Parallel()
 			w := httptest.NewRecorder()
 			h.ServeHTTP(w, httptest.NewRequest(http.MethodGet, path, nil))
 			require.Equal(t, http.StatusBadRequest, w.Code)
@@ -183,6 +192,8 @@ func TestComponentHealthRejectsInvalidRequests(t *testing.T) {
 }
 
 func TestComponentHealthLocalAccess(t *testing.T) {
+	t.Parallel()
+
 	component := &fixedHealthComponent{name: "mcp", value: healthstate.ComponentSnapshot{Status: healthstate.StatusDisabled, State: "disabled"}}
 	h, err := newComponentHealth([]healthstate.Component{component}, false, func() bool { return true })
 	require.NoError(t, err)
@@ -203,6 +214,8 @@ func TestComponentHealthLocalAccess(t *testing.T) {
 }
 
 func TestComponentHealthRegistrationAndMetadataBounds(t *testing.T) {
+	t.Parallel()
+
 	for _, name := range []string{"", "bad/name", strings.Repeat("a", 65), "secret.example"} {
 		_, err := newComponentHealth([]healthstate.Component{&fixedHealthComponent{name: name}}, false, func() bool { return true })
 		require.Error(t, err)
@@ -229,6 +242,8 @@ func TestComponentHealthRegistrationAndMetadataBounds(t *testing.T) {
 }
 
 func TestComponentHealthEncodingBudgets(t *testing.T) {
+	t.Parallel()
+
 	components := make([]healthstate.Component, 0, 16)
 	for i := range 16 {
 		components = append(components, &fixedHealthComponent{name: fmt.Sprintf("component-%02d", i), value: healthstate.ComponentSnapshot{Status: healthstate.StatusOK, State: "discovered", Details: healthstate.MCPDetails{ToolsList: healthstate.MCPToolsList{ToolNames: []string{strings.Repeat("x", 16*1024)}}}}})

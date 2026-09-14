@@ -55,6 +55,7 @@ func TestActivityHealthCapturesSwallowedResponseDeadline(t *testing.T) {
 	t.Parallel()
 	for _, expired := range []bool{true, false} {
 		t.Run(map[bool]string{true: "before_dispatch", false: "during_read"}[expired], func(t *testing.T) {
+			t.Parallel()
 			conn := newDeadlineBlockingConnection()
 			processor := newDeadlineTestProcessor(t, &stubForwardingTransport{conn: conn}, &countingResponder{})
 			var expire context.CancelCauseFunc
@@ -113,6 +114,7 @@ func TestActivityHealthCountsExecutionAndInlineFallback(t *testing.T) {
 	t.Parallel()
 	for _, inline := range []bool{false, true} {
 		t.Run(map[bool]string{false: "pool", true: "inline"}[inline], func(t *testing.T) {
+			t.Parallel()
 			cfg := newTestMCPConfigQueue(t, 1)
 			activity := NewActivityHealth(cfg)
 			queue := make(controlplane.PolledCommandQueue, 1)

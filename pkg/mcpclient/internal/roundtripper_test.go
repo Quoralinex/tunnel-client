@@ -20,6 +20,8 @@ func (f roundTripperFunc) RoundTrip(req *http.Request) (*http.Response, error) {
 }
 
 func TestForwardingRoundTripperRoundTrip(t *testing.T) {
+	t.Parallel()
+
 	makeResponse := func(status int, headers http.Header) *http.Response {
 		return &http.Response{
 			StatusCode: status,
@@ -66,6 +68,7 @@ func TestForwardingRoundTripperRoundTrip(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			ctx, carrier, err := ContextWithHeaders(context.Background(), tc.requestHeaders)
 			if err != nil {
 				t.Fatalf("ContextWithHeaders: %v", err)
@@ -148,6 +151,8 @@ func TestForwardingRoundTripperTreatsDefaultPortAsSameOrigin(t *testing.T) {
 }
 
 func TestNewForwardingRoundTripperPanicsOnNil(t *testing.T) {
+	t.Parallel()
+
 	defer func() {
 		if recover() == nil {
 			t.Fatal("expected panic when base RoundTripper is nil")

@@ -1,6 +1,7 @@
 package e2e_test
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -17,6 +18,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -774,6 +776,21 @@ func startRuntimeArtifact(t *testing.T, binary string, args ...string) *runtimeA
 func startRuntimeArtifactWithEnv(t *testing.T, binary string, overrides map[string]string, args ...string) *runtimeArtifactProcess {
 	t.Helper()
 
+	// The full client warms up its Codex bridge on startup. Give every process
+	// its own protocol fixture instead of launching a developer's installed
+	// Codex against shared configuration while compatibility tests run in parallel.
+	overrides = copyRuntimeEnvironment(overrides)
+	_, explicitCommand := overrides["TUNNEL_CLIENT_CODEX_APP_SERVER_COMMAND"]
+	_, explicitExecutable := overrides["TUNNEL_CLIENT_CODEX_APP_SERVER_CMD"]
+	if !explicitCommand && !explicitExecutable {
+		helper, err := os.Executable()
+		require.NoError(t, err)
+		overrides["TUNNEL_CLIENT_CODEX_APP_SERVER_CMD"] = helper
+		overrides["TUNNEL_CLIENT_CODEX_APP_SERVER_ARGS"] = "-test.run=^TestRuntimeCodexAppServerHelperProcess$"
+		overrides["TUNNEL_CLIENT_CODEX_APP_SERVER_CWD"] = t.TempDir()
+		overrides["GO_WANT_RUNTIME_CODEX_APP_SERVER_HELPER"] = "1"
+	}
+
 	output := newRuntimeArtifactOutput()
 	cmd := exec.Command(binary, args...)
 	cmd.Env = runtimeArtifactEnvironment(overrides)
@@ -801,33 +818,37 @@ func startRuntimeArtifactWithEnv(t *testing.T, binary string, overrides map[stri
 
 func runtimeArtifactEnvironment(overrides map[string]string) []string {
 	blocked := map[string]struct{}{
-		"ADMIN_UI_LOG_BUFFER_EVENTS":       {},
-		"ALLOW_REMOTE_UI":                  {},
-		"CLOUDFLARED_MANAGED":              {},
-		"CLOUDFLARED_PATH":                 {},
-		"CLOUDFLARED_READY_TIMEOUT":        {},
-		"CLOUDFLARED_TUNNEL_TOKEN":         {},
-		"CONTROL_PLANE_API_KEY":            {},
-		"HARPOON_CAPTURE_PAYLOADS":         {},
-		"LOG_FILE":                         {},
-		"LOG_FORMAT":                       {},
-		"LOG_LEVEL":                        {},
-		"OPEN_WEB_UI":                      {},
-		"OPENAI_API_KEY":                   {},
-		"ALL_PROXY":                        {},
-		"all_proxy":                        {},
-		"HTTP_PROXY":                       {},
-		"http_proxy":                       {},
-		"HTTPS_PROXY":                      {},
-		"https_proxy":                      {},
-		"NO_PROXY":                         {},
-		"no_proxy":                         {},
-		"PROXY_CHECK_INTERVAL":             {},
-		"RUNTIME_COMPAT_CONTROL_PLANE_URL": {},
-		"RUNTIME_COMPAT_MCP_URL":           {},
-		"TUNNEL_CLIENT_CONFIG":             {},
-		"TUNNEL_CLIENT_PROFILE":            {},
-		"TUNNEL_CLIENT_PROFILE_FILE":       {},
+		"ADMIN_UI_LOG_BUFFER_EVENTS":             {},
+		"ALLOW_REMOTE_UI":                        {},
+		"CLOUDFLARED_MANAGED":                    {},
+		"CLOUDFLARED_PATH":                       {},
+		"CLOUDFLARED_READY_TIMEOUT":              {},
+		"CLOUDFLARED_TUNNEL_TOKEN":               {},
+		"CONTROL_PLANE_API_KEY":                  {},
+		"HARPOON_CAPTURE_PAYLOADS":               {},
+		"LOG_FILE":                               {},
+		"LOG_FORMAT":                             {},
+		"LOG_LEVEL":                              {},
+		"OPEN_WEB_UI":                            {},
+		"OPENAI_API_KEY":                         {},
+		"ALL_PROXY":                              {},
+		"all_proxy":                              {},
+		"HTTP_PROXY":                             {},
+		"http_proxy":                             {},
+		"HTTPS_PROXY":                            {},
+		"https_proxy":                            {},
+		"NO_PROXY":                               {},
+		"no_proxy":                               {},
+		"PROXY_CHECK_INTERVAL":                   {},
+		"RUNTIME_COMPAT_CONTROL_PLANE_URL":       {},
+		"RUNTIME_COMPAT_MCP_URL":                 {},
+		"TUNNEL_CLIENT_CONFIG":                   {},
+		"TUNNEL_CLIENT_CODEX_APP_SERVER_COMMAND": {},
+		"TUNNEL_CLIENT_CODEX_APP_SERVER_CMD":     {},
+		"TUNNEL_CLIENT_CODEX_APP_SERVER_ARGS":    {},
+		"TUNNEL_CLIENT_CODEX_APP_SERVER_CWD":     {},
+		"TUNNEL_CLIENT_PROFILE":                  {},
+		"TUNNEL_CLIENT_PROFILE_FILE":             {},
 	}
 	for key := range overrides {
 		blocked[key] = struct{}{}
@@ -1064,7 +1085,66 @@ func writeRuntimeArtifactCloudflaredWrapper(t *testing.T) string {
 	return path
 }
 
+// TestRuntimeCodexAppServerHelperProcess implements the startup protocol needed
+// by the full client's admin UI. It owns no files, user configuration or network
+// listeners, and exits when the bridge closes stdin or signals shutdown.
+func TestRuntimeCodexAppServerHelperProcess(t *testing.T) {
+	t.Parallel()
+	if os.Getenv("GO_WANT_RUNTIME_CODEX_APP_SERVER_HELPER") != "1" {
+		return
+	}
+
+	signals := make(chan os.Signal, 1)
+	signal.Notify(signals, os.Interrupt, syscall.SIGTERM)
+	done := make(chan error, 1)
+	go func() {
+		scanner := bufio.NewScanner(os.Stdin)
+		encoder := json.NewEncoder(os.Stdout)
+		for scanner.Scan() {
+			var request struct {
+				ID     json.RawMessage `json:"id"`
+				Method string          `json:"method"`
+			}
+			if err := json.Unmarshal(scanner.Bytes(), &request); err != nil {
+				done <- err
+				return
+			}
+			if len(request.ID) == 0 {
+				continue
+			}
+			var result any
+			switch request.Method {
+			case "initialize":
+				result = map[string]any{"userAgent": "runtime-e2e-codex-fixture"}
+			case "getAuthStatus":
+				result = map[string]any{"requiresOpenaiAuth": false}
+			case "account/read":
+				result = map[string]any{"account": nil, "requiresOpenaiAuth": false}
+			default:
+				done <- fmt.Errorf("unexpected Codex fixture method %q", request.Method)
+				return
+			}
+			if err := encoder.Encode(map[string]any{"id": request.ID, "result": result}); err != nil {
+				done <- err
+				return
+			}
+		}
+		done <- scanner.Err()
+	}()
+	select {
+	case <-signals:
+	case err := <-done:
+		if err != nil {
+			_, _ = fmt.Fprintln(os.Stderr, err)
+			os.Exit(2)
+		}
+	}
+	os.Exit(0)
+}
+
 func TestRuntimeCloudflaredHelperProcess(t *testing.T) {
+	t.Parallel()
+
 	if os.Getenv("GO_WANT_RUNTIME_CLOUDFLARED_HELPER") != "1" {
 		return
 	}

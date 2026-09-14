@@ -33,6 +33,7 @@ func TestDiscoverHealthDetailsCompatibility(t *testing.T) {
 		{"oversized", 200, `{"schema_version":1,"component":"mcp","padding":"` + strings.Repeat("x", healthstate.MaxComponentBytes) + `"}`, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			requests := 0
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				requests++

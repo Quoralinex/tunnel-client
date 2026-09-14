@@ -188,6 +188,7 @@ harpoon:
 	} {
 		for _, operation := range []string{"add", "edit"} {
 			t.Run(tc.name+"/"+operation, func(t *testing.T) {
+				t.Parallel()
 				temp := t.TempDir()
 				profileDir := filepath.Join(temp, "profiles")
 				require.NoError(t, os.Mkdir(profileDir, 0o700))
@@ -247,6 +248,7 @@ func TestProfilesRejectEscapingProfileSymlinks(t *testing.T) {
 	}
 	for _, operation := range []string{"add", "force", "edit"} {
 		t.Run(operation, func(t *testing.T) {
+			t.Parallel()
 			dir := t.TempDir()
 			profileDir := filepath.Join(dir, "profiles")
 			require.NoError(t, os.Mkdir(profileDir, 0o700))
@@ -309,6 +311,7 @@ func TestProfilesEditHandlesEditorFileReplacement(t *testing.T) {
 			name = "escaping symlink replacement"
 		}
 		t.Run(name, func(t *testing.T) {
+			t.Parallel()
 			dir := t.TempDir()
 			profileDir := filepath.Join(dir, "profile directory")
 			require.NoError(t, os.Mkdir(profileDir, 0o700))

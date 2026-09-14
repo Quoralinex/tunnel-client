@@ -19,6 +19,7 @@ import (
 )
 
 func TestCodexCommandHelperProcess(t *testing.T) {
+	t.Parallel()
 	if os.Getenv("GO_WANT_CODEX_HELPER") != "1" {
 		return
 	}
@@ -266,6 +267,7 @@ func TestCodexStatusTextSeparatesPluginStateAfterUninstall(t *testing.T) {
 }
 
 func TestCodexStatusJSONReportsBridgeReadyWhenAssistantProbeStalls(t *testing.T) {
+	// This test temporarily changes a package-wide timeout and must run serially.
 	originalTimeout := codexStatusAssistantProbeTimeout
 	codexStatusAssistantProbeTimeout = 50 * time.Millisecond
 	t.Cleanup(func() {
@@ -342,6 +344,7 @@ func TestCodexAssistantReadsPromptFromStdin(t *testing.T) {
 }
 
 func TestCodexAssistantReportsTurnStallDiagnostics(t *testing.T) {
+	// This test temporarily changes a package-wide timeout and must run serially.
 	originalTimeout := codexAssistantTurnIdleTimeout
 	codexAssistantTurnIdleTimeout = 50 * time.Millisecond
 	t.Cleanup(func() {
@@ -510,6 +513,7 @@ func TestCodexAssistantInjectsBundledBinaryAcquisitionGuidance(t *testing.T) {
 }
 
 func TestCodexHelpIncludesAssistantSubcommand(t *testing.T) {
+	t.Parallel()
 	var stdout bytes.Buffer
 	root := newRootCommand(func(string) (string, bool) { return "", false }, &stdout, &bytes.Buffer{})
 	root.SetArgs([]string{"codex", "--help"})
@@ -520,6 +524,7 @@ func TestCodexHelpIncludesAssistantSubcommand(t *testing.T) {
 }
 
 func TestCodexPluginCommandInstallAndLegacyAliasBothWork(t *testing.T) {
+	t.Parallel()
 	codexHome := t.TempDir()
 
 	stdout, stderr, err := executeCommand(t, map[string]string{
@@ -565,6 +570,7 @@ func TestAssistantWorkingDirectoryPrefersStandaloneTunnelClientWorkspace(t *test
 }
 
 func TestAssistantWorkingDirectoryRespectsExplicitOverride(t *testing.T) {
+	t.Parallel()
 	require.Equal(t, "/tmp/custom-cwd", assistantWorkingDirectory("/tmp/custom-cwd"))
 }
 
@@ -596,6 +602,7 @@ func TestCodexAssistantUsesStandaloneWorkspaceAsThreadCWD(t *testing.T) {
 }
 
 func TestBuildCodexCLIDeveloperInstructionsNarrowsScopeToTunnelClient(t *testing.T) {
+	t.Parallel()
 	instructions := buildCodexCLIDeveloperInstructions("/workspace/api/tunnel-client", "")
 
 	require.Contains(t, instructions, "Treat the request as being about tunnel-client")
@@ -604,6 +611,7 @@ func TestBuildCodexCLIDeveloperInstructionsNarrowsScopeToTunnelClient(t *testing
 }
 
 func TestHandleCodexAssistantSlashCommandShowsAndUpdatesModelSettings(t *testing.T) {
+	t.Parallel()
 	options := codexAssistantOptions{Effort: defaultCodexAssistantEffort}
 	var stderr bytes.Buffer
 
@@ -629,6 +637,7 @@ func TestHandleCodexAssistantSlashCommandShowsAndUpdatesModelSettings(t *testing
 }
 
 func TestHandleCodexAssistantSlashCommandRejectsUnknownReasoning(t *testing.T) {
+	t.Parallel()
 	options := codexAssistantOptions{Effort: defaultCodexAssistantEffort}
 	var stderr bytes.Buffer
 

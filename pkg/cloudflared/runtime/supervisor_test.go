@@ -432,6 +432,8 @@ func (f *managedRuntimeFetcherStub) FetchManagedCloudflareTunnel(context.Context
 }
 
 func TestCloudflaredHelperProcess(t *testing.T) {
+	t.Parallel()
+
 	if helperArgValue(os.Args, "--helper-process") != "1" {
 		return
 	}

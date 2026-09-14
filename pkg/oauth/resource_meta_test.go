@@ -98,6 +98,8 @@ func testLogger() *slog.Logger {
 }
 
 func TestTryWWWAuthenticateProbeRedactsURLAndPreservesCause(t *testing.T) {
+	t.Parallel()
+
 	serverURL, err := url.Parse(
 		"https://userinfo-value:credential-value@auth.internal/token-path-value?client_id=query-value#state=fragment-value",
 	)
@@ -149,6 +151,8 @@ func TestTryWWWAuthenticateProbeRedactsURLAndPreservesCause(t *testing.T) {
 }
 
 func TestTryWWWAuthenticateProbeRedactsAndPreservesResourceMetadataParseError(t *testing.T) {
+	t.Parallel()
+
 	const sensitiveMetadataURL = "https://userinfo-value:credential-value@auth.internal/%invalid-path-value"
 	client := &http.Client{
 		Transport: roundTripperFunc(func(req *http.Request) (*http.Response, error) {

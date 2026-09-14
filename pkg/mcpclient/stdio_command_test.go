@@ -41,6 +41,8 @@ func (s *stubShutdowner) Shutdown(...fx.ShutdownOption) error {
 }
 
 func TestStdioCommandTransportRequiresCommand(t *testing.T) {
+	t.Parallel()
+
 	lifecycle := &stubLifecycle{}
 	shutdowner := &stubShutdowner{}
 	transport := newStdioCommandTransport(slog.New(slog.NewTextHandler(io.Discard, nil)), lifecycle, shutdowner)
@@ -208,6 +210,8 @@ func helperCommandArgs(mode string) []string {
 }
 
 func TestHelperProcess(t *testing.T) {
+	t.Parallel()
+
 	if len(os.Args) != 4 || os.Args[2] != "--" {
 		return
 	}

@@ -24,6 +24,8 @@ import (
 )
 
 func TestPollerRetryHonorsRetryAfter(t *testing.T) {
+	t.Parallel()
+
 	fixedNow := time.Date(2026, time.July, 14, 12, 0, 0, 0, time.UTC)
 	tests := []struct {
 		name      string
@@ -49,6 +51,7 @@ func TestPollerRetryHonorsRetryAfter(t *testing.T) {
 
 	for _, testCase := range tests {
 		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
 			ctx, cancel := context.WithCancel(context.Background())
 			fetcher := &sequenceFetcher{
 				errs: []error{
@@ -85,6 +88,8 @@ func TestPollerRetryHonorsRetryAfter(t *testing.T) {
 }
 
 func TestParseRetryAfterRejectsInvalidValuesAndClampsExcessiveValues(t *testing.T) {
+	t.Parallel()
+
 	now := time.Date(2026, time.July, 14, 12, 0, 0, 0, time.UTC)
 	for _, value := range []string{
 		"-1",
@@ -101,6 +106,8 @@ func TestParseRetryAfterRejectsInvalidValuesAndClampsExcessiveValues(t *testing.
 }
 
 func TestPostResponseRetriesTransportFailureWithSameRequest(t *testing.T) {
+	t.Parallel()
+
 	client := newResponseRetryTestClient(t)
 	var attempts []capturedRequest
 	client.client.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
@@ -142,6 +149,8 @@ func TestPostResponseRetriesTransportFailureWithSameRequest(t *testing.T) {
 }
 
 func TestPostResponseDoesNotRetryJSONRPCNotificationAfterAmbiguousFailure(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name     string
 		response func(*http.Request) (*http.Response, error)
@@ -165,6 +174,7 @@ func TestPostResponseDoesNotRetryJSONRPCNotificationAfterAmbiguousFailure(t *tes
 
 	for _, testCase := range tests {
 		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
 			client := newResponseRetryTestClient(t)
 			attempts := 0
 			client.client.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
@@ -200,6 +210,8 @@ func TestPostResponseDoesNotRetryJSONRPCNotificationAfterAmbiguousFailure(t *tes
 }
 
 func TestPostResponseRetriesJSONRPCNotificationBeforeCommit(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name     string
 		response func(*http.Request) (*http.Response, error)
@@ -221,6 +233,7 @@ func TestPostResponseRetriesJSONRPCNotificationBeforeCommit(t *testing.T) {
 
 	for _, testCase := range tests {
 		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
 			client := newResponseRetryTestClient(t)
 			attempts := 0
 			client.client.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
@@ -256,6 +269,8 @@ func TestPostResponseRetriesJSONRPCNotificationBeforeCommit(t *testing.T) {
 }
 
 func TestPostResponseRetriesJSONRPCNotificationBeforeWriteWithRawHTTPLogging(t *testing.T) {
+	t.Parallel()
+
 	client := newResponseRetryTestClient(t)
 	attempts := 0
 	base := roundTripFunc(func(req *http.Request) (*http.Response, error) {
@@ -295,6 +310,8 @@ func TestPostResponseRetriesJSONRPCNotificationBeforeWriteWithRawHTTPLogging(t *
 }
 
 func TestPostResponseRetryAfterAndMalformedFallback(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name      string
 		header    string
@@ -314,6 +331,7 @@ func TestPostResponseRetryAfterAndMalformedFallback(t *testing.T) {
 
 	for _, testCase := range tests {
 		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
 			client := newResponseRetryTestClient(t)
 			attempts := 0
 			client.client.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
@@ -345,6 +363,8 @@ func TestPostResponseRetryAfterAndMalformedFallback(t *testing.T) {
 }
 
 func TestPostResponseStopsWhenContextCanceledDuringRetryWait(t *testing.T) {
+	t.Parallel()
+
 	client := newResponseRetryTestClient(t)
 	attempts := 0
 	client.client.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
@@ -380,6 +400,8 @@ func TestPostResponseStopsWhenContextCanceledDuringRetryWait(t *testing.T) {
 }
 
 func TestPostResponseDoesNotRetryNonRetryable4xx(t *testing.T) {
+	t.Parallel()
+
 	client := newResponseRetryTestClient(t)
 	attempts := 0
 	client.client.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
@@ -401,6 +423,8 @@ func TestPostResponseDoesNotRetryNonRetryable4xx(t *testing.T) {
 }
 
 func TestPostResponsePreservesNotFoundTerminalSuccess(t *testing.T) {
+	t.Parallel()
+
 	client := newResponseRetryTestClient(t)
 	attempts := 0
 	client.client.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
@@ -422,6 +446,8 @@ func TestPostResponsePreservesNotFoundTerminalSuccess(t *testing.T) {
 }
 
 func TestFetchManagedCloudflareTunnelRetriesTransportFailure(t *testing.T) {
+	t.Parallel()
+
 	client := newResponseRetryTestClient(t)
 	attempts := 0
 	client.secretClient.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
@@ -446,6 +472,8 @@ func TestFetchManagedCloudflareTunnelRetriesTransportFailure(t *testing.T) {
 }
 
 func TestFetchManagedCloudflareTunnelRetries429And5xx(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name      string
 		status    int
@@ -467,6 +495,7 @@ func TestFetchManagedCloudflareTunnelRetries429And5xx(t *testing.T) {
 
 	for _, testCase := range tests {
 		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
 			client := newResponseRetryTestClient(t)
 			attempts := 0
 			client.secretClient.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
@@ -497,6 +526,8 @@ func TestFetchManagedCloudflareTunnelRetries429And5xx(t *testing.T) {
 }
 
 func TestFetchManagedCloudflareTunnelStopsWhenContextCanceledDuringRetryWait(t *testing.T) {
+	t.Parallel()
+
 	client := newResponseRetryTestClient(t)
 	attempts := 0
 	client.secretClient.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
@@ -528,6 +559,8 @@ func TestFetchManagedCloudflareTunnelStopsWhenContextCanceledDuringRetryWait(t *
 }
 
 func TestFetchManagedCloudflareTunnelDoesNotRetryNonRetryable4xx(t *testing.T) {
+	t.Parallel()
+
 	client := newResponseRetryTestClient(t)
 	attempts := 0
 	client.secretClient.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
@@ -545,6 +578,8 @@ func TestFetchManagedCloudflareTunnelDoesNotRetryNonRetryable4xx(t *testing.T) {
 }
 
 func TestRetryableResponseStatuses(t *testing.T) {
+	t.Parallel()
+
 	for _, statusCode := range []int{
 		http.StatusRequestTimeout,
 		http.StatusTooManyRequests,
@@ -566,6 +601,8 @@ func TestRetryableResponseStatuses(t *testing.T) {
 }
 
 func TestRetryableManagedCloudflareStatuses(t *testing.T) {
+	t.Parallel()
+
 	for _, statusCode := range []int{
 		http.StatusTooManyRequests,
 		http.StatusInternalServerError,

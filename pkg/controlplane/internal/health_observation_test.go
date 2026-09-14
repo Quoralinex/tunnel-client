@@ -29,6 +29,7 @@ func TestResponseDeliveryHealthObservesActualHTTPDisposition(t *testing.T) {
 		{"failed", []int{401}, "failed", 0},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			attempt := 0
 			server := newHTTPTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				code := tc.codes[attempt]

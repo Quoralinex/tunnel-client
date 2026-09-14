@@ -10,6 +10,8 @@ import (
 )
 
 func TestParseUnixBaseURL(t *testing.T) {
+	t.Parallel()
+
 	target, err := Parse(BuildUnixBaseURL("/tmp/tunnel-client-health.sock"))
 	require.NoError(t, err)
 	require.Equal(t, "http://localhost", target.RequestBaseURL)
@@ -19,6 +21,8 @@ func TestParseUnixBaseURL(t *testing.T) {
 }
 
 func TestParseTCPBaseURL(t *testing.T) {
+	t.Parallel()
+
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 	}))

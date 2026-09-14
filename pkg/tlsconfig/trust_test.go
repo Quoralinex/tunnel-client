@@ -14,6 +14,8 @@ import (
 )
 
 func TestTrustReportWithBundle(t *testing.T) {
+	t.Parallel()
+
 	bundlePath := writeTestBundle(t)
 	bundle, err := LoadBundle(bundlePath)
 	if err != nil {
@@ -38,6 +40,8 @@ func TestTrustReportWithBundle(t *testing.T) {
 }
 
 func TestTrustReportSystemTrust(t *testing.T) {
+	t.Parallel()
+
 	report := BuildTrustReport(nil)
 	if report.SystemTrust.Source == "" {
 		t.Fatalf("expected system trust source")

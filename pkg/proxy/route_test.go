@@ -9,6 +9,8 @@ import (
 )
 
 func TestResolveRouteDirect(t *testing.T) {
+	t.Parallel()
+
 	target := mustParseURL(t, "https://example.com")
 	route := ResolveRoute(RouteKindControlPlane, "control-plane", target, nil, config.ProxySourceNone, lookupEnvMap(nil))
 	if route.RouteMode != RouteModeDirect {

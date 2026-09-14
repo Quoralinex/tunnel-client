@@ -70,6 +70,7 @@ func startRuntimesTestProcess(t *testing.T, healthPath string, healthURL string)
 }
 
 func TestRuntimesManagedProcessHelper(t *testing.T) {
+	t.Parallel()
 	if os.Getenv("TUNNEL_CLIENT_RUNTIME_TEST_HELPER") != "1" {
 		return
 	}

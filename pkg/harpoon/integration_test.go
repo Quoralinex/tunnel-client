@@ -635,6 +635,8 @@ func TestHarpoonToolSchemas(t *testing.T) {
 }
 
 func TestHarpoonTemplateInstructionsAndDiscovery(t *testing.T) {
+	t.Parallel()
+
 	const legacyInstructions = "Harpoon provides a constrained outbound HTTP client. Use list_targets to see allowlisted targets and call_target to make GET/POST/PUT requests with strict size, timeout, and redirect limits. get_oauth_target_audience is a narrow opt-in lookup for OAuth token-endpoint private_key_jwt audiences. Harpoon cannot reach arbitrary hosts or paths outside the configured allowlist."
 	const templateRoute = "For entries with template_version and parameters_schema, use call_target_template with the label and all parameters declared by parameters_schema; each value must satisfy that schema."
 	for _, tc := range []struct {
@@ -654,6 +656,7 @@ func TestHarpoonTemplateInstructionsAndDiscovery(t *testing.T) {
 		{name: "exact after templates", exact: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			var targets []Target
 			if tc.exact {
 				targets = append(targets, Target{Label: "exact", BaseURL: mustParseURL(t, "https://exact.example/resource")})
@@ -750,6 +753,8 @@ func TestHarpoonTemplateInstructionsAndDiscovery(t *testing.T) {
 }
 
 func TestHarpoonInvokesTemplateFromTargetDiscovery(t *testing.T) {
+	t.Parallel()
+
 	const credential = "Bearer private-fixed-credential"
 	const responseBody = "opaque upstream response"
 	type observedRequest struct{ path, query, authorization, tag string }

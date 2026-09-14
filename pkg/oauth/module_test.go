@@ -94,6 +94,8 @@ func (b *blockingRecordingBus) PublishAndWait(ctx context.Context, bundle hostbu
 }
 
 func TestLogDiscoveredURLsRedactsSensitiveURLParts(t *testing.T) {
+	t.Parallel()
+
 	sensitiveURL, err := url.Parse("https://client:credential@auth.internal/oauth/token?client_id=identifier#state=fragment-value")
 	if err != nil {
 		t.Fatalf("parse sensitive url: %v", err)
@@ -142,6 +144,8 @@ func TestLogDiscoveredURLsRedactsSensitiveURLParts(t *testing.T) {
 }
 
 func TestOAuthDiscoveryPublishesPRMDBundle(t *testing.T) {
+	t.Parallel()
+
 	mux := http.NewServeMux()
 	server := httptest.NewServer(mux)
 	defer server.Close()
@@ -257,6 +261,8 @@ func TestOAuthDiscoveryPublishesPRMDBundle(t *testing.T) {
 }
 
 func TestOAuthStartupCatalogWaitsForHostRegistrationAcknowledgement(t *testing.T) {
+	t.Parallel()
+
 	server := newStartupCatalogOAuthServer(t)
 	serverURL, err := url.Parse(server.URL)
 	if err != nil {
@@ -336,6 +342,8 @@ func TestOAuthStartupCatalogWaitsForHostRegistrationAcknowledgement(t *testing.T
 }
 
 func TestOAuthModulePublishesDiscoveredBundleToLegacyHostBus(t *testing.T) {
+	t.Parallel()
+
 	server := newStartupCatalogOAuthServer(t)
 	serverURL, err := url.Parse(server.URL)
 	if err != nil {
@@ -400,6 +408,8 @@ func TestOAuthModulePublishesDiscoveredBundleToLegacyHostBus(t *testing.T) {
 }
 
 func TestOAuthStartupCatalogRecordsHardRegistrationFailure(t *testing.T) {
+	t.Parallel()
+
 	server := newStartupCatalogOAuthServer(t)
 	serverURL, err := url.Parse(server.URL)
 	if err != nil {
@@ -463,6 +473,8 @@ func newStartupCatalogOAuthServer(t *testing.T) *httptest.Server {
 }
 
 func TestOAuthDiscoveryDisabledWhenMainChannelNotEnabled(t *testing.T) {
+	t.Parallel()
+
 	requestSeen := make(chan struct{})
 	var requestOnce sync.Once
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -536,6 +548,8 @@ func TestOAuthDiscoveryDisabledWhenMainChannelNotEnabled(t *testing.T) {
 }
 
 func TestOAuthDiscoveryRequiresBus(t *testing.T) {
+	t.Parallel()
+
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"resource":"https://resource.internal/"}`))

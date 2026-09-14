@@ -7,6 +7,8 @@ import (
 )
 
 func TestBuildVersion(t *testing.T) {
+	t.Parallel()
+
 	if got := buildVersion("1.2.3", ""); got != "1.2.3" {
 		t.Fatalf("expected base version, got %q", got)
 	}
@@ -17,12 +19,16 @@ func TestBuildVersion(t *testing.T) {
 }
 
 func TestEmbeddedSourceVersionIsStableRelease(t *testing.T) {
+	t.Parallel()
+
 	if got := strings.TrimSpace(sourceSemanticVersion); got != "0.0.14" {
 		t.Fatalf("expected source VERSION to be 0.0.14, got %q", got)
 	}
 }
 
 func TestDetectBuildGitSHA(t *testing.T) {
+	t.Parallel()
+
 	emptyRead := func() (*debug.BuildInfo, bool) { return nil, false }
 	if got := detectBuildGitSHAFrom(emptyRead); got != "" {
 		t.Fatalf("expected empty sha when build info unavailable, got %q", got)
@@ -48,6 +54,7 @@ func TestDetectBuildGitSHA(t *testing.T) {
 }
 
 func TestInitVersionUpdatesStaticBuildMetadata(t *testing.T) {
+	// Keep serial because this test changes process-wide version metadata.
 	restoreVersionGlobals(t)
 
 	semanticVersion = "1.2.3"
@@ -97,6 +104,7 @@ func TestInitVersionUpdatesStaticBuildMetadata(t *testing.T) {
 }
 
 func TestInitVersionPreservesLinkedGitSHA(t *testing.T) {
+	// Keep serial because this test changes process-wide version metadata.
 	restoreVersionGlobals(t)
 
 	semanticVersion = "1.2.3"
@@ -122,6 +130,7 @@ func TestInitVersionPreservesLinkedGitSHA(t *testing.T) {
 }
 
 func TestInitVersionWithoutGitMetadataUsesSemanticVersionForFullFlavor(t *testing.T) {
+	// Keep serial because this test changes process-wide version metadata.
 	restoreVersionGlobals(t)
 
 	semanticVersion = "1.2.3"
@@ -146,6 +155,7 @@ func TestInitVersionWithoutGitMetadataUsesSemanticVersionForFullFlavor(t *testin
 }
 
 func TestInitVersionWithoutGitMetadataUsesSemanticVersionForRuntimeFlavor(t *testing.T) {
+	// Keep serial because this test changes process-wide version metadata.
 	restoreVersionGlobals(t)
 
 	semanticVersion = "1.2.3"
@@ -167,6 +177,7 @@ func TestInitVersionWithoutGitMetadataUsesSemanticVersionForRuntimeFlavor(t *tes
 }
 
 func TestInitVersionUsesSourceVersionAndStaticDefaults(t *testing.T) {
+	// Keep serial because this test changes process-wide version metadata.
 	restoreVersionGlobals(t)
 
 	semanticVersion = fallbackSemanticVersion

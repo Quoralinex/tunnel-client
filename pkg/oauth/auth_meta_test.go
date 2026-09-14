@@ -49,6 +49,8 @@ func authServerMetadataAttemptByURL(
 }
 
 func TestFetchAuthServerMetadata(t *testing.T) {
+	t.Parallel()
+
 	mux := http.NewServeMux()
 	server := httptest.NewServer(mux)
 	defer server.Close()
@@ -104,6 +106,8 @@ func TestFetchAuthServerMetadata(t *testing.T) {
 }
 
 func TestFetchAuthServerMetadataFallsBackToOIDCWellKnown(t *testing.T) {
+	t.Parallel()
+
 	mux := http.NewServeMux()
 	server := httptest.NewServer(mux)
 	defer server.Close()
@@ -163,6 +167,8 @@ func TestFetchAuthServerMetadataRejectsCrossOriginRedirectBeforeDial(t *testing.
 }
 
 func TestFetchAuthServerMetadataSupportsAppendStyleOIDCPath(t *testing.T) {
+	t.Parallel()
+
 	mux := http.NewServeMux()
 	server := httptest.NewServer(mux)
 	defer server.Close()
@@ -203,6 +209,8 @@ func TestFetchAuthServerMetadataSupportsAppendStyleOIDCPath(t *testing.T) {
 }
 
 func TestFetchAuthServerMetadataWithResultIncludesAttempts(t *testing.T) {
+	t.Parallel()
+
 	mux := http.NewServeMux()
 	server := httptest.NewServer(mux)
 	defer server.Close()
@@ -264,6 +272,8 @@ func TestFetchAuthServerMetadataWithResultIncludesAttempts(t *testing.T) {
 }
 
 func TestFetchAuthServerMetadataWithResultAcceptsIssuerMismatch(t *testing.T) {
+	t.Parallel()
+
 	mux := http.NewServeMux()
 	server := httptest.NewServer(mux)
 	defer server.Close()
@@ -324,6 +334,8 @@ func TestFetchAuthServerMetadataWithResultAcceptsIssuerMismatch(t *testing.T) {
 }
 
 func TestFetchAuthServerMetadataWithResultPrefersExactIssuerMatchOverMismatch(t *testing.T) {
+	t.Parallel()
+
 	mux := http.NewServeMux()
 	server := httptest.NewServer(mux)
 	defer server.Close()
@@ -414,6 +426,8 @@ func TestFetchAuthServerMetadataWithResultPrefersExactIssuerMatchOverMismatch(t 
 }
 
 func TestFetchAuthServerMetadataRetriesOnlyAfterAllTimeouts(t *testing.T) {
+	t.Parallel()
+
 	issuerURL := "https://issuer-user-secret:issuer-password-secret@issuer.example.com/issuer-path-secret?issuer-query-key=issuer-query-secret#issuer-fragment-secret"
 	parsedIssuer, err := url.Parse(issuerURL)
 	if err != nil {
@@ -493,6 +507,8 @@ func TestFetchAuthServerMetadataRetriesOnlyAfterAllTimeouts(t *testing.T) {
 }
 
 func TestFetchAuthServerMetadataInvalidIssuerPreservesURLError(t *testing.T) {
+	t.Parallel()
+
 	const issuerURL = "https://invalid-user-secret:invalid-password-secret@issuer.example.com/invalid-path-secret%zz?invalid-query-secret=value#invalid-fragment-secret"
 
 	_, _, fetchErr := FetchAuthServerMetadataWithResult(context.Background(), http.DefaultClient, issuerURL)
@@ -517,6 +533,8 @@ func TestFetchAuthServerMetadataInvalidIssuerPreservesURLError(t *testing.T) {
 }
 
 func TestBuildAuthServerMetadataCandidateURLsPathfulIssuerPrefersAppendStyle(t *testing.T) {
+	t.Parallel()
+
 	issuerURL := "https://example.com/tenant/v2.0"
 	candidates, err := buildAuthServerMetadataCandidateURLs(issuerURL)
 	if err != nil {

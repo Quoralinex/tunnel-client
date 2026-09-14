@@ -209,24 +209,30 @@ func TestManagedHealthFileRejectsSiblingEscape(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("symlink permissions vary on Windows")
 	}
-	root := state.Root{Path: t.TempDir()}
-	require.NoError(t, state.EnsureDirs(root))
-	contents := "private admin profile material"
-	sibling := filepath.Join(root.Path, "admin_profiles.yaml")
-	require.NoError(t, os.WriteFile(sibling, []byte(contents), 0o600))
-	path := ProfileHealthURLFile("docs", root)
-	require.NoError(t, os.Symlink("../admin_profiles.yaml", path))
-	t.Run("read", func(t *testing.T) {
-		require.Empty(t, ReadManagedHealthURL(root, path))
-	})
-	t.Run("info", func(t *testing.T) {
-		_, err := ManagedFileInfo(root, "health", path)
-		require.Error(t, err)
-	})
-	require.NoError(t, RemoveManagedFile(root, "health", path))
-	data, err := os.ReadFile(sibling)
-	require.NoError(t, err)
-	require.Equal(t, contents, string(data))
+	for _, operation := range []string{"read", "info", "remove"} {
+		t.Run(operation, func(t *testing.T) {
+			t.Parallel()
+			root := state.Root{Path: t.TempDir()}
+			require.NoError(t, state.EnsureDirs(root))
+			contents := "private admin profile material"
+			sibling := filepath.Join(root.Path, "admin_profiles.yaml")
+			require.NoError(t, os.WriteFile(sibling, []byte(contents), 0o600))
+			path := ProfileHealthURLFile("docs", root)
+			require.NoError(t, os.Symlink("../admin_profiles.yaml", path))
+			switch operation {
+			case "read":
+				require.Empty(t, ReadManagedHealthURL(root, path))
+			case "info":
+				_, err := ManagedFileInfo(root, "health", path)
+				require.Error(t, err)
+			case "remove":
+				require.NoError(t, RemoveManagedFile(root, "health", path))
+			}
+			data, err := os.ReadFile(sibling)
+			require.NoError(t, err)
+			require.Equal(t, contents, string(data))
+		})
+	}
 }
 
 func TestManagedHealthFilePreservesAliasWithinHealthDirectory(t *testing.T) {

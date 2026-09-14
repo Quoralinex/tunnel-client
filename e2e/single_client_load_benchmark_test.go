@@ -75,6 +75,8 @@ func TestSingleTunnelClientLoadHarnessSmoke(t *testing.T) {
 }
 
 func TestFinalJSONRPCBodyUsesLastSSEEvent(t *testing.T) {
+	t.Parallel()
+
 	body := []byte("event: message\ndata: {\"jsonrpc\":\"2.0\",\"method\":\"notifications/progress\"}\n\ndata: {\"jsonrpc\":\"2.0\",\"id\":\"tool-1\",\"result\":{\"ok\":true}}\n\n")
 	want := []byte("{\"jsonrpc\":\"2.0\",\"id\":\"tool-1\",\"result\":{\"ok\":true}}")
 	if got := finalJSONRPCBody(body); !bytes.Equal(got, want) {

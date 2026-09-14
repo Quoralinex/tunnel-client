@@ -22,6 +22,8 @@ func (f roundTripperFunc) RoundTrip(req *http.Request) (*http.Response, error) {
 }
 
 func TestLoggingRoundTripperEmitsRawHTTP(t *testing.T) {
+	t.Parallel()
+
 	t.Helper()
 
 	var buf bytes.Buffer
@@ -60,6 +62,8 @@ func TestLoggingRoundTripperEmitsRawHTTP(t *testing.T) {
 }
 
 func TestLoggingRoundTripperDoesNotEmitSyntheticHTTPTraceEvents(t *testing.T) {
+	t.Parallel()
+
 	t.Helper()
 
 	const requestBody = "request body must reach the real transport"
@@ -113,6 +117,8 @@ func TestLoggingRoundTripperDoesNotEmitSyntheticHTTPTraceEvents(t *testing.T) {
 }
 
 func TestLoggingRoundTripperSkipsWhenDisabled(t *testing.T) {
+	t.Parallel()
+
 	t.Helper()
 
 	var buf bytes.Buffer
@@ -152,6 +158,8 @@ func (r *countingReadCloser) Read(p []byte) (int, error) {
 func (*countingReadCloser) Close() error { return nil }
 
 func TestLoggingRoundTripperRespectsRuntimeLogLevel(t *testing.T) {
+	t.Parallel()
+
 	const requestText = "request body"
 	const responseText = "data: response body\n\n"
 	var buf bytes.Buffer
@@ -178,43 +186,41 @@ func TestLoggingRoundTripperRespectsRuntimeLogLevel(t *testing.T) {
 
 	// Reuse the transport while changing the live level in both directions.
 	for _, logLevel := range []slog.Level{slog.LevelInfo, slog.LevelDebug, slog.LevelInfo} {
-		t.Run(logLevel.String(), func(t *testing.T) {
-			level.Set(logLevel)
-			buf.Reset()
-			requestBody = &countingReadCloser{Reader: strings.NewReader(requestText)}
-			responseBody = &countingReadCloser{Reader: strings.NewReader(responseText)}
-			req, err := http.NewRequest(http.MethodPost, "http://example.com/raw", requestBody)
-			if err != nil {
-				t.Fatalf("NewRequest: %v", err)
-			}
-			resp, err := rt.RoundTrip(req)
-			if err != nil {
-				t.Fatalf("RoundTrip: %v", err)
-			}
-			defer func() { _ = resp.Body.Close() }()
-			if logLevel != slog.LevelDebug && requestReadsBeforeBase != 0 {
-				t.Errorf("request body read %d times before reaching the transport", requestReadsBeforeBase)
-			}
-			if receivedRequestBody != requestText {
-				t.Errorf("transport request body = %q, want %q", receivedRequestBody, requestText)
-			}
-			if logLevel != slog.LevelDebug && responseBody.reads != 0 {
-				t.Errorf("response stream read %d times before reaching the caller", responseBody.reads)
-			}
-			body, err := io.ReadAll(resp.Body)
-			if err != nil || string(body) != responseText {
-				t.Fatalf("caller response body = %q, error = %v", body, err)
-			}
-			if logLevel == slog.LevelDebug {
-				for _, snippet := range []string{"raw http request", "raw http response", requestText, "response body"} {
-					if !strings.Contains(buf.String(), snippet) {
-						t.Errorf("debug logs missing %q: %s", snippet, buf.String())
-					}
+		level.Set(logLevel)
+		buf.Reset()
+		requestBody = &countingReadCloser{Reader: strings.NewReader(requestText)}
+		responseBody = &countingReadCloser{Reader: strings.NewReader(responseText)}
+		req, err := http.NewRequest(http.MethodPost, "http://example.com/raw", requestBody)
+		if err != nil {
+			t.Fatalf("NewRequest: %v", err)
+		}
+		resp, err := rt.RoundTrip(req)
+		if err != nil {
+			t.Fatalf("RoundTrip: %v", err)
+		}
+		defer func() { _ = resp.Body.Close() }()
+		if logLevel != slog.LevelDebug && requestReadsBeforeBase != 0 {
+			t.Errorf("request body read %d times before reaching the transport", requestReadsBeforeBase)
+		}
+		if receivedRequestBody != requestText {
+			t.Errorf("transport request body = %q, want %q", receivedRequestBody, requestText)
+		}
+		if logLevel != slog.LevelDebug && responseBody.reads != 0 {
+			t.Errorf("response stream read %d times before reaching the caller", responseBody.reads)
+		}
+		body, err := io.ReadAll(resp.Body)
+		if err != nil || string(body) != responseText {
+			t.Fatalf("caller response body = %q, error = %v", body, err)
+		}
+		if logLevel == slog.LevelDebug {
+			for _, snippet := range []string{"raw http request", "raw http response", requestText, "response body"} {
+				if !strings.Contains(buf.String(), snippet) {
+					t.Errorf("debug logs missing %q: %s", snippet, buf.String())
 				}
-			} else if buf.Len() != 0 {
-				t.Errorf("unexpected logs with debug disabled: %s", buf.String())
 			}
-		})
+		} else if buf.Len() != 0 {
+			t.Errorf("unexpected logs with debug disabled: %s", buf.String())
+		}
 	}
 }
 
@@ -224,6 +230,8 @@ func (errReadCloser) Read([]byte) (int, error) { return 0, errors.New("read fail
 func (errReadCloser) Close() error             { return nil }
 
 func TestLoggingRoundTripperLogsDumpErrors(t *testing.T) {
+	t.Parallel()
+
 	t.Helper()
 
 	var buf bytes.Buffer

@@ -20,7 +20,7 @@ var runtimeArtifactBuilds = struct {
 	dirs  []string
 }{paths: make(map[runtimeArtifactBuildKey]string)}
 
-// TestMain caps test.parallel so at most two e2e tests run concurrently.
+// TestMain bounds the default concurrency while honoring an explicit -parallel.
 func TestMain(m *testing.M) {
 	const maxParallel = 2
 
@@ -28,6 +28,7 @@ func TestMain(m *testing.M) {
 		if cur, err := strconv.Atoi(f.Value.String()); err != nil || cur > maxParallel {
 			_ = f.Value.Set(strconv.Itoa(maxParallel))
 		}
+		flag.Parse()
 		fmt.Fprintf(os.Stderr, "e2e: test.parallel=%s\n", f.Value.String())
 	}
 

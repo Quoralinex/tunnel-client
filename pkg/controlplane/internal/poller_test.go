@@ -77,6 +77,8 @@ func (f *recordingFetcher) Poll(ctx context.Context, limit int) ([]controlplane.
 }
 
 func TestPollerWritesAtMostQueueCapacity(t *testing.T) {
+	t.Parallel()
+
 	queue := make(chan controlplane.PolledCommand, 2)
 	queueAdapter := &chanQueue{ch: queue}
 	fetcher := &recordingFetcher{
@@ -163,6 +165,8 @@ func TestPollLimitCapsControlPlaneBatchSize(t *testing.T) {
 }
 
 func TestPollerRecordsQueueDropsAndCommandAge(t *testing.T) {
+	t.Parallel()
+
 	queue := &failingQueue{}
 	fetcher := &recordingFetcher{
 		t: t,
@@ -216,6 +220,8 @@ func (u untypedCommand) Channel() types.Channel     { return types.DefaultChanne
 func (u untypedCommand) SessionID() (string, bool)  { return "", false }
 
 func TestPollerRecordsInvalidCommandTypeDrops(t *testing.T) {
+	t.Parallel()
+
 	queueCh := make(chan controlplane.PolledCommand, 2)
 	queue := &chanQueue{ch: queueCh}
 	fetcher := &recordingFetcher{
@@ -268,6 +274,8 @@ func TestPollerRecordsInvalidCommandTypeDrops(t *testing.T) {
 }
 
 func TestBuildBaseDefaultsChannel(t *testing.T) {
+	t.Parallel()
+
 	raw := wiretypes.BaseRawPolledCommand{
 		RequestID:   "req-1",
 		ShardToken:  "shard-1",
@@ -285,6 +293,8 @@ func TestBuildBaseDefaultsChannel(t *testing.T) {
 }
 
 func TestBuildBasePreservesChannel(t *testing.T) {
+	t.Parallel()
+
 	raw := wiretypes.BaseRawPolledCommand{
 		RequestID:   "req-2",
 		ShardToken:  "shard-2",
@@ -303,6 +313,8 @@ func TestBuildBasePreservesChannel(t *testing.T) {
 }
 
 func TestPollerRecordsContextCanceledQueueDrops(t *testing.T) {
+	t.Parallel()
+
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -341,6 +353,8 @@ func TestPollerRecordsContextCanceledQueueDrops(t *testing.T) {
 }
 
 func TestPollerTagsPollErrors(t *testing.T) {
+	t.Parallel()
+
 	queue := &chanQueue{ch: make(chan controlplane.PolledCommand, 1)}
 	fetcher := &erroringFetcher{err: context.DeadlineExceeded, pollCh: make(chan struct{}, 1)}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
@@ -869,6 +883,8 @@ func (f *sequenceFetcher) Poll(ctx context.Context, limit int) ([]controlplane.P
 }
 
 func TestPollerLogsRecoveryAfterError(t *testing.T) {
+	t.Parallel()
+
 	queue := &chanQueue{ch: make(chan controlplane.PolledCommand, 1)}
 	var output strings.Builder
 	logger := slog.New(slog.NewTextHandler(&output, nil))
@@ -900,6 +916,8 @@ func TestPollerLogsRecoveryAfterError(t *testing.T) {
 }
 
 func TestPollerLogsAPIStatusErrorDetails(t *testing.T) {
+	t.Parallel()
+
 	queue := &chanQueue{ch: make(chan controlplane.PolledCommand, 1)}
 	var output strings.Builder
 	logger := slog.New(slog.NewTextHandler(&output, nil))
@@ -951,6 +969,8 @@ func TestPollerLogsAPIStatusErrorDetails(t *testing.T) {
 }
 
 func TestPollerPollsWithGuardrailedTimeoutAndRetries(t *testing.T) {
+	t.Parallel()
+
 	queue := &chanQueue{ch: make(chan controlplane.PolledCommand, 1)}
 	fetcher := &timeoutRecordingFetcher{pollCh: make(chan struct{}, 8)}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
@@ -997,6 +1017,8 @@ func TestPollerPollsWithGuardrailedTimeoutAndRetries(t *testing.T) {
 }
 
 func TestPollerRetriesOnCanceledErrorWithoutStop(t *testing.T) {
+	t.Parallel()
+
 	queue := &chanQueue{ch: make(chan controlplane.PolledCommand, 1)}
 	fetcher := &erroringFetcher{err: context.Canceled, pollCh: make(chan struct{}, 4)}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
@@ -1039,6 +1061,8 @@ func TestPollerRetriesOnCanceledErrorWithoutStop(t *testing.T) {
 }
 
 func TestPollerStopsWithoutBackoffOnCancel(t *testing.T) {
+	t.Parallel()
+
 	queue := &chanQueue{ch: make(chan controlplane.PolledCommand, 1)}
 	fetcher := &cancelAwareFetcher{pollStarted: make(chan struct{}, 1)}
 	var output strings.Builder

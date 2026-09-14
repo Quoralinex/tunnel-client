@@ -17,7 +17,7 @@ import (
 )
 
 func TestRuntimeCloudflaredRootCommandExposesOnlyRuntimeSurface(t *testing.T) {
-	setLinkedRuntimeCloudflaredFlavor(t, version.FlavorRuntimeCloudflared)
+	t.Parallel()
 
 	stdout, err := executeRuntimeCloudflaredCommand(t, nil, "--help")
 	require.NoError(t, err)
@@ -44,7 +44,7 @@ func TestRuntimeCloudflaredRootCommandExposesOnlyRuntimeSurface(t *testing.T) {
 }
 
 func TestRuntimeCloudflaredRootCommandDisablesImplicitHelpSubcommand(t *testing.T) {
-	setLinkedRuntimeCloudflaredFlavor(t, version.FlavorRuntimeCloudflared)
+	t.Parallel()
 
 	root := newRootCommand(func(string) (string, bool) { return "", false }, io.Discard, io.Discard)
 	root.InitDefaultHelpCmd()
@@ -63,7 +63,7 @@ func TestRuntimeCloudflaredRootCommandDisablesImplicitHelpSubcommand(t *testing.
 }
 
 func TestRuntimeCloudflaredRunHelpAddsOnlyCompanionFlags(t *testing.T) {
-	setLinkedRuntimeCloudflaredFlavor(t, version.FlavorRuntimeCloudflared)
+	t.Parallel()
 
 	stdout, err := executeRuntimeCloudflaredCommand(t, nil, "run", "--help")
 	require.NoError(t, err)
@@ -87,6 +87,7 @@ func TestRuntimeCloudflaredRunHelpAddsOnlyCompanionFlags(t *testing.T) {
 }
 
 func TestRuntimeCloudflaredRunCommandMatchesCanonicalCobraFlagSurface(t *testing.T) {
+	t.Parallel()
 	root := newRootCommand(func(string) (string, bool) { return "", false }, io.Discard, io.Discard)
 	run, _, err := root.Find([]string{"run"})
 	require.NoError(t, err)
@@ -100,7 +101,7 @@ func TestRuntimeCloudflaredRunCommandMatchesCanonicalCobraFlagSurface(t *testing
 }
 
 func TestRuntimeCloudflaredRejectsUIFlagAndProfileKey(t *testing.T) {
-	setLinkedRuntimeCloudflaredFlavor(t, version.FlavorRuntimeCloudflared)
+	t.Parallel()
 
 	_, err := executeRuntimeCloudflaredCommand(t, nil, "run", "--open-web-ui")
 	require.Error(t, err)
@@ -129,7 +130,10 @@ func TestRuntimeCloudflaredRejectsUIFlagAndProfileKey(t *testing.T) {
 }
 
 func TestRuntimeCloudflaredVersionRejectsMismatchedLinkedFlavor(t *testing.T) {
-	setLinkedRuntimeCloudflaredFlavor(t, version.FlavorFull)
+	// Restore the process-wide flavor before parallel command tests start.
+	originalFlavor := version.Flavor
+	t.Cleanup(func() { version.Flavor = originalFlavor })
+	version.Flavor = version.FlavorFull
 
 	output := runtimecli.Version(version.FlavorRuntimeCloudflared)
 	require.Contains(t, output, "invalid runtime build metadata")
@@ -137,11 +141,10 @@ func TestRuntimeCloudflaredVersionRejectsMismatchedLinkedFlavor(t *testing.T) {
 	require.NotContains(t, output, "flavor=runtime-cloudflared")
 }
 
-func setLinkedRuntimeCloudflaredFlavor(t *testing.T, flavor string) {
-	t.Helper()
-	originalFlavor := version.Flavor
-	version.Flavor = flavor
-	t.Cleanup(func() { version.Flavor = originalFlavor })
+func TestMain(m *testing.M) {
+	// Match this binary flavor once before parallel tests start.
+	version.Flavor = version.FlavorRuntimeCloudflared
+	os.Exit(m.Run())
 }
 
 func executeRuntimeCloudflaredCommand(t *testing.T, env map[string]string, args ...string) (string, error) {

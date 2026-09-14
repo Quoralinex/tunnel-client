@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -102,7 +103,6 @@ func newRuntimeFixture(t *testing.T, mcpOptions ...mockmcpserver.Option) runtime
 
 type runtimeScenario struct {
 	name          string
-	subjects      []runtimeSubject
 	profilePath   string
 	healthURLFile string
 	pidFile       string
@@ -190,16 +190,27 @@ type runtimeProxyObservation struct {
 	route  string
 }
 
-func runRuntimeScenario(t *testing.T, scenario runtimeScenario) map[string]runtimeObservation {
+// runRuntimeScenario gives every subject its own profile, output paths, and
+// companion markers. The group joins the parallel subjects before callers
+// compare their observations.
+func runRuntimeScenario(t *testing.T, subjects []runtimeSubject, newScenario func(*testing.T) runtimeScenario) map[string]runtimeObservation {
 	t.Helper()
 
-	require.NotEmpty(t, scenario.subjects, "scenario needs at least one subject")
-	observations := make(map[string]runtimeObservation, len(scenario.subjects))
-	for _, subject := range scenario.subjects {
-		t.Run(subject.name, func(t *testing.T) {
-			observations[subject.name] = runRuntimeSubject(t, subject, scenario)
-		})
-	}
+	require.NotEmpty(t, subjects, "scenario needs at least one subject")
+	observations := make(map[string]runtimeObservation, len(subjects))
+	var mu sync.Mutex
+	// This synchronous group is a join barrier, not an independent test case.
+	t.Run("subjects", func(t *testing.T) {
+		for _, subject := range subjects {
+			t.Run(subject.name, func(t *testing.T) {
+				t.Parallel()
+				observation := runRuntimeSubject(t, subject, newScenario(t))
+				mu.Lock()
+				observations[subject.name] = observation
+				mu.Unlock()
+			})
+		}
+	})
 	return observations
 }
 

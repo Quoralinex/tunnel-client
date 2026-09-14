@@ -23,6 +23,8 @@ const retryingStartupProbeLog = "retrying MCP startup probe"
 // TestStartupWaitDelaysPollingUntilMCPListenerBinds covers the sidecar startup
 // race where tunnel-client starts before its pod-local MCP proxy has bound.
 func TestStartupWaitDelaysPollingUntilMCPListenerBinds(t *testing.T) {
+	t.Parallel()
+
 	delayedAddr := reserveLoopbackAddr(t)
 	delayedURL := mustParseURL(t, "http://"+delayedAddr)
 	retryLog := newSubstringSignalWriter(retryingStartupProbeLog)

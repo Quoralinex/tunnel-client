@@ -15,6 +15,8 @@ import (
 )
 
 func TestOpenAPIContractSurface(t *testing.T) {
+	t.Parallel()
+
 	spec, raw := readOpenAPISpec(t)
 
 	if got := mustString(t, spec["openapi"], "openapi"); got != "3.1.0" {
@@ -370,6 +372,8 @@ func assertTunnelFailureContract(t *testing.T, spec map[string]any, componentSch
 }
 
 func TestOpenAPIExamplesMatchWireTypes(t *testing.T) {
+	t.Parallel()
+
 	spec, _ := readOpenAPISpec(t)
 
 	poll := operation(t, spec, "/v1/tunnels/{tunnel_id}/poll", "get")
@@ -440,6 +444,8 @@ func assertResponseTimeoutValue(t *testing.T, value *ResponseTimeoutDuration, wa
 }
 
 func TestGoResponsePayloadsMatchOpenAPI(t *testing.T) {
+	t.Parallel()
+
 	spec, _ := readOpenAPISpec(t)
 	response := operation(t, spec, "/v1/tunnels/{tunnel_id}/response", "post")
 	requestContent := requestBodyContent(t, response)
@@ -476,6 +482,7 @@ func TestGoResponsePayloadsMatchOpenAPI(t *testing.T) {
 
 	for _, payload := range payloads {
 		t.Run(string(payload.ResponseType), func(t *testing.T) {
+			t.Parallel()
 			data, err := json.Marshal(payload)
 			if err != nil {
 				t.Fatalf("marshal Go response payload: %v", err)
@@ -490,6 +497,8 @@ func TestGoResponsePayloadsMatchOpenAPI(t *testing.T) {
 }
 
 func TestSynthesizedFailureResponseMatchesTunnelServiceOpenAPI(t *testing.T) {
+	t.Parallel()
+
 	spec, _ := readOpenAPISpec(t)
 	response := operation(t, spec, "/v1/tunnels/{tunnel_id}/response", "post")
 	requestContent := requestBodyContent(t, response)
@@ -530,6 +539,8 @@ func TestSynthesizedFailureResponseMatchesTunnelServiceOpenAPI(t *testing.T) {
 }
 
 func TestGoDiscriminatorsCoverPublishedOpenAPI(t *testing.T) {
+	t.Parallel()
+
 	spec, _ := readOpenAPISpec(t)
 	schemas := schemas(t, spec)
 

@@ -19,8 +19,11 @@ import (
 )
 
 func TestComponentHealthDiscoversOptionalFxProviders(t *testing.T) {
+	t.Parallel()
+
 	for _, includeExtension := range []bool{false, true} {
 		t.Run(map[bool]string{false: "absent", true: "registered"}[includeExtension], func(t *testing.T) {
+			t.Parallel()
 			meter := sdkmetric.NewMeterProvider()
 			t.Cleanup(func() { require.NoError(t, meter.Shutdown(context.Background())) })
 			var service Service

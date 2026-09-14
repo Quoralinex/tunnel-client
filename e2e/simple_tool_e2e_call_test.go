@@ -37,6 +37,7 @@ func TestHarnessExecuteScenariousWithInitializationAndTool(t *testing.T) {
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			runSimpleToolScenarioWithHarnessOptions(t, tc.harnessOptions, nil)
 		})
 	}
@@ -80,6 +81,7 @@ func TestCurrentClientHandlesLegacyOrMalformedResponseTimeout(t *testing.T) {
 		{name: "malformed", responseTimeout: json.RawMessage(`"0s "`)},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			const requestID = "cmd-timeout-fallback"
 			observedCommand := make(chan controlplane.PolledCommand, 1)
 			command := mocktunnelservice.NewCommand(
@@ -201,6 +203,7 @@ func TestControlPlaneRequestsSendClientMetadata(t *testing.T) {
 		},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
 			var harnessOptions []harnesspkg.HarnessOption
 			if testCase.enableHarpoon {
 				harnessOptions = append(harnessOptions, harnesspkg.WithClientConfig(func(cfg *config.Config) {

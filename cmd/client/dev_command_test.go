@@ -17,6 +17,7 @@ import (
 )
 
 func TestDevProxyFlagsExposeQueueBackendAndUnixIngress(t *testing.T) {
+	t.Parallel()
 	cmd := newDevProxyCommand(&bytes.Buffer{}, &bytes.Buffer{})
 	require.Equal(t, "127.0.0.1:0", cmd.Flags().Lookup("listen").DefValue)
 	require.Equal(t, "", cmd.Flags().Lookup("listen-unix-socket").DefValue)
@@ -25,6 +26,7 @@ func TestDevProxyFlagsExposeQueueBackendAndUnixIngress(t *testing.T) {
 }
 
 func TestDevProxyRejectsMutuallyExclusiveIngressFlags(t *testing.T) {
+	t.Parallel()
 	cmd := newDevProxyCommand(&bytes.Buffer{}, &bytes.Buffer{})
 	cmd.SetArgs([]string{
 		"--listen", "127.0.0.1:0",
@@ -36,6 +38,7 @@ func TestDevProxyRejectsMutuallyExclusiveIngressFlags(t *testing.T) {
 }
 
 func TestDevProxyRejectsUnknownQueueBackend(t *testing.T) {
+	t.Parallel()
 	cmd := newDevProxyCommand(&bytes.Buffer{}, &bytes.Buffer{})
 	cmd.SetArgs([]string{
 		"--engine-queue-backend", "disk",
@@ -156,6 +159,7 @@ func TestDevMCPStubAcceptsSelfContainedModernRequests(t *testing.T) {
 		{name: "uppercase", arguments: map[string]any{"input": "openai tunnel"}, wantText: "OPENAI TUNNEL"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			response := postDevMCPStubRequest(t, endpoint, "2026-07-28", "", "tools/call", map[string]any{
 				"name": tc.name, "arguments": tc.arguments,
 			})
@@ -247,6 +251,7 @@ func TestDevMCPStubRejectsInvalidPOSTBodies(t *testing.T) {
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, server.URL+"/mcp", strings.NewReader(tc.body))
 			require.NoError(t, err)
 			req.ContentLength = -1

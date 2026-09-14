@@ -11,6 +11,8 @@ import (
 )
 
 func TestTemplateConfigExportRedactsEveryFixedHeader(t *testing.T) {
+	t.Parallel()
+
 	cfg := &config.Config{
 		Runtime: config.RuntimeConfig{
 			ConfigFile: "templates.yaml",
@@ -40,6 +42,7 @@ harpoon:
 		"effective configuration": buildEffectiveConfigSnapshot(cfg),
 	} {
 		t.Run(name, func(t *testing.T) {
+			t.Parallel()
 			data, err := json.Marshal(snapshot)
 			if err != nil {
 				t.Fatal(err)

@@ -27,8 +27,11 @@ import (
 )
 
 func TestTemplateOnlyProxyHealthChecksOriginWithConnect(t *testing.T) {
+	t.Parallel()
+
 	for _, useRegistry := range []bool{true, false} {
 		t.Run(fmt.Sprintf("shared_registry_%t", useRegistry), func(t *testing.T) {
+			t.Parallel()
 			const (
 				targetCredential = "Bearer private-target-credential"
 				privateRoute     = "/private-resources/{privateID}"
@@ -160,6 +163,8 @@ func TestTemplateOnlyProxyHealthChecksOriginWithConnect(t *testing.T) {
 }
 
 func TestTemplateProxyHealthRejectsInvalidFallbackPolicy(t *testing.T) {
+	t.Parallel()
+
 	cfg := &config.HarpoonConfig{Targets: []config.HarpoonTarget{{
 		Label: "resource",
 		Template: &runtimeconfig.HarpoonTargetTemplate{
@@ -181,6 +186,8 @@ func TestTemplateProxyHealthRejectsInvalidFallbackPolicy(t *testing.T) {
 }
 
 func TestRecordResultHistoryRetention(t *testing.T) {
+	t.Parallel()
+
 	checker, route := newTestChecker(t)
 	for i := range maxHistoryEntries + 2 {
 		record := CheckRecord{Timestamp: time.Now().Add(time.Duration(i) * time.Second)}
@@ -196,6 +203,8 @@ func TestRecordResultHistoryRetention(t *testing.T) {
 }
 
 func TestRecordResultStateTransitions(t *testing.T) {
+	t.Parallel()
+
 	checker, route := newTestChecker(t)
 	checker.recordResult(route, CheckRecord{Timestamp: time.Now()}, false)
 	state := checker.HealthSummaries()[0].HealthState
@@ -210,6 +219,8 @@ func TestRecordResultStateTransitions(t *testing.T) {
 }
 
 func TestHealthSummariesReturnsDeterministicRouteOrder(t *testing.T) {
+	t.Parallel()
+
 	proxyURL := mustParseURL(t, "http://proxy.example:8080")
 	targetURL := mustParseURL(t, "https://example.com")
 	controlPlaneRoute := proxy.ResolveRoute(proxy.RouteKindControlPlane, "control-plane", targetURL, proxyURL, config.ProxySource("flag"), lookupEnvMap(nil))

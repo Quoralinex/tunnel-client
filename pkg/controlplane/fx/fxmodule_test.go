@@ -272,6 +272,8 @@ func TestBuildMCPServerInfoHeaderRejectsInvalidBindings(t *testing.T) {
 }
 
 func TestRunPollerStartsEvenWhenFetcherBlocks(t *testing.T) {
+	t.Parallel()
+
 	queue := make(controlplane.PolledCommandQueue, 1)
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 

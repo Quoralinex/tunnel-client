@@ -59,6 +59,8 @@ func TestCABundleControlsTLSHandshake(t *testing.T) {
 }
 
 func TestCABundleParsesMultipleCertificates(t *testing.T) {
+	t.Parallel()
+
 	caPEM := mustReadFixture(t, "testdata/test_ca_bundle.pem")
 	certs := mustParsePEMCerts(t, caPEM)
 	if len(certs) < 2 {

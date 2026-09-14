@@ -367,6 +367,7 @@ func TestChannelHTTPClientScopesForwardedHeadersAcrossRedirects(t *testing.T) {
 		},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
 			ctx, carrier, err := internal.ContextWithHeaders(context.Background(), forwardedHeaders)
 			if err != nil {
 				t.Fatalf("ContextWithHeaders failed: %v", err)
@@ -749,6 +750,7 @@ func TestChannelTransportFactoryMTLS(t *testing.T) {
 	bundle := &tlsconfig.Bundle{RootCAs: material.caPool}
 
 	t.Run("request without client certificate fails", func(t *testing.T) {
+		t.Parallel()
 		binding := config.MCPChannelBinding{
 			Channel:       types.DefaultChannel,
 			TransportKind: config.MCPTransportHTTPStreamable,
@@ -779,6 +781,7 @@ func TestChannelTransportFactoryMTLS(t *testing.T) {
 	})
 
 	t.Run("request with client certificate succeeds", func(t *testing.T) {
+		t.Parallel()
 		binding := config.MCPChannelBinding{
 			Channel:           types.DefaultChannel,
 			TransportKind:     config.MCPTransportHTTPStreamable,

@@ -30,6 +30,7 @@ func TestComponentHealthClassifiesWithoutDiscoveryPayloads(t *testing.T) {
 		{name: "failed", err: errors.New("secret"), status: healthstate.StatusDegraded, state: "failed"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			state := NewDiscoveryState()
 			component := newComponentHealth(state, &runtimeconfig.MCPConfig{ServerURL: u})
 			require.Equal(t, healthstate.StatusUnknown, component.Snapshot(time.Now()).Status)

@@ -9,6 +9,8 @@ import (
 )
 
 func TestControlPlaneEndpointsMatchOpenAPIContract(t *testing.T) {
+	t.Parallel()
+
 	spec := readEndpointContract(t)
 	paths, ok := spec["paths"].(map[string]any)
 	if !ok {
@@ -28,6 +30,7 @@ func TestControlPlaneEndpointsMatchOpenAPIContract(t *testing.T) {
 
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
 			path := fmt.Sprintf(testCase.pathFormat, "{tunnel_id}")
 			pathItem, ok := paths[path].(map[string]any)
 			if !ok {

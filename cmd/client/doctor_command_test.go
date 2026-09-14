@@ -311,6 +311,7 @@ func TestDoctorOAuthMetadataCheckCandidates(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			var mu sync.Mutex
 			requestedMetadataPaths := make([]string, 0, 3)
 			var server *httptest.Server

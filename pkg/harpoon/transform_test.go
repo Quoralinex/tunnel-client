@@ -9,6 +9,8 @@ import (
 )
 
 func TestTransformJSONBodyRewritesURLsExactMatch(t *testing.T) {
+	t.Parallel()
+
 	rewriter := newURLRewriter([]Target{
 		{Label: "root", BaseURL: mustParseURL(t, "https://example.com")},
 		{Label: "api", BaseURL: mustParseURL(t, "https://example.com/api")},
@@ -28,6 +30,8 @@ func TestTransformJSONBodyRewritesURLsExactMatch(t *testing.T) {
 }
 
 func TestTransformJSONBodySkipsInvalidJSON(t *testing.T) {
+	t.Parallel()
+
 	rewriter := newURLRewriter([]Target{{Label: "root", BaseURL: mustParseURL(t, "https://example.com")}})
 	body := []byte(`{"url":`)
 	updated, changed := transformJSONBody(body, rewriter)
@@ -36,6 +40,8 @@ func TestTransformJSONBodySkipsInvalidJSON(t *testing.T) {
 }
 
 func TestTransformJSONBodyPreservesShapeWhenRewriting(t *testing.T) {
+	t.Parallel()
+
 	rewriter := newURLRewriter([]Target{
 		{Label: "page", BaseURL: mustParseURL(t, "https://example.com/page.html?x=1#frag")},
 		{Label: "other", BaseURL: mustParseURL(t, "https://example.com/other")},
@@ -67,6 +73,8 @@ func TestTransformJSONBodyPreservesShapeWhenRewriting(t *testing.T) {
 }
 
 func TestTransformJSONBodyNoMatchReturnsOriginalBytes(t *testing.T) {
+	t.Parallel()
+
 	rewriter := newURLRewriter([]Target{{Label: "root", BaseURL: mustParseURL(t, "https://example.com")}})
 	body := []byte(`{ "a": "https://another.example.com/x", "b": [1, 2, 3] }`)
 
@@ -76,6 +84,8 @@ func TestTransformJSONBodyNoMatchReturnsOriginalBytes(t *testing.T) {
 }
 
 func TestTransformJSONBodyTopLevelString(t *testing.T) {
+	t.Parallel()
+
 	rewriter := newURLRewriter([]Target{{Label: "api", BaseURL: mustParseURL(t, "https://example.com/api")}})
 
 	updated, changed := transformJSONBody([]byte(`"https://example.com/api"`), rewriter)
@@ -84,6 +94,8 @@ func TestTransformJSONBodyTopLevelString(t *testing.T) {
 }
 
 func TestTransformJSONBodyNormalizesFormatting(t *testing.T) {
+	t.Parallel()
+
 	rewriter := newURLRewriter([]Target{{Label: "api", BaseURL: mustParseURL(t, "https://example.com/api")}})
 	body := []byte("{\n  \"url\" : \"https://example.com/api\"\n}\n")
 
@@ -94,6 +106,8 @@ func TestTransformJSONBodyNormalizesFormatting(t *testing.T) {
 }
 
 func TestTransformJSONBodyPreservesResourceAndUsesOAuthFieldContextForDuplicateURLs(t *testing.T) {
+	t.Parallel()
+
 	rewriter := newURLRewriter([]Target{
 		{
 			Label:   "oauth-prmd-resource-0",
@@ -143,6 +157,8 @@ func TestTransformJSONBodyPreservesResourceAndUsesOAuthFieldContextForDuplicateU
 }
 
 func TestTransformJSONBodyRewritesNonPRMDResourceField(t *testing.T) {
+	t.Parallel()
+
 	rewriter := newURLRewriter([]Target{
 		{Label: "generic-resource", BaseURL: mustParseURL(t, "https://api.example.test/resource")},
 	})
@@ -156,6 +172,8 @@ func TestTransformJSONBodyRewritesNonPRMDResourceField(t *testing.T) {
 }
 
 func TestTransformHeadersRewritesLocations(t *testing.T) {
+	t.Parallel()
+
 	rewriter := newURLRewriter([]Target{
 		{Label: "api", BaseURL: mustParseURL(t, "https://example.com/api")},
 		{Label: "foo", BaseURL: mustParseURL(t, "https://example.com/foo#next")},

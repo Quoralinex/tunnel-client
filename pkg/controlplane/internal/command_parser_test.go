@@ -77,6 +77,7 @@ func TestResponseDeadlineFromTimeout(t *testing.T) {
 		{name: "valid", timeout: &valid, want: timePointer(receivedAt.Add(4500 * time.Millisecond))},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			got := responseDeadlineFromTimeout(tc.timeout, receivedAt)
 			if tc.want == nil {
 				if got != nil {

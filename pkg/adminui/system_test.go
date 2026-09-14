@@ -32,6 +32,8 @@ func (s stubProxySnapshot) IdentityMap() []proxy.IdentityRecord {
 }
 
 func TestBuildStatusProxyRoutes(t *testing.T) {
+	t.Parallel()
+
 	snapshot := stubProxySnapshot{
 		routes: []proxy.RouteSummary{
 			{Kind: string(proxy.RouteKindControlPlane), Name: "control", RouteMode: "direct", ProxySource: "none"},
@@ -48,6 +50,8 @@ func TestBuildStatusProxyRoutes(t *testing.T) {
 }
 
 func TestBuildHarpoonStatusProxyRoutes(t *testing.T) {
+	t.Parallel()
+
 	snapshot := stubProxySnapshot{
 		routes: []proxy.RouteSummary{
 			{Kind: string(proxy.RouteKindHarpoon), Name: "target", RouteMode: "proxy", ProxySource: "env:HTTP_PROXY"},
@@ -60,6 +64,8 @@ func TestBuildHarpoonStatusProxyRoutes(t *testing.T) {
 }
 
 func TestBuildSystemProxySnapshot(t *testing.T) {
+	t.Parallel()
+
 	snapshot := stubProxySnapshot{
 		identity: []proxy.IdentityRecord{{ProxyID: "id", ProxyURL: "http://proxy:8080", ProxySource: "env:HTTP_PROXY"}},
 		health:   []proxyhealth.RouteHealthSummary{{HealthState: string(proxyhealth.HealthStateDirect)}},
@@ -74,6 +80,8 @@ func TestBuildSystemProxySnapshot(t *testing.T) {
 }
 
 func TestBuildSystemIncludesMainChannelProbeStatus(t *testing.T) {
+	t.Parallel()
+
 	probeState := mcpclient.NewProbeState()
 	probeState.Set(mcpclient.NewProbeHTTPStatusError(
 		http.StatusUnauthorized,
@@ -90,6 +98,8 @@ func TestBuildSystemIncludesMainChannelProbeStatus(t *testing.T) {
 }
 
 func TestBuildSystemIncludesMainChannelProbeTimeout(t *testing.T) {
+	t.Parallel()
+
 	probeState := mcpclient.NewProbeState()
 	probeState.Set(mcpclient.NewProbeTimeoutError(2*time.Second, context.DeadlineExceeded))
 

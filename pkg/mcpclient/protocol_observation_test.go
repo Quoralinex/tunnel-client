@@ -57,6 +57,8 @@ func observationDetails(o *ProtocolObservation) healthstate.MCPDetails {
 }
 
 func TestProtocolObservationLifecycle(t *testing.T) {
+	t.Parallel()
+
 	o, generation := newObservationFixture(t)
 	require.Len(t, generation, 32)
 	require.Equal(t, healthstate.StatusUnknown, o.Snapshot(time.Time{}).Status)
@@ -98,6 +100,8 @@ func TestProtocolObservationLifecycle(t *testing.T) {
 }
 
 func TestProtocolObservationCatalogTraversal(t *testing.T) {
+	t.Parallel()
+
 	o, generation := newObservationFixture(t)
 	observationInitialize(t, o, generation)
 	observationTools(t, o, generation, "", `{"tools":[{"name":"z"},{"name":"a"},{"name":"a"}],"nextCursor":"private-cursor"}`)
@@ -129,8 +133,11 @@ func TestProtocolObservationCatalogTraversal(t *testing.T) {
 }
 
 func TestProtocolObservationStaleCatalogPublication(t *testing.T) {
+	t.Parallel()
+
 	for _, invalidate := range []string{"first_page", "list_changed", "bad_cursor", "reinitialize", "replacement_child"} {
 		t.Run(invalidate, func(t *testing.T) {
+			t.Parallel()
 			o, generation := newObservationFixture(t)
 			observationInitialize(t, o, generation)
 			old := o.requestWritten(generation, observationRequest(t, "tools/list", ""))
@@ -158,8 +165,11 @@ func TestProtocolObservationStaleCatalogPublication(t *testing.T) {
 }
 
 func TestProtocolObservationFailuresAndRecovery(t *testing.T) {
+	t.Parallel()
+
 	for _, result := range []string{"null", `{}`, `{"protocolVersion":42}`, strings.Replace(observedInitializeFixture, `"tools":{}`, `"tools":true`, 1)} {
 		t.Run(result, func(t *testing.T) {
+			t.Parallel()
 			o, generation := newObservationFixture(t)
 			token := o.requestWritten(generation, observationRequest(t, "initialize", ""))
 			o.response(token, &jsonrpc.Response{Result: json.RawMessage(result)})
@@ -188,6 +198,8 @@ func TestProtocolObservationFailuresAndRecovery(t *testing.T) {
 }
 
 func TestProtocolObservationIdentityBounds(t *testing.T) {
+	t.Parallel()
+
 	for _, size := range []int{maxObservationIdentity, maxObservationIdentity + 1} {
 		name := strings.Repeat("a", size)
 		raw := strings.Replace(observedInitializeFixture, "receipt-fixture", name, 1)
@@ -216,6 +228,8 @@ func TestProtocolObservationIdentityBounds(t *testing.T) {
 }
 
 func TestProtocolObservationRejectsLossyUnicode(t *testing.T) {
+	t.Parallel()
+
 	for _, name := range []string{`\ud800`, `\udc00`, `\ud800x`, `\ud800\u0061`} {
 		_, valid := parseObservedInitialize(json.RawMessage(strings.Replace(observedInitializeFixture, "receipt-fixture", name, 1)))
 		require.False(t, valid, name)
@@ -232,6 +246,8 @@ func TestProtocolObservationRejectsLossyUnicode(t *testing.T) {
 }
 
 func TestProtocolObservationToolBoundsAndDeterminism(t *testing.T) {
+	t.Parallel()
+
 	for _, count := range []int{maxObservationToolNames, maxObservationToolNames + 1} {
 		names := make([]string, count)
 		for i := range names {
@@ -279,6 +295,8 @@ func TestProtocolObservationToolBoundsAndDeterminism(t *testing.T) {
 }
 
 func TestProtocolObservationInputAndPagingBounds(t *testing.T) {
+	t.Parallel()
+
 	for _, size := range []int{maxObservationResultBytes, maxObservationResultBytes + 1} {
 		o, generation := newObservationFixture(t)
 		token := o.requestWritten(generation, observationRequest(t, "initialize", ""))
@@ -316,6 +334,8 @@ func TestProtocolObservationInputAndPagingBounds(t *testing.T) {
 }
 
 func TestProtocolObservationNeverReusesOverflowedTokens(t *testing.T) {
+	t.Parallel()
+
 	o, generation := newObservationFixture(t)
 	observationInitialize(t, o, generation)
 	o.catalogRevision = math.MaxUint64
@@ -334,6 +354,8 @@ func TestProtocolObservationNeverReusesOverflowedTokens(t *testing.T) {
 }
 
 func TestProtocolObservationConcurrentInvalidationAndSnapshot(t *testing.T) {
+	t.Parallel()
+
 	o, generation := newObservationFixture(t)
 	observationInitialize(t, o, generation)
 	token := o.requestWritten(generation, observationRequest(t, "tools/list", ""))
@@ -371,6 +393,8 @@ func TestProtocolObservationConcurrentInvalidationAndSnapshot(t *testing.T) {
 }
 
 func TestProtocolObservationUnsupportedAndDisabled(t *testing.T) {
+	t.Parallel()
+
 	probe := NewProbeState()
 	o := NewProtocolObservation(&runtimeconfig.MCPConfig{}, probe)
 	require.Equal(t, "unsupported_transport", observationDetails(o).Evidence)
@@ -384,8 +408,11 @@ func TestProtocolObservationUnsupportedAndDisabled(t *testing.T) {
 }
 
 func TestStdioProtocolObservationMatchesForwardedExchanges(t *testing.T) {
+	t.Parallel()
+
 	for _, initializedShim := range []bool{false, true} {
 		t.Run(fmt.Sprint(initializedShim), func(t *testing.T) {
+			t.Parallel()
 			o, _ := newObservationFixture(t)
 			base := newStubSerializedForwardingConnection()
 			transport := NewStdioDeadlineRetiringForwardingTransport(&stubSerializedForwardingTransport{conn: base})
@@ -430,11 +457,14 @@ func TestStdioProtocolObservationMatchesForwardedExchanges(t *testing.T) {
 }
 
 func TestStdioProtocolObservationInitializeCapabilityWhitespace(t *testing.T) {
+	t.Parallel()
+
 	for _, initializedShim := range []bool{false, true} {
 		for name, whitespace := range map[string]string{
 			"spaces": "   ", "tabs": "\t\t", "pretty_printed": " \t\r\n  ",
 		} {
 			t.Run(fmt.Sprintf("initialized_shim_%t/%s", initializedShim, name), func(t *testing.T) {
+				t.Parallel()
 				o, _ := newObservationFixture(t)
 				base := newStubSerializedForwardingConnection()
 				transport := NewStdioDeadlineRetiringForwardingTransport(&stubSerializedForwardingTransport{conn: base})
@@ -467,8 +497,11 @@ func TestStdioProtocolObservationInitializeCapabilityWhitespace(t *testing.T) {
 }
 
 func TestStdioProtocolObservationDropsRetiredAndMismatchedResponses(t *testing.T) {
+	t.Parallel()
+
 	for _, rawID := range []any{"reused", float64(123)} {
 		t.Run(fmt.Sprint(rawID), func(t *testing.T) {
+			t.Parallel()
 			o, generation := newObservationFixture(t)
 			observationInitialize(t, o, generation)
 			base := newStubSerializedForwardingConnection()
@@ -532,6 +565,8 @@ func (c *observationWriteBarrier) Read(ctx context.Context) (jsonrpc.Message, er
 }
 
 func TestStdioProtocolObservationConcurrentReadBeforeWriteReturns(t *testing.T) {
+	t.Parallel()
+
 	o, _ := newObservationFixture(t)
 	base := newStubSerializedForwardingConnection()
 	barrier := &observationWriteBarrier{ForwardingConnection: base, writeEntered: make(chan struct{}), writeReturn: make(chan struct{}), readReturned: make(chan struct{})}

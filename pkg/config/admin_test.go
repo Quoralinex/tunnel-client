@@ -10,6 +10,8 @@ import (
 )
 
 func TestLoadAdminConfig_FlagsOverrideEnv(t *testing.T) {
+	t.Parallel()
+
 	fs := pflag.NewFlagSet("test", pflag.ContinueOnError)
 	RegisterAdminFlags(fs)
 	fs.StringSlice("organization-id", nil, "")
@@ -44,6 +46,8 @@ func TestLoadAdminConfig_FlagsOverrideEnv(t *testing.T) {
 }
 
 func TestLoadAdminConfig_UsesEnvWhenFlagsUnset(t *testing.T) {
+	t.Parallel()
+
 	fs := pflag.NewFlagSet("test", pflag.ContinueOnError)
 	RegisterAdminFlags(fs)
 	fs.StringSlice("organization-id", nil, "")
@@ -67,6 +71,8 @@ func TestLoadAdminConfig_UsesEnvWhenFlagsUnset(t *testing.T) {
 }
 
 func TestLoadAdminConfig_DuplicateScopesError(t *testing.T) {
+	t.Parallel()
+
 	fs := pflag.NewFlagSet("test", pflag.ContinueOnError)
 	RegisterAdminFlags(fs)
 	fs.StringSlice("organization-id", nil, "")
@@ -85,6 +91,8 @@ func TestLoadAdminConfig_DuplicateScopesError(t *testing.T) {
 }
 
 func TestLoadAdminConfig_InvalidBaseURL(t *testing.T) {
+	t.Parallel()
+
 	fs := pflag.NewFlagSet("test", pflag.ContinueOnError)
 	RegisterAdminFlags(fs)
 	fs.StringSlice("organization-id", nil, "")
@@ -97,6 +105,8 @@ func TestLoadAdminConfig_InvalidBaseURL(t *testing.T) {
 }
 
 func TestLoadAdminConfig_InvalidURLPath(t *testing.T) {
+	t.Parallel()
+
 	fs := pflag.NewFlagSet("test", pflag.ContinueOnError)
 	RegisterAdminFlags(fs)
 	fs.StringSlice("organization-id", nil, "")
@@ -109,6 +119,8 @@ func TestLoadAdminConfig_InvalidURLPath(t *testing.T) {
 }
 
 func TestResolveAdminKeyFlagPrefixes(t *testing.T) {
+	t.Parallel()
+
 	lookup := map[string]string{"MY_ADMIN": "  spaced-key "}
 	key, err := resolveAdminKey("env:MY_ADMIN", lookupEnvMap(lookup))
 	require.NoError(t, err)
@@ -124,6 +136,8 @@ func TestResolveAdminKeyFlagPrefixes(t *testing.T) {
 }
 
 func TestResolveAdminKeyRejectsRawFlag(t *testing.T) {
+	t.Parallel()
+
 	key, err := resolveAdminKey("   raw-key  ", nil)
 	require.Error(t, err)
 	require.Empty(t, key)
@@ -136,6 +150,8 @@ func TestResolveAdminKeyRejectsRawFlag(t *testing.T) {
 }
 
 func TestResolveAdminKeyEnvEmptyAndMissing(t *testing.T) {
+	t.Parallel()
+
 	key, err := resolveAdminKey("", lookupEnvMap(map[string]string{"OPENAI_ADMIN_KEY": "   "}))
 	require.Error(t, err)
 	require.Empty(t, key)
@@ -148,6 +164,8 @@ func TestResolveAdminKeyEnvEmptyAndMissing(t *testing.T) {
 }
 
 func TestDereferenceKeyErrors(t *testing.T) {
+	t.Parallel()
+
 	_, err := dereferenceKey("env:", lookupEnvMap(nil))
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "environment variable name is required")
@@ -170,6 +188,8 @@ func TestDereferenceKeyErrors(t *testing.T) {
 }
 
 func TestStringSliceValue_TrimsAndSkipsEmpty(t *testing.T) {
+	t.Parallel()
+
 	fs := pflag.NewFlagSet("test", pflag.ContinueOnError)
 	fs.StringSlice("organization-id", nil, "")
 	require.NoError(t, fs.Parse([]string{"--organization-id", " org-1 ", "--organization-id", "  ", "--organization-id", "org-2"}))
@@ -180,6 +200,8 @@ func TestStringSliceValue_TrimsAndSkipsEmpty(t *testing.T) {
 }
 
 func TestEnsureUnique(t *testing.T) {
+	t.Parallel()
+
 	require.NoError(t, ensureUnique("organization-id", []string{"a", "b"}))
 
 	err := ensureUnique("organization-id", []string{"a", "a"})

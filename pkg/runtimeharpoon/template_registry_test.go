@@ -10,6 +10,8 @@ import (
 )
 
 func TestTemplateRegistryDoesNotAuthorizeOriginOrRenderedURLs(t *testing.T) {
+	t.Parallel()
+
 	cfg := templateTestConfig()
 	registry, err := NewRegistry(runtimeRegistryTestLogger(), false, []Target{{Label: "resource", Template: cfg}})
 	require.NoError(t, err)
@@ -34,6 +36,8 @@ func TestTemplateRegistryDoesNotAuthorizeOriginOrRenderedURLs(t *testing.T) {
 }
 
 func TestTemplateRegistryReregistrationPreservesCompiledPolicy(t *testing.T) {
+	t.Parallel()
+
 	cfg := templateTestConfig()
 	cfg.Headers = map[string]string{"Authorization": "Bearer fixed-secret"}
 	first, err := NewRegistry(runtimeRegistryTestLogger(), false, []Target{{Label: "resource", Template: cfg}})
@@ -61,12 +65,15 @@ func TestTemplateRegistryReregistrationPreservesCompiledPolicy(t *testing.T) {
 }
 
 func TestTemplateRegistryPreservesLegacyTargetsOnSameOrigin(t *testing.T) {
+	t.Parallel()
+
 	for _, templateFirst := range []bool{false, true} {
 		name := "legacy first"
 		if templateFirst {
 			name = "template first"
 		}
 		t.Run(name, func(t *testing.T) {
+			t.Parallel()
 			cfg := templateTestConfig()
 			// Sharing origin metadata must not cause a transport collision: only
 			// the explicit legacy target grants exact URL/socket routing.
@@ -95,11 +102,14 @@ func TestTemplateRegistryPreservesLegacyTargetsOnSameOrigin(t *testing.T) {
 }
 
 func TestTemplateRegistryRejectsAmbiguousOrInsecureTargets(t *testing.T) {
+	t.Parallel()
+
 	for name, target := range map[string]Target{
 		"exact URL and template": {Label: "resource", Template: templateTestConfig(), BaseURL: runtimeRegistryTestURL(t, "https://other.example")},
 		"socket and template":    {Label: "resource", Template: templateTestConfig(), UnixSocketPath: "/tmp/harpoon-template-test.sock"},
 	} {
 		t.Run(name, func(t *testing.T) {
+			t.Parallel()
 			_, err := NewRegistry(runtimeRegistryTestLogger(), false, []Target{target})
 			require.Error(t, err)
 		})
@@ -111,6 +121,8 @@ func TestTemplateRegistryRejectsAmbiguousOrInsecureTargets(t *testing.T) {
 }
 
 func TestTemplateRegistryKeepsCompiledPolicyImmutable(t *testing.T) {
+	t.Parallel()
+
 	cfg := templateTestConfig()
 	cfg.Headers = map[string]string{"Authorization": "Bearer fixed-secret"}
 	cfg.Query = map[string]string{"version": "1"}
@@ -144,6 +156,8 @@ func TestTemplateRegistryKeepsCompiledPolicyImmutable(t *testing.T) {
 }
 
 func TestTemplateCatalogDigestCoversSameOriginPolicyChanges(t *testing.T) {
+	t.Parallel()
+
 	digest := func(t *testing.T, cfg *runtimeconfig.HarpoonTargetTemplate) startupCatalogDigest {
 		t.Helper()
 		registry, err := NewRegistry(runtimeRegistryTestLogger(), false, []Target{{Label: "resource", Template: cfg}})
@@ -176,6 +190,7 @@ func TestTemplateCatalogDigestCoversSameOriginPolicyChanges(t *testing.T) {
 		"caller header": func(c *runtimeconfig.HarpoonTargetTemplate) { c.AllowedHeaders = []string{"Accept"} },
 	} {
 		t.Run(name, func(t *testing.T) {
+			t.Parallel()
 			cfg := templateTestConfig()
 			modify(cfg)
 			require.NotEqual(t, original.Value, digest(t, cfg).Value)

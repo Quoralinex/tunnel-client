@@ -23,6 +23,8 @@ import (
 )
 
 func TestTemplateMCPInstructionsAndDiscovery(t *testing.T) {
+	t.Parallel()
+
 	const legacyInstructions = "Harpoon provides a constrained outbound HTTP client. Use list_targets to see allowlisted targets and call_target to make GET/POST/PUT requests with strict size, timeout, and redirect limits. Harpoon cannot reach arbitrary hosts or paths outside the configured allowlist."
 	const customInstructions = "Operator instructions: inspect the target schema before making requests."
 	const templateRoute = "For entries with template_version and parameters_schema, use call_target_template with the label and all parameters declared by parameters_schema; each value must satisfy that schema."
@@ -51,6 +53,7 @@ func TestTemplateMCPInstructionsAndDiscovery(t *testing.T) {
 		{name: "exact after templates", exact: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			var targets []Target
 			if tc.exact {
 				targets = append(targets, Target{Label: "exact", BaseURL: runtimeRegistryTestURL(t, "https://exact.example/resource")})
@@ -209,6 +212,7 @@ func TestTemplateDiscoveryInvocationSchema(t *testing.T) {
 		"redirects":            func(v map[string]any) { v["follow_redirects"] = true },
 	} {
 		t.Run(name, func(t *testing.T) {
+			t.Parallel()
 			value := newExample()
 			mutate(value)
 			require.Error(t, resolved.Validate(value))
@@ -268,6 +272,8 @@ func TestTemplateDiscoveryEnumExampleIgnoresEnumOrder(t *testing.T) {
 }
 
 func TestTemplateArgumentDecoderStrictContract(t *testing.T) {
+	t.Parallel()
+
 	for _, raw := range []string{
 		`{"label":"resource","parameters":{"resourceId":"one"},"method":"GET"}`,
 		`{"Label":"resource","parameters":{"resourceId":"one"}}`,
@@ -298,10 +304,13 @@ type templateServerTransport func(*http.Request) (*http.Response, error)
 func (f templateServerTransport) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
 
 func TestTemplateHandlerPrivacyAndBounds(t *testing.T) {
+	t.Parallel()
+
 	const identifier = "private-id-123"
 	const credential = "Bearer private-credential"
 	for _, mode := range []string{"success", "redirect", "transport error", "too large"} {
 		t.Run(mode, func(t *testing.T) {
+			t.Parallel()
 			var logs bytes.Buffer
 			logger := slog.New(slog.NewTextHandler(&logs, nil))
 			cfg := templateTestConfig()
@@ -347,6 +356,8 @@ func TestTemplateHandlerPrivacyAndBounds(t *testing.T) {
 }
 
 func TestTemplateTransportRechecksBoundPolicyBeforeNetwork(t *testing.T) {
+	t.Parallel()
+
 	policy, err := CompileTargetTemplate(templateTestConfig())
 	require.NoError(t, err)
 	parameters := map[string]any{"resourceId": "one"}
@@ -374,6 +385,8 @@ func TestTemplateTransportRechecksBoundPolicyBeforeNetwork(t *testing.T) {
 }
 
 func TestTemplateMetricsIncludeRejectedTargetsWithoutUnboundedLabels(t *testing.T) {
+	t.Parallel()
+
 	reader := sdkmetric.NewManualReader()
 	provider := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
 	t.Cleanup(func() { require.NoError(t, provider.Shutdown(context.Background())) })

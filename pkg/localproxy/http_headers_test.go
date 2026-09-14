@@ -15,8 +15,11 @@ import (
 )
 
 func TestHeaderForwardingRejectsMalformedFields(t *testing.T) {
+	t.Parallel()
+
 	for _, kind := range []string{"request", "mcp", "oauth"} {
 		t.Run(kind, func(t *testing.T) {
+			t.Parallel()
 			input := http.Header{
 				"Bad Header":    {"bad"},
 				"Bad:Header":    {"bad"},
@@ -60,6 +63,8 @@ func TestHeaderForwardingRejectsMalformedFields(t *testing.T) {
 }
 
 func TestResponseHeaderValidationOnWire(t *testing.T) {
+	t.Parallel()
+
 	const publicURL = "http://proxy.test/v1/mcp/tunnel_test"
 	const metadataURL = "http://proxy.test/.well-known/oauth-protected-resource/v1/mcp/tunnel_test"
 	validChallenges := []string{
@@ -98,6 +103,7 @@ func TestResponseHeaderValidationOnWire(t *testing.T) {
 	t.Cleanup(server.Close)
 	for _, kind := range []string{"mcp", "sse", "oauth"} {
 		t.Run(kind, func(t *testing.T) {
+			t.Parallel()
 			request, err := http.NewRequest(http.MethodPost, server.URL+"/"+kind, bytes.NewReader(encoded))
 			require.NoError(t, err)
 			request.Host = "proxy.test"

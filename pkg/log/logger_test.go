@@ -56,6 +56,7 @@ func TestLoggingContextHelpers(t *testing.T) {
 	}
 
 	t.Run("request only", func(t *testing.T) {
+		t.Parallel()
 		ctx := tunnelctx.ContextWithRequestID(context.Background(), "only-req")
 		var buf bytes.Buffer
 		logger := slog.New(slog.NewTextHandler(&buf, nil))
@@ -74,6 +75,7 @@ func TestLoggingContextHelpers(t *testing.T) {
 	})
 
 	t.Run("string rpc id", func(t *testing.T) {
+		t.Parallel()
 		strID, err := jsonrpc.MakeID("rpc-abc")
 		if err != nil {
 			t.Fatalf("make id: %v", err)
@@ -221,6 +223,7 @@ func TestLevelControllerUpdatesLoggerOutput(t *testing.T) {
 }
 
 func TestLevelControllerUpdatesDefaultLoggerOutput(t *testing.T) {
+	// Keep serial because this test replaces the process-wide default logger.
 	originalDefault := slog.Default()
 	var buf bytes.Buffer
 	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
@@ -256,6 +259,7 @@ func TestLevelControllerUpdatesDefaultLoggerOutput(t *testing.T) {
 }
 
 func TestLevelControllerPreservesBaseDefaultHandlerFiltering(t *testing.T) {
+	// Keep serial because this test replaces the process-wide default logger.
 	originalDefault := slog.Default()
 	var buf bytes.Buffer
 	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelError})))

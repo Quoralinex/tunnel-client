@@ -95,6 +95,8 @@ func TestFetchOAuthMetadataRejectsCrossOriginRedirectBeforeDial(t *testing.T) {
 }
 
 func TestFetchOAuthMetadataRedactsCandidateURLFromLogsAndErrors(t *testing.T) {
+	t.Parallel()
+
 	candidateURL, err := url.Parse(
 		"https://userinfo-value:credential-value@auth.internal/token-path-value?client_id=query-value#state=fragment-value",
 	)
@@ -140,6 +142,8 @@ func TestFetchOAuthMetadataRedactsCandidateURLFromLogsAndErrors(t *testing.T) {
 }
 
 func TestFetchOAuthMetadataRedactsRequestConstructionError(t *testing.T) {
+	t.Parallel()
+
 	candidateURL := &url.URL{
 		Scheme: "https",
 		Host:   "auth.internal",
@@ -321,6 +325,7 @@ func TestFetchOAuthMetadataFallsBackOnEmpty404Or5xxBody(t *testing.T) {
 
 	for _, fallbackStatus := range []int{http.StatusNotFound, http.StatusInternalServerError} {
 		t.Run(http.StatusText(fallbackStatus), func(t *testing.T) {
+			t.Parallel()
 			var calls int
 			var expectedResource string
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

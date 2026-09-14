@@ -29,6 +29,8 @@ func templateTestConfig() *runtimeconfig.HarpoonTargetTemplate {
 }
 
 func TestTemplateRenderIntendedOperation(t *testing.T) {
+	t.Parallel()
+
 	for _, test := range []struct {
 		name, path, want string
 		query            map[string]string
@@ -40,6 +42,7 @@ func TestTemplateRenderIntendedOperation(t *testing.T) {
 		{name: "root path", path: "/", query: map[string]string{"id": "{resourceId}"}, want: "https://inventory.example:8443/?id=abc-123"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
 			cfg := templateTestConfig()
 			cfg.PathTemplate, cfg.Query = test.path, test.query
 			template, err := CompileTargetTemplate(cfg)
@@ -54,6 +57,8 @@ func TestTemplateRenderIntendedOperation(t *testing.T) {
 }
 
 func TestTemplateMultiplePathAndQueryParameters(t *testing.T) {
+	t.Parallel()
+
 	identifier := runtimeconfig.HarpoonTemplateParameter{
 		Type: "string", Required: true, Pattern: `^[A-Za-z0-9_-]+$`, MaxLength: 64,
 	}
@@ -77,6 +82,7 @@ func TestTemplateMultiplePathAndQueryParameters(t *testing.T) {
 		}
 	}
 	t.Run("renders_all_four_parameters_and_fixed_query", func(t *testing.T) {
+		t.Parallel()
 		u, err := policy.Render(arguments())
 		require.NoError(t, err)
 		require.Equal(t, "https://cases.example/tenants/tenant-1/cases/CASE-123?archive=false&requestId=req-456&view=summary", u.String())
@@ -88,6 +94,7 @@ func TestTemplateMultiplePathAndQueryParameters(t *testing.T) {
 		{"request_id", "req-456&admin=true"},
 	} {
 		t.Run("missing_"+parameter.name, func(t *testing.T) {
+			t.Parallel()
 			params := arguments()
 			delete(params, parameter.name)
 			u, err := policy.Render(params)
@@ -95,6 +102,7 @@ func TestTemplateMultiplePathAndQueryParameters(t *testing.T) {
 			require.Nil(t, u)
 		})
 		t.Run("invalid_"+parameter.name, func(t *testing.T) {
+			t.Parallel()
 			params := arguments()
 			params[parameter.name] = parameter.invalid
 			u, err := policy.Render(params)
@@ -105,6 +113,8 @@ func TestTemplateMultiplePathAndQueryParameters(t *testing.T) {
 }
 
 func TestTemplateRejectsUnsafeConfiguration(t *testing.T) {
+	t.Parallel()
+
 	tests := map[string]func(*runtimeconfig.HarpoonTargetTemplate){
 		"unsupported version":       func(c *runtimeconfig.HarpoonTargetTemplate) { c.Version = 2 },
 		"missing version":           func(c *runtimeconfig.HarpoonTargetTemplate) { c.Version = 0 },
@@ -210,6 +220,7 @@ func TestTemplateRejectsUnsafeConfiguration(t *testing.T) {
 	}
 	for name, modify := range tests {
 		t.Run(name, func(t *testing.T) {
+			t.Parallel()
 			cfg := templateTestConfig()
 			modify(cfg)
 			_, err := CompileTargetTemplate(cfg)
@@ -221,6 +232,8 @@ func TestTemplateRejectsUnsafeConfiguration(t *testing.T) {
 }
 
 func TestTemplateRejectsInvalidInputs(t *testing.T) {
+	t.Parallel()
+
 	template, err := CompileTargetTemplate(templateTestConfig())
 	require.NoError(t, err)
 	for name, value := range map[string]any{
@@ -233,6 +246,7 @@ func TestTemplateRejectsInvalidInputs(t *testing.T) {
 		"unicode": "café", "invalid utf8": "a\xffb", "reserved": "admin", "reserved case": "ADMIN",
 	} {
 		t.Run(name, func(t *testing.T) {
+			t.Parallel()
 			_, err := template.Render(map[string]any{"resourceId": value})
 			require.Error(t, err)
 			if raw, ok := value.(string); ok && len(raw) > 4 {
@@ -252,6 +266,8 @@ func TestTemplateRejectsInvalidInputs(t *testing.T) {
 }
 
 func TestTemplateRegexMatchesEntireIdentifierAndEnum(t *testing.T) {
+	t.Parallel()
+
 	cfg := templateTestConfig()
 	p := cfg.Parameters["resourceId"]
 	p.Pattern = "abc|xyz"
@@ -277,6 +293,8 @@ func TestTemplateRegexMatchesEntireIdentifierAndEnum(t *testing.T) {
 }
 
 func TestTemplatePatternsArePortableToDiscovery(t *testing.T) {
+	t.Parallel()
+
 	for _, pattern := range []string{
 		`(?i)abc`, `(?i:abc)`, `(?m)^abc$`, `(?P<id>abc)`, `(?<id>abc)`,
 		`\A[a-z]+\z`, `\p{Greek}+`, `\P{Greek}+`, `[[:alpha:]]+`,
@@ -285,6 +303,7 @@ func TestTemplatePatternsArePortableToDiscovery(t *testing.T) {
 		"café", "abc\n", `(?=abc)abc`, `(?!admin)[a-z]+`,
 	} {
 		t.Run(pattern, func(t *testing.T) {
+			t.Parallel()
 			cfg := templateTestConfig()
 			p := cfg.Parameters["resourceId"]
 			p.Pattern = pattern
@@ -300,6 +319,7 @@ func TestTemplatePatternsArePortableToDiscovery(t *testing.T) {
 		{`[\]a]+`, "aaa"}, {`[^\]]+`, "abc"},
 	} {
 		t.Run(test.pattern, func(t *testing.T) {
+			t.Parallel()
 			cfg := templateTestConfig()
 			p := cfg.Parameters["resourceId"]
 			p.Pattern = test.pattern
@@ -313,7 +333,10 @@ func TestTemplatePatternsArePortableToDiscovery(t *testing.T) {
 }
 
 func TestTemplateBounds(t *testing.T) {
+	t.Parallel()
+
 	t.Run("parameter count", func(t *testing.T) {
+		t.Parallel()
 		cfg := templateTestConfig()
 		for i := range maxTemplateParameters {
 			cfg.Parameters["parameter"+string(rune('A'+i))] = cfg.Parameters["resourceId"]
@@ -322,6 +345,7 @@ func TestTemplateBounds(t *testing.T) {
 		require.ErrorContains(t, err, "parameters")
 	})
 	t.Run("query count", func(t *testing.T) {
+		t.Parallel()
 		cfg := templateTestConfig()
 		cfg.Query = make(map[string]string)
 		for i := 0; i <= maxTemplateQueryKeys; i++ {
@@ -331,12 +355,14 @@ func TestTemplateBounds(t *testing.T) {
 		require.Error(t, err)
 	})
 	t.Run("rendered URL", func(t *testing.T) {
+		t.Parallel()
 		cfg := templateTestConfig()
 		cfg.PathTemplate = "/" + strings.Repeat("a", maxTemplateURLBytes-20) + "/{resourceId}"
 		_, err := CompileTargetTemplate(cfg)
 		require.ErrorContains(t, err, "URL exceeds")
 	})
 	t.Run("header values", func(t *testing.T) {
+		t.Parallel()
 		cfg := templateTestConfig()
 		cfg.Headers = map[string]string{"Accept": strings.Repeat("a", maxTemplateHeaderBytes)}
 		_, err := CompileTargetTemplate(cfg)
@@ -345,6 +371,8 @@ func TestTemplateBounds(t *testing.T) {
 }
 
 func TestTemplatePolicyHasNoMutableAliases(t *testing.T) {
+	t.Parallel()
+
 	cfg := templateTestConfig()
 	cfg.Headers = map[string]string{"Authorization": "Bearer fixed-secret"}
 	cfg.AllowedHeaders = []string{"Accept"}
@@ -493,6 +521,7 @@ func TestTemplateParameterMetadataChangesPolicyAndCatalogDigests(t *testing.T) {
 		{name: "examples", examples: []string{"one", "two"}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
 			cfg := templateTestConfig()
 			parameter := cfg.Parameters["resourceId"]
 			parameter.Description, parameter.Examples = test.description, test.examples
@@ -512,6 +541,8 @@ func TestTemplateParameterMetadataChangesPolicyAndCatalogDigests(t *testing.T) {
 }
 
 func TestTemplatePolicyDigestCoversPrivatePolicy(t *testing.T) {
+	t.Parallel()
+
 	original, err := CompileTargetTemplate(templateTestConfig())
 	require.NoError(t, err)
 	require.Len(t, original.PolicyDigest(), 64)
@@ -546,6 +577,7 @@ func TestTemplatePolicyDigestCoversPrivatePolicy(t *testing.T) {
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
+			t.Parallel()
 			cfg := templateTestConfig()
 			modify(cfg)
 			changed, err := CompileTargetTemplate(cfg)
@@ -564,6 +596,8 @@ func TestTemplatePolicyDigestCoversPrivatePolicy(t *testing.T) {
 }
 
 func TestTemplatePolicyDigestCanonicalizesSetsAndHeaderNames(t *testing.T) {
+	t.Parallel()
+
 	makeConfig := func() *runtimeconfig.HarpoonTargetTemplate {
 		cfg := templateTestConfig()
 		cfg.Query = map[string]string{"version": "1", "id": "{resourceId}"}
@@ -591,6 +625,8 @@ func TestTemplatePolicyDigestCanonicalizesSetsAndHeaderNames(t *testing.T) {
 }
 
 func TestTemplateHeaderPolicy(t *testing.T) {
+	t.Parallel()
+
 	for _, header := range []string{
 		"Host", "Connection", "Content-Length", "Transfer-Encoding", "Cookie", "User-Agent",
 		"X-Forwarded-For", "X-Forwarded-New-Identity", "X-Envoy-Original-Path", "X-Original-URL",
@@ -598,6 +634,7 @@ func TestTemplateHeaderPolicy(t *testing.T) {
 		" bad", "bad header", "bad\r\nheader",
 	} {
 		t.Run(header, func(t *testing.T) {
+			t.Parallel()
 			cfg := templateTestConfig()
 			cfg.Headers = map[string]string{header: "value"}
 			_, err := CompileTargetTemplate(cfg)
@@ -623,6 +660,7 @@ func TestTemplateHeaderPolicy(t *testing.T) {
 		"caller credentials": func(c *runtimeconfig.HarpoonTargetTemplate) { c.AllowedHeaders = []string{"Authorization"} },
 	} {
 		t.Run(name, func(t *testing.T) {
+			t.Parallel()
 			cfg := templateTestConfig()
 			modify(cfg)
 			_, err := CompileTargetTemplate(cfg)
@@ -649,6 +687,8 @@ func TestTemplateHeaderPolicy(t *testing.T) {
 }
 
 func TestTemplateCallerHeadersCannotUseConcatenatedCredentialNames(t *testing.T) {
+	t.Parallel()
+
 	for _, header := range []string{
 		"ApiKey", "X-APIKEY", "api.key", "X-AuthToken", "x-authtoken", "X-ApiToken",
 		"X-AccessToken", "X-RefreshToken", "X-IDToken", "X-SessionToken", "X-BearerToken",
@@ -656,6 +696,7 @@ func TestTemplateCallerHeadersCannotUseConcatenatedCredentialNames(t *testing.T)
 		"X-ApiSecret", "X-PrivateKey", "X-Authentication", "X-ClientCredential",
 	} {
 		t.Run(header, func(t *testing.T) {
+			t.Parallel()
 			cfg := templateTestConfig()
 			cfg.AllowedHeaders = []string{header}
 			_, err := CompileTargetTemplate(cfg)
@@ -672,6 +713,7 @@ func TestTemplateCallerHeadersCannotUseConcatenatedCredentialNames(t *testing.T)
 	}
 	for _, header := range []string{"Accept", "Content-Type", "If-None-Match", "X-Request-Tag", "X-Request-ID", "X-Author", "X-Access-Mode", "X-Client-Name"} {
 		t.Run(header, func(t *testing.T) {
+			t.Parallel()
 			cfg := templateTestConfig()
 			cfg.AllowedHeaders = []string{header}
 			policy, err := CompileTargetTemplate(cfg)
@@ -684,6 +726,8 @@ func TestTemplateCallerHeadersCannotUseConcatenatedCredentialNames(t *testing.T)
 }
 
 func TestTemplateBoundaryReauthorizesOriginalInvocation(t *testing.T) {
+	t.Parallel()
+
 	cfg := templateTestConfig()
 	cfg.Headers = map[string]string{"Authorization": "Bearer secret"}
 	cfg.AllowedHeaders = []string{"Accept"}
@@ -730,6 +774,7 @@ func TestTemplateBoundaryReauthorizesOriginalInvocation(t *testing.T) {
 		"header value injection":     func(r *http.Request) { r.Header.Set("Accept", "one\r\nInjected: true") },
 	} {
 		t.Run(name, func(t *testing.T) {
+			t.Parallel()
 			req := request(t)
 			mutate(req)
 			err := template.ValidateRequest(req, params)
@@ -752,6 +797,7 @@ func FuzzTemplateRenderCannotEscapeOperation(f *testing.F) {
 		f.Fatal(err)
 	}
 	f.Fuzz(func(t *testing.T, value string) {
+		t.Parallel()
 		u, err := template.Render(map[string]any{"resourceId": value})
 		if err != nil {
 			return

@@ -27,16 +27,22 @@ import (
 // Exercise serialized profile bytes and tool calls through an actual client
 // process, including its poll/response transport and verified HTTPS callout.
 func TestHarpoonTemplatesRuntimeE2E(t *testing.T) {
+	t.Parallel()
+
 	for _, subject := range runtimeSubjectsWithBinaries(t, runtimeFullSubject(), runtimeCustomerSubject()) {
 		t.Run(subject.name, func(t *testing.T) {
+			t.Parallel()
 			runHarpoonTemplatesRuntime(t, subject)
 		})
 	}
 }
 
 func TestHarpoonRichTargetDiscoveryRuntimeE2E(t *testing.T) {
+	t.Parallel()
+
 	for _, subject := range runtimeSubjectsWithBinaries(t, runtimeFullSubject(), runtimeCustomerSubject()) {
 		t.Run(subject.name, func(t *testing.T) {
+			t.Parallel()
 			runHarpoonRichTargetDiscoveryRuntime(t, subject)
 		})
 	}
@@ -157,6 +163,11 @@ log:
 	require.NoError(t, os.WriteFile(profilePath, []byte(profile), 0o600))
 	proc := startRuntimeArtifactWithEnv(t, subject.binary, map[string]string{"HP_RICH_AUTH": auth}, "run", "--config", profilePath)
 	_ = waitForRuntimeArtifactHealthURL(t, proc, healthURLFile)
+	// Health and polling start before the full client's remaining Fx hooks.
+	// Finish startup before the scenario can complete and signal shutdown.
+	if len(subject.startupSignals) > 0 {
+		waitForRuntimeArtifactOutput(t, proc, "completed startup", subject.startupSignals...)
+	}
 	close(ready)
 	ctx, cancel := context.WithTimeout(context.Background(), runtimeArtifactSignalTimeout)
 	t.Cleanup(cancel)
@@ -168,7 +179,7 @@ log:
 	discoveredCommand = templateRuntimeCommand(t, "rich-invoke", "tools/call", arguments, nil).Command
 	close(invocationReady)
 	waitForRuntimeArtifactIdle(t, proc, controlPlane)
-	require.NoError(t, proc.stop())
+	require.NoErrorf(t, proc.stop(), "%s did not shut down cleanly; output:\n%s", subject.name, proc.output.String())
 
 	structured, ok := discovery["structuredContent"].(map[string]any)
 	require.True(t, ok)
@@ -488,9 +499,12 @@ log:
 	require.NoError(t, os.WriteFile(profilePath, []byte(profile), 0o600))
 	proc := startRuntimeArtifactWithEnv(t, subject.binary, map[string]string{"HP_AUTH": auth}, "run", "--config", profilePath)
 	_ = waitForRuntimeArtifactHealthURL(t, proc, healthURLFile)
+	if len(subject.startupSignals) > 0 {
+		waitForRuntimeArtifactOutput(t, proc, "completed startup", subject.startupSignals...)
+	}
 	close(ready)
 	waitForRuntimeArtifactIdle(t, proc, controlPlane)
-	require.NoError(t, proc.stop())
+	require.NoErrorf(t, proc.stop(), "%s did not shut down cleanly; output:\n%s", subject.name, proc.output.String())
 
 	responses := controlPlane.ReceivedResponses(mocktunnelservice.ResponseMatchMatched)
 	require.Len(t, responses, len(commands))
@@ -558,6 +572,7 @@ log:
 			rejectedCalls++
 		}
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			response, found := byID["template-"+tc.name]
 			require.True(t, found)
 			var envelope struct {
@@ -616,6 +631,7 @@ log:
 	}
 	t.Logf("completed %d tool invocations (%d rejected), %d total control-plane commands, and exactly %d HTTPS requests", len(cases), rejectedCalls, len(commands), len(requests))
 	t.Run("version_one_rejects_templates_at_startup", func(t *testing.T) {
+		t.Parallel()
 		// An operator cannot accidentally activate templates using the legacy
 		// config version. The rejection must happen before any request is sent.
 		legacyProfile := strings.Replace(profile, "config_version: 2", "config_version: 1", 1)

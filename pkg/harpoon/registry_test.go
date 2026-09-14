@@ -13,6 +13,8 @@ import (
 )
 
 func TestRegistryRejectsInvalidLabel(t *testing.T) {
+	t.Parallel()
+
 	registry, err := NewRegistry(discardLogger(), true, nil)
 	require.NoError(t, err)
 
@@ -24,6 +26,8 @@ func TestRegistryRejectsInvalidLabel(t *testing.T) {
 }
 
 func TestRegistryRejectsDuplicateLabel(t *testing.T) {
+	t.Parallel()
+
 	parsed, err := url.Parse("https://example.com")
 	require.NoError(t, err)
 
@@ -35,6 +39,8 @@ func TestRegistryRejectsDuplicateLabel(t *testing.T) {
 }
 
 func TestRegistryRejectsDuplicateTargetURL(t *testing.T) {
+	t.Parallel()
+
 	const sensitiveURL = "https://userinfo-value:credential-value@example.com/token-path-value?client_id=query-value#state"
 	registry, err := NewRegistry(discardLogger(), true, []Target{{
 		Label:   "auth",
@@ -56,6 +62,8 @@ func TestRegistryRejectsDuplicateTargetURL(t *testing.T) {
 }
 
 func TestRegistryRejectsPlaintextWhenDisallowed(t *testing.T) {
+	t.Parallel()
+
 	parsed, err := url.Parse("http://example.com")
 	require.NoError(t, err)
 
@@ -64,6 +72,8 @@ func TestRegistryRejectsPlaintextWhenDisallowed(t *testing.T) {
 }
 
 func TestRegistryNormalizesOnlySchemeAndHostCase(t *testing.T) {
+	t.Parallel()
+
 	root, err := url.Parse("hTTps://EXAMPLE.com////")
 	require.NoError(t, err)
 	withQueryAndFragment, err := url.Parse("https://example.com/bla////?A=1&a=2&a=3#frag")
@@ -82,6 +92,8 @@ func TestRegistryNormalizesOnlySchemeAndHostCase(t *testing.T) {
 }
 
 func TestRegistryResolveReturnsExactTargetURL(t *testing.T) {
+	t.Parallel()
+
 	u, err := url.Parse("https://example.com/bla?x=1#frag")
 	require.NoError(t, err)
 
@@ -94,6 +106,8 @@ func TestRegistryResolveReturnsExactTargetURL(t *testing.T) {
 }
 
 func TestRegistryWaitForTargetReturnsRegisteredTarget(t *testing.T) {
+	t.Parallel()
+
 	registry, err := NewRegistry(discardLogger(), true, nil)
 	require.NoError(t, err)
 
@@ -128,6 +142,8 @@ func TestRegistryWaitForTargetReturnsRegisteredTarget(t *testing.T) {
 }
 
 func TestRegistryWaitForTargetReturnsContextError(t *testing.T) {
+	t.Parallel()
+
 	registry, err := NewRegistry(discardLogger(), true, nil)
 	require.NoError(t, err)
 
@@ -139,6 +155,8 @@ func TestRegistryWaitForTargetReturnsContextError(t *testing.T) {
 }
 
 func TestRegistryAllowsURLUsesExactMatchExceptSchemeHostCase(t *testing.T) {
+	t.Parallel()
+
 	root, err := url.Parse("https://example.com")
 	require.NoError(t, err)
 	bla, err := url.Parse("https://example.com/bla")
@@ -157,6 +175,8 @@ func TestRegistryAllowsURLUsesExactMatchExceptSchemeHostCase(t *testing.T) {
 }
 
 func TestRegistryPreservesDistinctEncodedPathAndQueryForms(t *testing.T) {
+	t.Parallel()
+
 	u1 := mustURL(t, "https://example.com/a%2Fb?x=a+b")
 	u2 := mustURL(t, "https://example.com/a/b?x=a%20b")
 
@@ -172,6 +192,8 @@ func TestRegistryPreservesDistinctEncodedPathAndQueryForms(t *testing.T) {
 }
 
 func TestRegistryExplainBlockedRedirectDetectsSchemeMismatch(t *testing.T) {
+	t.Parallel()
+
 	registry, err := NewRegistry(discardLogger(), true, []Target{
 		{
 			Label:   "oauth-auth-server-metadata-0",
@@ -189,6 +211,8 @@ func TestRegistryExplainBlockedRedirectDetectsSchemeMismatch(t *testing.T) {
 }
 
 func TestRegistryExplainBlockedRedirectDetectsTrailingSlashPathMismatch(t *testing.T) {
+	t.Parallel()
+
 	registry, err := NewRegistry(discardLogger(), true, []Target{
 		{
 			Label:   "oauth-auth-server-metadata-0",
@@ -204,6 +228,8 @@ func TestRegistryExplainBlockedRedirectDetectsTrailingSlashPathMismatch(t *testi
 }
 
 func TestRegistryExplainBlockedRedirectCacheInvalidatesOnRegister(t *testing.T) {
+	t.Parallel()
+
 	registry, err := NewRegistry(discardLogger(), true, []Target{
 		{
 			Label:   "oauth-auth-server-metadata-0",
@@ -229,6 +255,8 @@ func TestRegistryExplainBlockedRedirectCacheInvalidatesOnRegister(t *testing.T) 
 }
 
 func TestRegistryExplainBlockedRedirectHandlesDistinctCandidates(t *testing.T) {
+	t.Parallel()
+
 	registry, err := NewRegistry(discardLogger(), true, []Target{
 		{
 			Label:   "oauth-auth-server-metadata-0",
@@ -248,6 +276,8 @@ func TestRegistryExplainBlockedRedirectHandlesDistinctCandidates(t *testing.T) {
 }
 
 func TestRegistryExplainBlockedRedirectHandlesOversizedURL(t *testing.T) {
+	t.Parallel()
+
 	registry, err := NewRegistry(discardLogger(), true, []Target{
 		{
 			Label:   "oauth-auth-server-metadata-0",
@@ -262,6 +292,8 @@ func TestRegistryExplainBlockedRedirectHandlesOversizedURL(t *testing.T) {
 }
 
 func TestSummarizeTargets(t *testing.T) {
+	t.Parallel()
+
 	urlA, err := url.Parse("https://client:credential@example.com/base/token-path?client_id=identifier#state")
 	require.NoError(t, err)
 	urlB, err := url.Parse("https://example.org")
@@ -282,6 +314,8 @@ func TestSummarizeTargets(t *testing.T) {
 }
 
 func TestRegistryRespectsLimit(t *testing.T) {
+	t.Parallel()
+
 	parsed, err := url.Parse("https://example.com")
 	require.NoError(t, err)
 

@@ -9,6 +9,8 @@ import (
 )
 
 func TestBusPublishDelivers(t *testing.T) {
+	t.Parallel()
+
 	ch := make(chan URLBundle, 1)
 	bus, err := New(ch)
 	if err != nil {
@@ -54,6 +56,8 @@ func TestBusPublishDelivers(t *testing.T) {
 }
 
 func TestBusPublishRequiresSubscriber(t *testing.T) {
+	t.Parallel()
+
 	bus, err := New(nil)
 	if err == nil || bus != nil {
 		t.Fatal("expected error for nil subscriber")
@@ -66,6 +70,8 @@ func TestBusPublishRequiresSubscriber(t *testing.T) {
 }
 
 func TestBusPublishRespectsContext(t *testing.T) {
+	t.Parallel()
+
 	bus, err := New(make(chan URLBundle))
 	if err != nil {
 		t.Fatalf("new bus: %v", err)
@@ -80,6 +86,8 @@ func TestBusPublishRespectsContext(t *testing.T) {
 }
 
 func TestBusPublishAfterClose(t *testing.T) {
+	t.Parallel()
+
 	bus, err := New(make(chan URLBundle))
 	if err != nil {
 		t.Fatalf("new bus: %v", err)
@@ -93,6 +101,8 @@ func TestBusPublishAfterClose(t *testing.T) {
 }
 
 func TestBusPublishAndWaitForwardsAcknowledgement(t *testing.T) {
+	t.Parallel()
+
 	ch := make(chan URLBundle)
 	bus, err := New(ch)
 	if err != nil {

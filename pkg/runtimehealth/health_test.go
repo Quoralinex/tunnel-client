@@ -56,6 +56,7 @@ func TestBuildHealthURLAssignsRandomPort(t *testing.T) {
 	})
 
 	t.Run("IPv6Loopback", func(t *testing.T) {
+		t.Parallel()
 		ln, err := net.Listen("tcp6", "[::1]:0")
 		if err != nil {
 			t.Skipf("ipv6 loopback not available: %v", err)

@@ -6,6 +6,8 @@ import (
 )
 
 func TestHealthDetailsPrecedenceAcrossFlavors(t *testing.T) {
+	t.Parallel()
+
 	for _, flavor := range []Flavor{FlavorFull, FlavorRuntime, FlavorRuntimeCloudflared} {
 		for _, tc := range []struct {
 			name, yaml, env, flag string
@@ -19,6 +21,7 @@ func TestHealthDetailsPrecedenceAcrossFlavors(t *testing.T) {
 			{name: "flag-false", yaml: "true", env: "true", flag: "false"},
 		} {
 			t.Run(string(flavor)+"/"+tc.name, func(t *testing.T) {
+				t.Parallel()
 				args := []string{}
 				if tc.yaml != "" {
 					args = append(args, "--config", writeRuntimeConfig(t, "health:\n  show_details: "+tc.yaml+"\n"))
@@ -46,6 +49,8 @@ func TestHealthDetailsPrecedenceAcrossFlavors(t *testing.T) {
 }
 
 func TestHealthDetailsInvalidEnvironment(t *testing.T) {
+	t.Parallel()
+
 	env := map[string]string{"CONTROL_PLANE_TUNNEL_ID": testTunnelID, "CONTROL_PLANE_API_KEY": testAPIKey, "MCP_COMMAND": "echo", "HEALTH_SHOW_DETAILS": "sometimes"}
 	_, err := LoadFromFlagSet(runtimeFlagSet(t, FlavorRuntime), lookupEnvMap(env))
 	if err == nil || !strings.Contains(err.Error(), "HEALTH_SHOW_DETAILS") {

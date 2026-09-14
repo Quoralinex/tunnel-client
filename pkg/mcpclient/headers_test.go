@@ -6,6 +6,7 @@ import (
 )
 
 func TestFindHeaderValue(t *testing.T) {
+	t.Parallel()
 
 	testCases := []struct {
 		name    string
@@ -57,6 +58,7 @@ func TestFindHeaderValue(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			got := FindHeaderValue(tc.headers, tc.target)
 			switch {
 			case tc.want == nil && got != nil:
@@ -71,6 +73,8 @@ func TestFindHeaderValue(t *testing.T) {
 }
 
 func TestSessionIDFromHeaders(t *testing.T) {
+	t.Parallel()
+
 	testCases := []struct {
 		name    string
 		headers http.Header
@@ -90,6 +94,7 @@ func TestSessionIDFromHeaders(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			got := SessionIDFromHeaders(tc.headers)
 			switch {
 			case tc.want == nil && got != nil:

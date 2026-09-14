@@ -222,6 +222,21 @@ go build ./...
 go test ./...
 ```
 
+Independent tests, subtests, and fuzz seed cases use `t.Parallel()`. Give each
+case its own mutable fixtures, and use `t.Cleanup` for resources shared by
+parallel children. Keep dependent state transitions in one test. Keep tests
+that mutate process-wide globals, environment variables, signals, or stdio
+serial.
+
+Check concurrent execution with the race detector and shuffled test order:
+
+```bash
+go test -race -shuffle=on -count=3 ./...
+```
+
+The E2E and mock-server packages default to two concurrent tests to bound
+resource use. An explicit `-parallel=N` overrides that default.
+
 ## SBOMs
 
 The public repository includes deterministic six-platform dependency baselines

@@ -13,6 +13,8 @@ import (
 )
 
 func TestForwardingRoundTripperInjectsAndCapturesHeaders(t *testing.T) {
+	t.Parallel()
+
 	t.Helper()
 
 	wantRequest := http.Header{"X-Test": {"forward-me"}}
@@ -61,6 +63,8 @@ func TestForwardingRoundTripperInjectsAndCapturesHeaders(t *testing.T) {
 }
 
 func TestContextWithHeadersRejectsNilContext(t *testing.T) {
+	t.Parallel()
+
 	t.Helper()
 
 	//lint:ignore SA1012 This intentionally passes a nil context to cover the explicit nil-guard.
@@ -71,6 +75,8 @@ func TestContextWithHeadersRejectsNilContext(t *testing.T) {
 }
 
 func TestHeaderCarrierRequestHeadersAreCloned(t *testing.T) {
+	t.Parallel()
+
 	t.Helper()
 
 	orig := http.Header{"X-Test": {"a", "b"}}
@@ -88,6 +94,8 @@ func TestHeaderCarrierRequestHeadersAreCloned(t *testing.T) {
 }
 
 func TestHeaderCarrierApplyRequestHeadersOverridesExisting(t *testing.T) {
+	t.Parallel()
+
 	t.Helper()
 
 	_, carrier, err := ContextWithHeaders(context.Background(), http.Header{"X-Test": {"a", "b"}})
@@ -107,6 +115,8 @@ func TestHeaderCarrierApplyRequestHeadersOverridesExisting(t *testing.T) {
 }
 
 func TestHeaderCarrierStoreAndReturnResponseHeadersAreCloned(t *testing.T) {
+	t.Parallel()
+
 	t.Helper()
 
 	_, carrier, err := ContextWithHeaders(context.Background(), nil)
@@ -135,6 +145,8 @@ func TestHeaderCarrierStoreAndReturnResponseHeadersAreCloned(t *testing.T) {
 }
 
 func TestHeaderCarrierNilIsSafe(t *testing.T) {
+	t.Parallel()
+
 	t.Helper()
 
 	var carrier *HeaderCarrier
@@ -167,6 +179,8 @@ func TestHeaderCarrierStoreAndReturnTransportError(t *testing.T) {
 }
 
 func TestCarrierFromContextNilIsSafe(t *testing.T) {
+	t.Parallel()
+
 	t.Helper()
 
 	//lint:ignore SA1012 This intentionally passes a nil context to ensure CarrierFromContext does not panic.

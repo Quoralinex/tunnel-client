@@ -111,6 +111,7 @@ func TestDeliveryHealthFailureAfterCancellation(t *testing.T) {
 	t.Parallel()
 	for _, priorSuccess := range []bool{false, true} {
 		t.Run(map[bool]string{false: "without_prior_success", true: "with_prior_success"}[priorSuccess], func(t *testing.T) {
+			t.Parallel()
 			h := NewDeliveryHealth()
 			now := time.Now()
 			if priorSuccess {

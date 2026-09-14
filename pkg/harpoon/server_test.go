@@ -26,6 +26,8 @@ import (
 )
 
 func TestListTargetsDoesNotExposeURLs(t *testing.T) {
+	t.Parallel()
+
 	cfg := &config.HarpoonConfig{
 		AllowPlaintextHTTP: true,
 		MaxResponseBytes:   config.DefaultHarpoonMaxResponseBytes,
@@ -53,6 +55,8 @@ func TestListTargetsDoesNotExposeURLs(t *testing.T) {
 }
 
 func TestGetOAuthTargetAudienceReturnsExactTokenEndpointURL(t *testing.T) {
+	t.Parallel()
+
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	registry, err := NewRegistry(logger, false, []Target{{
 		Label:    "oauth-token-endpoint-0",
@@ -77,6 +81,8 @@ func TestGetOAuthTargetAudienceReturnsExactTokenEndpointURL(t *testing.T) {
 }
 
 func TestGetOAuthTargetAudienceRejectsNonTokenEndpoint(t *testing.T) {
+	t.Parallel()
+
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	registry, err := NewRegistry(logger, false, []Target{{
 		Label:    "oauth-registration-endpoint-0",
@@ -102,11 +108,14 @@ func TestGetOAuthTargetAudienceRejectsNonTokenEndpoint(t *testing.T) {
 }
 
 func TestGetOAuthTargetAudienceRejectsCredentialedOrFragmentURL(t *testing.T) {
+	t.Parallel()
+
 	for _, rawURL := range []string{
 		"https://user:secret@auth.internal/oauth/token",
 		"https://auth.internal/oauth/token#fragment",
 	} {
 		t.Run(rawURL, func(t *testing.T) {
+			t.Parallel()
 			logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 			registry, err := NewRegistry(logger, false, []Target{{
 				Label:    "oauth-token-endpoint-0",
@@ -134,6 +143,8 @@ func TestGetOAuthTargetAudienceRejectsCredentialedOrFragmentURL(t *testing.T) {
 }
 
 func TestCallTargetRedactsURLFromLogsWithoutChangingRequest(t *testing.T) {
+	t.Parallel()
+
 	requestURI := make(chan string, 1)
 	targetServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requestURI <- r.URL.RequestURI()
@@ -182,6 +193,8 @@ func TestCallTargetRedactsURLFromLogsWithoutChangingRequest(t *testing.T) {
 }
 
 func TestListTargetsFilters(t *testing.T) {
+	t.Parallel()
+
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	registry, err := NewRegistry(logger, true, []Target{
 		{
@@ -242,6 +255,8 @@ func TestListTargetsFilters(t *testing.T) {
 }
 
 func TestListTargetsGroupTagSerialization(t *testing.T) {
+	t.Parallel()
+
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	registry, err := NewRegistry(logger, true, []Target{
 		{
@@ -327,6 +342,8 @@ func TestListTargetsGroupTagSerialization(t *testing.T) {
 }
 
 func TestCallTargetSupportsMethods(t *testing.T) {
+	t.Parallel()
+
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(r.Method))
 	}))
@@ -535,6 +552,8 @@ func TestCallTargetSelectsTransportPerRedirectedTarget(t *testing.T) {
 }
 
 func TestCallTargetRewritesEndpointsAndPreservesResourceIdentifier(t *testing.T) {
+	t.Parallel()
+
 	var server *httptest.Server
 	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
@@ -597,6 +616,8 @@ func TestCallTargetRewritesEndpointsAndPreservesResourceIdentifier(t *testing.T)
 }
 
 func TestCallTargetUsesProxy(t *testing.T) {
+	t.Parallel()
+
 	targetCalled := make(chan struct{}, 1)
 	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		targetCalled <- struct{}{}
@@ -650,6 +671,8 @@ func TestCallTargetUsesProxy(t *testing.T) {
 }
 
 func TestCallTargetRejectsInvalidMethod(t *testing.T) {
+	t.Parallel()
+
 	cfg := &config.HarpoonConfig{
 		AllowPlaintextHTTP: true,
 		MaxResponseBytes:   1024,
@@ -669,6 +692,8 @@ func TestCallTargetRejectsInvalidMethod(t *testing.T) {
 }
 
 func TestCallTargetValidatesTimeouts(t *testing.T) {
+	t.Parallel()
+
 	cfg := &config.HarpoonConfig{
 		AllowPlaintextHTTP: true,
 		MaxResponseBytes:   1024,
@@ -698,6 +723,8 @@ func TestCallTargetValidatesTimeouts(t *testing.T) {
 }
 
 func TestCallTargetEnforcesSizeLimits(t *testing.T) {
+	t.Parallel()
+
 	called := false
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		called = true
@@ -735,6 +762,8 @@ func TestCallTargetEnforcesSizeLimits(t *testing.T) {
 }
 
 func TestCallTargetRedirectHandling(t *testing.T) {
+	t.Parallel()
+
 	second := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte("ok"))
 	}))
@@ -793,6 +822,8 @@ func TestCallTargetRedirectHandling(t *testing.T) {
 }
 
 func TestCallTargetRedirectLimit(t *testing.T) {
+	t.Parallel()
+
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, r.URL.Path, http.StatusFound)
 	}))
@@ -816,6 +847,8 @@ func TestCallTargetRedirectLimit(t *testing.T) {
 }
 
 func TestCallTargetRedirectSchemeMismatchIncludesExplicitMessage(t *testing.T) {
+	t.Parallel()
+
 	metadataTarget := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "http://example.com/.well-known/oauth-authorization-server", http.StatusFound)
 	}))
@@ -841,6 +874,8 @@ func TestCallTargetRedirectSchemeMismatchIncludesExplicitMessage(t *testing.T) {
 }
 
 func TestCallTargetRedirectHostMismatchStaysGeneric(t *testing.T) {
+	t.Parallel()
+
 	blocked := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte("blocked"))
 	}))
@@ -873,6 +908,8 @@ func TestCallTargetRedirectHostMismatchStaysGeneric(t *testing.T) {
 }
 
 func TestCallTargetRedirectMismatchFieldsAreLogged(t *testing.T) {
+	t.Parallel()
+
 	var logBuffer bytes.Buffer
 	logger := slog.New(slog.NewTextHandler(&logBuffer, nil))
 	metadataTarget := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -909,6 +946,8 @@ func TestCallTargetRedirectMismatchFieldsAreLogged(t *testing.T) {
 }
 
 func TestIntegrationRedirectTruncationWithExactTargets(t *testing.T) {
+	t.Parallel()
+
 	var paths []string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		paths = append(paths, r.URL.Path)
@@ -944,6 +983,8 @@ func TestIntegrationRedirectTruncationWithExactTargets(t *testing.T) {
 }
 
 func TestCallTargetPayloadCaptureDisabled(t *testing.T) {
+	t.Parallel()
+
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(`{"ok":true}`))
 	}))
@@ -976,6 +1017,8 @@ func TestCallTargetPayloadCaptureDisabled(t *testing.T) {
 }
 
 func TestCallTargetPayloadCaptureEnabled(t *testing.T) {
+	t.Parallel()
+
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte{0xff, 0x00, 0x01})
 	}))
@@ -1008,6 +1051,8 @@ func TestCallTargetPayloadCaptureEnabled(t *testing.T) {
 }
 
 func TestCallTargetSanitizesHeadersAndSetsStableUserAgent(t *testing.T) {
+	t.Parallel()
+
 	var receivedHeaders http.Header
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		receivedHeaders = r.Header.Clone()

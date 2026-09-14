@@ -17,6 +17,7 @@ import (
 )
 
 func TestRuntimeAcceptsFullClientGeneratedProfiles(t *testing.T) {
+	t.Parallel()
 	caBundle := writeRuntimeGeneratedProfileCABundle(t)
 	env := map[string]string{
 		"CONTROL_PLANE_API_KEY": "sk_test_key",
@@ -26,6 +27,7 @@ func TestRuntimeAcceptsFullClientGeneratedProfiles(t *testing.T) {
 
 	for _, sample := range profileSamples() {
 		t.Run(sample.Name, func(t *testing.T) {
+			t.Parallel()
 			generated, err := sample.Generate(sample.Example)
 			require.NoError(t, err)
 			require.Contains(t, string(generated), "admin_ui:\n  open_browser:")

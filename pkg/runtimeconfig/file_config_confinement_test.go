@@ -25,6 +25,7 @@ func TestExplicitEmptyLogFileUsesInheritedOutput(t *testing.T) {
 	for _, flavor := range []Flavor{FlavorFull, FlavorRuntime, FlavorRuntimeCloudflared} {
 		for _, envFile := range []string{"", "/environment-log.jsonl"} {
 			t.Run(string(flavor)+envFile, func(t *testing.T) {
+				t.Parallel()
 				args := []string{"--profile-dir", dir, "--profile", "managed"}
 				values := map[string]string{}
 				if envFile != "" {
@@ -48,6 +49,8 @@ func TestExplicitEmptyLogFileUsesInheritedOutput(t *testing.T) {
 }
 
 func TestLoadNamedProfileConfinesSymlinks(t *testing.T) {
+	t.Parallel()
+
 	if runtime.GOOS == "windows" {
 		t.Skip("symlink permissions vary on Windows")
 	}
@@ -76,6 +79,7 @@ func TestLoadNamedProfileConfinesSymlinks(t *testing.T) {
 	} {
 		for _, selection := range []string{"flag", "env"} {
 			t.Run(tc.profile+"/"+selection, func(t *testing.T) {
+				t.Parallel()
 				env := map[string]string{
 					ProfileDirEnvName:       selected,
 					ProfileEnvName:          tc.profile,
@@ -101,6 +105,8 @@ func TestLoadNamedProfileConfinesSymlinks(t *testing.T) {
 }
 
 func TestLoadExplicitConfigPathsRemainUnrestricted(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	outside := filepath.Join(dir, "outside.yaml")
 	require.NoError(t, os.WriteFile(outside, []byte(confinedProfileYAML), 0o600))
@@ -118,6 +124,7 @@ func TestLoadExplicitConfigPathsRemainUnrestricted(t *testing.T) {
 	} {
 		for _, selection := range []string{"flag", "env"} {
 			t.Run(tc.flag+"/"+selection, func(t *testing.T) {
+				t.Parallel()
 				env := map[string]string{ProfileDirEnvName: filepath.Join(dir, "unrelated-missing-profile-directory")}
 				var args []string
 				if selection == "flag" {

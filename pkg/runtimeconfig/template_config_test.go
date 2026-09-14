@@ -43,8 +43,11 @@ harpoon:
 `
 
 func TestLoadTemplateConfigPreservesStructuredPolicyAcrossFlavors(t *testing.T) {
+	t.Parallel()
+
 	for _, flavor := range []Flavor{FlavorRuntime, FlavorRuntimeCloudflared, FlavorFull} {
 		t.Run(string(flavor), func(t *testing.T) {
+			t.Parallel()
 			configPath := writeRuntimeConfig(t, templateConfigFixture)
 			cfg, err := Load([]string{"--config", configPath}, flavor, lookupEnvMap(map[string]string{
 				"TEST_API_KEY":       testAPIKey,
@@ -120,6 +123,8 @@ func TestLoadTemplateParameterMetadataAcrossFlavors(t *testing.T) {
 }
 
 func TestTemplateConfigStrictSchemaAndVersion(t *testing.T) {
+	t.Parallel()
+
 	cases := []struct{ name, from, to, want string }{
 		{"missing config version", "config_version: 2\n", "", "requires config_version: 2"},
 		{"legacy config version", "config_version: 2", "config_version: 1", "requires config_version: 2"},
@@ -143,6 +148,7 @@ func TestTemplateConfigStrictSchemaAndVersion(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			contents := strings.Replace(templateConfigFixture, tc.from, tc.to, 1)
 			for _, validate := range []func(string, []byte) error{ValidateProfileBytes, ValidateFullProfileBytes} {
 				err := validate("template.yaml", []byte(contents))
@@ -155,6 +161,8 @@ func TestTemplateConfigStrictSchemaAndVersion(t *testing.T) {
 }
 
 func TestTemplateConfigSecretReferencesAndErrors(t *testing.T) {
+	t.Parallel()
+
 	for _, tc := range []struct{ name, value, want string }{
 		{"file", "Bearer from-file\n", ""},
 		{"empty file", "\n", "resolved value is empty"},
@@ -162,6 +170,7 @@ func TestTemplateConfigSecretReferencesAndErrors(t *testing.T) {
 		{"invalid byte file", "Bearer secret\x00suffix", "invalid HTTP header value"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			secretPath := filepath.Join(t.TempDir(), "secret")
 			if err := os.WriteFile(secretPath, []byte(tc.value), 0o600); err != nil {
 				t.Fatal(err)
@@ -193,6 +202,7 @@ func TestTemplateConfigSecretReferencesAndErrors(t *testing.T) {
 		{"case variant headers", "env:TEST_TEMPLATE_AUTH\n          authorization: other", "conflicting values", nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			contents := strings.Replace(templateConfigFixture, "env:TEST_TEMPLATE_AUTH", tc.reference, 1)
 			env := map[string]string{"TEST_API_KEY": testAPIKey}
 			maps.Copy(env, tc.env)
@@ -205,11 +215,14 @@ func TestTemplateConfigSecretReferencesAndErrors(t *testing.T) {
 }
 
 func TestTemplateProfileValidationRequiresPolicyValidator(t *testing.T) {
+	t.Parallel()
+
 	for name, validate := range map[string]func(string, []byte) error{
 		"runtime": ValidateProfileBytes,
 		"full":    ValidateFullProfileBytes,
 	} {
 		t.Run(name, func(t *testing.T) {
+			t.Parallel()
 			err := validate("template.yaml", []byte(templateConfigFixture))
 			if err == nil || !strings.Contains(err.Error(), "template policy validator is required") {
 				t.Fatalf("validation without a policy validator returned %v", err)
@@ -221,6 +234,7 @@ func TestTemplateProfileValidationRequiresPolicyValidator(t *testing.T) {
 		"full":    ValidateFullProfileBytesWithTemplateValidator,
 	} {
 		t.Run(name+" with validator", func(t *testing.T) {
+			t.Parallel()
 			called := false
 			err := validate("template.yaml", []byte(templateConfigFixture), func(policy *HarpoonTargetTemplate) error {
 				called = true
@@ -237,6 +251,8 @@ func TestTemplateProfileValidationRequiresPolicyValidator(t *testing.T) {
 }
 
 func TestLegacyYAMLProfilesKeepFirstDocumentBehavior(t *testing.T) {
+	t.Parallel()
+
 	const exact = `control_plane:
   tunnel_id: tunnel_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
   api_key: env:TEST_API_KEY
@@ -249,6 +265,7 @@ harpoon:
 	for _, version := range []string{"", "config_version: 1\n", "config_version: 2\n"} {
 		for _, trailing := range []string{"---\n", "---\nunknown_field: ignored\n", "---\ninvalid: [\n"} {
 			t.Run(version+trailing, func(t *testing.T) {
+				t.Parallel()
 				contents := version + exact + trailing
 				path := writeRuntimeConfig(t, contents)
 				for _, validate := range []func(string, []byte) error{ValidateProfileBytes, ValidateFullProfileBytes} {
@@ -280,6 +297,8 @@ harpoon:
 }
 
 func TestTemplateConfigHigherPrecedenceReplacesEntireList(t *testing.T) {
+	t.Parallel()
+
 	for _, tc := range []struct {
 		name      string
 		flags     []string
@@ -292,6 +311,7 @@ func TestTemplateConfigHigherPrecedenceReplacesEntireList(t *testing.T) {
 		{"empty flag clears list", []string{"--harpoon.target="}, nil, ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			// A valid MCP main binding permits an intentionally empty Harpoon list.
 			contents := strings.Replace(templateConfigFixture, "  poll_channels: [harpoon]", "  poll_channels: [main]\nmcp:\n  server_urls:\n    - url: https://mcp.example.invalid", 1)
 			args := append([]string{"--config", writeRuntimeConfig(t, contents)}, tc.flags...)
@@ -316,8 +336,11 @@ func TestTemplateConfigHigherPrecedenceReplacesEntireList(t *testing.T) {
 }
 
 func TestLegacyYAMLTargetsRemainCompatible(t *testing.T) {
+	t.Parallel()
+
 	for _, version := range []string{"", "config_version: 1\n", "config_version: 2\n"} {
 		t.Run(strings.TrimSpace(version), func(t *testing.T) {
+			t.Parallel()
 			contents := version + `control_plane:
   tunnel_id: tunnel_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
   api_key: env:TEST_API_KEY
