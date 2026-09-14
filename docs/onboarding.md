@@ -68,6 +68,25 @@ curl -fsS "$(cat "$health_url_file")/readyz"
 open "$(cat "$health_url_file")/ui"
 ```
 
+For the same demo tools with stateless MCP handling, use:
+
+```bash
+tunnel-client run --embedded-stateless-mcp-stub --control-plane.tunnel-id tunnel_0123456789abcdef0123456789abcdef --health.listen-addr 127.0.0.1:0
+```
+
+`--embedded-mcp-stub` retains legacy stateful initialization and session
+handling alongside stateless modern discovery and tool requests.
+`--embedded-stateless-mcp-stub` also handles `initialize` and
+`notifications/initialized` statelessly, without issuing an MCP session ID.
+These demo tools need no MCP session affinity; OAuth and application state
+remain separate concerns.
+
+Choose one mode per run, without explicit `--mcp.server-url` or `--mcp.command`
+(or their `--mcp-server-url` / `--mcp-command` aliases). Both modes share
+`--embedded-mcp-listen-addr`, `--embedded-mcp-server-name`, and
+`--embedded-mcp-server-version`. See [embedded demo configuration](configuration.md#embedded-demo-mcp-modes)
+for defaults and details.
+
 If Codex is installed locally and you want the plugin surface instead of the raw
 binary flow, install it directly from the binary. The canonical command is
 `tunnel-client codex plugin ...`; `tunnel-client plugin codex ...` remains a

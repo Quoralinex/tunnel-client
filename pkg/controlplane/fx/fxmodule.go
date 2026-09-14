@@ -177,6 +177,7 @@ func buildMCPServerInfoHeader(mcpConfig *runtimeconfig.MCPConfig, harpoonEnabled
 		}
 		declarations = append(declarations, mcpserverinfo.Declaration{
 			Name:            channel.String(),
+			Stateless:       binding.Stateless,
 			ProcessAffinity: processAffinity,
 		})
 	}

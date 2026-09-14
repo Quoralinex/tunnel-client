@@ -343,6 +343,9 @@ func (c ControlPlaneConfig) PollDeadlineTimeoutOrDefault() time.Duration {
 // ignore HTTP-only settings because they communicate over child-process
 // stdin/stdout rather than a network socket.
 type MCPChannelBinding struct {
+	// Stateless identifies a process-owned endpoint that accepts self-contained
+	// MCP requests. Ordinary configured endpoints retain the false default.
+	Stateless         bool
 	Channel           types.Channel
 	TransportKind     MCPTransportKind
 	ServerURL         *url.URL
@@ -559,14 +562,14 @@ func RegisterFlags(fs *pflag.FlagSet, flavor Flavor) {
 
 // LoadFromFlagSet builds normal runtime configuration from parsed flags.
 func LoadFromFlagSet(fs *pflag.FlagSet, lookupEnv func(string) (string, bool)) (*Config, error) {
-	cfg, _, _, err := loadRuntimeFromFlagSet(fs, lookupEnv, FlavorRuntime)
+	cfg, _, _, err := loadRuntimeFromFlagSet(fs, lookupEnv, FlavorRuntime, "")
 	return cfg, err
 }
 
 // LoadCloudflaredFromFlagSet builds runtime-cloudflared configuration from
 // parsed flags, adding only the approved companion settings.
 func LoadCloudflaredFromFlagSet(fs *pflag.FlagSet, lookupEnv func(string) (string, bool)) (*CloudflaredConfig, error) {
-	runtimeCfg, fileValues, effectiveLookup, err := loadRuntimeFromFlagSet(fs, lookupEnv, FlavorRuntimeCloudflared)
+	runtimeCfg, fileValues, effectiveLookup, err := loadRuntimeFromFlagSet(fs, lookupEnv, FlavorRuntimeCloudflared, "")
 	if err != nil {
 		return nil, err
 	}
@@ -585,7 +588,15 @@ func LoadCloudflaredFromFlagSet(fs *pflag.FlagSet, lookupEnv func(string) (strin
 // returns the approved companion settings plus the effective lookup used for
 // full-only adapters. The returned Config never grows full-client-only fields.
 func LoadFullFromFlagSet(fs *pflag.FlagSet, lookupEnv func(string) (string, bool)) (*Config, CloudflaredSettings, LoadContext, error) {
-	runtimeCfg, fileValues, effectiveLookup, err := loadRuntimeFromFlagSet(fs, lookupEnv, FlavorFull)
+	return LoadFullFromFlagSetWithMainMCPServerURL(fs, lookupEnv, "")
+}
+
+// LoadFullFromFlagSetWithMainMCPServerURL replaces only the parsed main MCP
+// binding before applying transport defaults and validating poll channels.
+// Configured targets still undergo normal parsing and duplicate validation.
+// An empty URL preserves ordinary full-client configuration loading.
+func LoadFullFromFlagSetWithMainMCPServerURL(fs *pflag.FlagSet, lookupEnv func(string) (string, bool), mainServerURL string) (*Config, CloudflaredSettings, LoadContext, error) {
+	runtimeCfg, fileValues, effectiveLookup, err := loadRuntimeFromFlagSet(fs, lookupEnv, FlavorFull, mainServerURL)
 	if err != nil {
 		return nil, CloudflaredSettings{}, LoadContext{}, err
 	}
@@ -609,7 +620,7 @@ func LoadFullFromFlagSet(fs *pflag.FlagSet, lookupEnv func(string) (string, bool
 	return runtimeCfg, cloudflared, context, nil
 }
 
-func loadRuntimeFromFlagSet(fs *pflag.FlagSet, lookupEnv func(string) (string, bool), flavor Flavor) (*Config, *fileConfigValues, func(string) (string, bool), error) {
+func loadRuntimeFromFlagSet(fs *pflag.FlagSet, lookupEnv func(string) (string, bool), flavor Flavor, mainServerURL string) (*Config, *fileConfigValues, func(string) (string, bool), error) {
 	if lookupEnv == nil {
 		lookupEnv = os.LookupEnv
 	}
@@ -640,7 +651,7 @@ func loadRuntimeFromFlagSet(fs *pflag.FlagSet, lookupEnv func(string) (string, b
 	if err != nil {
 		return nil, nil, lookupEnv, err
 	}
-	mcp, err := buildMCPConfig(fs, lookupEnv, globalProxy, globalProxySource)
+	mcp, err := buildMCPConfig(fs, lookupEnv, globalProxy, globalProxySource, mainServerURL)
 	if err != nil {
 		return nil, nil, lookupEnv, err
 	}
@@ -1797,7 +1808,7 @@ func resolveRequiredSecretReference(source, raw string, lookupEnv func(string) (
 	return value, nil
 }
 
-func buildMCPConfig(fs *pflag.FlagSet, lookupEnv func(string) (string, bool), globalProxy *url.URL, globalProxySource ProxySource) (MCPConfig, error) {
+func buildMCPConfig(fs *pflag.FlagSet, lookupEnv func(string) (string, bool), globalProxy *url.URL, globalProxySource ProxySource, mainServerURL string) (MCPConfig, error) {
 	commandEntries, err := resolveMCPEntries(fs, lookupEnv, "mcp.command", "MCP_COMMAND")
 	if err != nil {
 		return MCPConfig{}, err
@@ -1810,6 +1821,23 @@ func buildMCPConfig(fs *pflag.FlagSet, lookupEnv func(string) (string, bool), gl
 	bindings, err := parseMCPChannelBindings(commandEntries, serverEntries, lookupEnv)
 	if err != nil {
 		return MCPConfig{}, err
+	}
+	if mainServerURL != "" {
+		mainBinding, err := buildMCPBinding(types.DefaultChannel, MCPTransportHTTPStreamable, mainServerURL)
+		if err != nil {
+			return MCPConfig{}, err
+		}
+		mainIndex := slices.IndexFunc(bindings, func(binding MCPChannelBinding) bool {
+			return binding.Channel.Canonical() == types.DefaultChannel
+		})
+		if mainIndex >= 0 {
+			if err := validateMCPBindingTransport(bindings[mainIndex]); err != nil {
+				return MCPConfig{}, err
+			}
+			bindings[mainIndex] = mainBinding
+		} else {
+			bindings = append(bindings, mainBinding)
+		}
 	}
 
 	defaultClientCertificate, err := buildMCPClientCertificate(fs, lookupEnv)
@@ -1886,25 +1914,16 @@ func buildMCPConfig(fs *pflag.FlagSet, lookupEnv func(string) (string, bool), gl
 
 	boundHTTPTransportCount := 0
 	for i := range bindings {
+		if err := validateMCPBindingTransport(bindings[i]); err != nil {
+			return MCPConfig{}, err
+		}
 		if bindings[i].TransportKind != MCPTransportHTTPStreamable {
-			if bindings[i].HTTPProxy != nil {
-				return MCPConfig{}, fmt.Errorf("mcp config: http-proxy not supported for %s channel %q", bindings[i].TransportKind, bindings[i].Channel.Canonical())
-			}
-			if bindings[i].UnixSocketPath != "" {
-				return MCPConfig{}, fmt.Errorf("mcp config: unix-socket not supported for %s channel %q", bindings[i].TransportKind, bindings[i].Channel.Canonical())
-			}
-			if bindings[i].ClientCertificate != nil {
-				return MCPConfig{}, fmt.Errorf("mcp config: client certificates are not supported for %s channel %q", bindings[i].TransportKind, bindings[i].Channel.Canonical())
-			}
 			bindings[i].HTTPProxySource = ProxySourceIgnored
 			continue
 		}
 		boundHTTPTransportCount++
 		if bindings[i].ClientCertificate == nil {
 			bindings[i].ClientCertificate = defaultClientCertificate
-		}
-		if bindings[i].UnixSocketPath != "" && bindings[i].HTTPProxy != nil {
-			return MCPConfig{}, fmt.Errorf("mcp config: unix-socket cannot be combined with http-proxy for channel %q", bindings[i].Channel.Canonical())
 		}
 		if bindings[i].UnixSocketPath != "" {
 			bindings[i].HTTPProxySource = ProxySourceIgnored
@@ -1953,6 +1972,25 @@ func buildMCPConfig(fs *pflag.FlagSet, lookupEnv func(string) (string, bool), gl
 		cfg.ClientCertificate = mainBinding.ClientCertificate
 	}
 	return cfg, nil
+}
+
+func validateMCPBindingTransport(binding MCPChannelBinding) error {
+	if binding.TransportKind == MCPTransportHTTPStreamable {
+		if binding.UnixSocketPath != "" && binding.HTTPProxy != nil {
+			return fmt.Errorf("mcp config: unix-socket cannot be combined with http-proxy for channel %q", binding.Channel.Canonical())
+		}
+		return nil
+	}
+	if binding.HTTPProxy != nil {
+		return fmt.Errorf("mcp config: http-proxy not supported for %s channel %q", binding.TransportKind, binding.Channel.Canonical())
+	}
+	if binding.UnixSocketPath != "" {
+		return fmt.Errorf("mcp config: unix-socket not supported for %s channel %q", binding.TransportKind, binding.Channel.Canonical())
+	}
+	if binding.ClientCertificate != nil {
+		return fmt.Errorf("mcp config: client certificates are not supported for %s channel %q", binding.TransportKind, binding.Channel.Canonical())
+	}
+	return nil
 }
 
 func resolveMCPEntries(fs *pflag.FlagSet, lookupEnv func(string) (string, bool), flagName, envKey string) ([]string, error) {

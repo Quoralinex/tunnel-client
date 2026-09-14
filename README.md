@@ -38,6 +38,29 @@ then read the onboarding guide below.
   the MCP SDK's in-memory transport; see
   [`examples/go-sdk-inmemory`](examples/go-sdk-inmemory).
 
+## Try the embedded demo
+
+With a runtime API key and tunnel ID, run the built-in `server_info`, `echo`,
+and `uppercase` tools without a separate MCP server:
+
+```bash
+export CONTROL_PLANE_API_KEY="sk-..."
+export CONTROL_PLANE_TUNNEL_ID="tunnel_0123456789abcdef0123456789abcdef"
+tunnel-client run --embedded-stateless-mcp-stub --health.listen-addr 127.0.0.1:0
+```
+
+`--embedded-stateless-mcp-stub` uses stateless MCP handling even when a client
+sends `initialize` and `notifications/initialized`. It issues no MCP session
+ID, and these demo tools do not require MCP session affinity between processes.
+OAuth and application state have separate requirements.
+
+`--embedded-mcp-stub` keeps its existing compatibility behavior: legacy
+initialization and session requests use stateful handling; self-contained
+modern discovery and tool requests use stateless handling. Choose one embedded
+mode per run. Both share the embedded listen-address, server-name, and
+server-version options; see [embedded demo configuration](docs/configuration.md#embedded-demo-mcp-modes)
+for defaults and target conflicts.
+
 ## Embed as a Go SDK
 
 The module can run in the same process as a Go MCP server. The MCP server does

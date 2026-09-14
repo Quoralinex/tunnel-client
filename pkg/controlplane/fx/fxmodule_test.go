@@ -57,6 +57,34 @@ func TestBuildMCPServerInfoHeaderAdvertisesEffectiveBindings(t *testing.T) {
 			want: `{"version":1,"channels":[{"name":"main"}]}`,
 		},
 		{
+			name: "stateless HTTP main without Harpoon",
+			cfg: config.MCPConfig{
+				ChannelBindings: []config.MCPChannelBinding{{
+					Channel:       types.DefaultChannel,
+					TransportKind: config.MCPTransportHTTPStreamable,
+					Stateless:     true,
+				}},
+			},
+			want: `{"version":2,"channels":[{"name":"main","stateless":true}]}`,
+		},
+		{
+			name: "stateless capability stays on its configured binding",
+			cfg: config.MCPConfig{
+				ChannelBindings: []config.MCPChannelBinding{
+					{
+						Channel:       types.DefaultChannel,
+						TransportKind: config.MCPTransportHTTPStreamable,
+						Stateless:     true,
+					},
+					{
+						Channel:       types.Channel("secondary"),
+						TransportKind: config.MCPTransportStdio,
+					},
+				},
+			},
+			want: `{"version":2,"channels":[{"name":"main","stateless":true},{"name":"secondary","proc_affinity":true}]}`,
+		},
+		{
 			name:           "remote streamable HTTP main with enabled Harpoon",
 			harpoonEnabled: true,
 			cfg: config.MCPConfig{

@@ -24,6 +24,7 @@ const (
 )
 
 type devMCPStubOptions struct {
+	Stateless     bool
 	ListenAddr    string
 	ServerName    string
 	ServerVersion string
@@ -85,7 +86,7 @@ func startDevMCPStub(opts devMCPStubOptions) (*devMCPStubInstance, error) {
 		},
 		listener: listener,
 		server: &http.Server{
-			Handler:           newDevMCPStubHandler(serverName, serverVersion),
+			Handler:           newDevMCPStubHandler(serverName, serverVersion, opts.Stateless),
 			ReadHeaderTimeout: 5 * time.Second,
 		},
 		errCh: make(chan error, 1),
@@ -142,7 +143,7 @@ func (s *devMCPStubInstance) AuthorizationServerMetadataURL() string {
 	return s.BaseURL.ResolveReference(&url.URL{Path: "/.well-known/oauth-authorization-server"}).String()
 }
 
-func newDevMCPStubHandler(serverName string, serverVersion string) http.Handler {
+func newDevMCPStubHandler(serverName string, serverVersion string, stateless bool) http.Handler {
 	mux := http.NewServeMux()
 	server := mcp.NewServer(&mcp.Implementation{
 		Name:    serverName,
@@ -192,7 +193,7 @@ func newDevMCPStubHandler(serverName string, serverVersion string) http.Handler 
 		}, result, nil
 	})
 
-	mux.Handle("/mcp", newDevMCPStubStreamableHandler(server))
+	mux.Handle("/mcp", newDevMCPStubStreamableHandler(server, stateless))
 	mux.HandleFunc("/.well-known/oauth-protected-resource", func(w http.ResponseWriter, r *http.Request) {
 		writeDevMCPStubProtectedResourceMetadata(w, r)
 	})
@@ -208,12 +209,17 @@ func newDevMCPStubHandler(serverName string, serverVersion string) http.Handler 
 	return mux
 }
 
-func newDevMCPStubStreamableHandler(server *mcp.Server) http.Handler {
+func newDevMCPStubStreamableHandler(server *mcp.Server, stateless bool) http.Handler {
 	getServer := func(*http.Request) *mcp.Server { return server }
-	statefulHandler := mcp.NewStreamableHTTPHandler(getServer, nil)
+	handler := mcp.NewStreamableHTTPHandler(getServer, &mcp.StreamableHTTPOptions{
+		Stateless: stateless,
+	})
+	if stateless {
+		return handler
+	}
+	// Preserve the default stub's legacy session lifecycle while dispatching
+	// self-contained modern MCP requests to the stateless handler.
 	statelessHandler := mcp.NewStreamableHTTPHandler(getServer, &mcp.StreamableHTTPOptions{
-		// Modern MCP requests are self-contained. The demo tools do not need
-		// session state, but legacy clients still need their session lifecycle.
 		Stateless: true,
 	})
 	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
@@ -228,7 +234,7 @@ func newDevMCPStubStreamableHandler(server *mcp.Server) http.Handler {
 			return
 		}
 		if legacy {
-			statefulHandler.ServeHTTP(w, req)
+			handler.ServeHTTP(w, req)
 			return
 		}
 		statelessHandler.ServeHTTP(w, req)

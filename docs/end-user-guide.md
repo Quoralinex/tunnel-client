@@ -174,6 +174,24 @@ curl -fsS "$(cat "$health_url_file")/readyz"
 open "$(cat "$health_url_file")/ui"
 ```
 
+To run these same demo tools without MCP session affinity, select the stateless
+mode instead:
+
+```bash
+tunnel-client run --embedded-stateless-mcp-stub \
+  --control-plane.tunnel-id tunnel_0123456789abcdef0123456789abcdef \
+  --health.listen-addr 127.0.0.1:0
+```
+
+This mode issues no MCP session ID, including for clients that send
+`initialize` and `notifications/initialized`. The original
+`--embedded-mcp-stub` keeps stateful legacy initialization/session handling
+and stateless modern discovery/tool handling. The two flags are mutually
+exclusive and cannot accompany explicit MCP target flags or their aliases.
+Both use the same embedded listen-address, server-name, and server-version
+options. Stateless MCP handling does not guarantee shared OAuth or application
+state. See [embedded demo configuration](configuration.md#embedded-demo-mcp-modes).
+
 If you want a named profile instead of the one-command demo path:
 
 ```bash

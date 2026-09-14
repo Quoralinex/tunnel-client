@@ -1772,6 +1772,82 @@ func TestLoadUsesMCPCommand(t *testing.T) {
 	}
 }
 
+func TestFullMainMCPServerURLOverrideAppliesTransportDefaults(t *testing.T) {
+	t.Parallel()
+
+	certPath, keyPath := writeTempClientCertPair(t)
+	for _, target := range []string{"none", "stdio", "http"} {
+		t.Run(target, func(t *testing.T) {
+			t.Parallel()
+			fs := pflag.NewFlagSet("full", pflag.ContinueOnError)
+			RegisterFlags(fs, FlavorFull)
+			args := []string{
+				"--mcp.client-cert", certPath,
+				"--mcp.client-key", keyPath,
+				"--mcp.http-proxy", "http://mcp-proxy.example:8080",
+				"--http-proxy", "http://global-proxy.example:8080",
+				"--mcp.connection-max-ttl", "7m",
+				"--mcp.startup-wait-timeout", "3s",
+				"--mcp.max-concurrent-requests", "11",
+				"--control-plane.poll-channel", "main",
+			}
+			if target != "none" {
+				args = append(args,
+					"--mcp.server-url", "channel=docs,url=https://docs.example/mcp,http-proxy=http://docs-proxy.example:8080",
+					"--mcp.command", "channel=tools,command=echo tools",
+				)
+			}
+			switch target {
+			case "stdio":
+				args = append(args, "--mcp.command", "echo original")
+			case "http":
+				args = append(args, "--mcp.server-url", "channel=main,url=http://original.example/mcp,unix-socket=/tmp/original-mcp.sock")
+			}
+			if err := fs.Parse(args); err != nil {
+				t.Fatal(err)
+			}
+			const embeddedURL = "http://127.0.0.1:12345/mcp"
+			cfg, _, _, err := LoadFullFromFlagSetWithMainMCPServerURL(fs, lookupEnvMap(map[string]string{
+				"CONTROL_PLANE_TUNNEL_ID": envTunnelID,
+				"CONTROL_PLANE_API_KEY":   "control-key",
+			}), embeddedURL)
+			if err != nil {
+				t.Fatal(err)
+			}
+			main := cfg.MCP.MainChannelBinding()
+			if main == nil || main.ServerURL == nil || main.ServerURL.String() != embeddedURL || main.TransportKind != MCPTransportHTTPStreamable {
+				t.Fatalf("unexpected main binding: %#v", main)
+			}
+			if main.HTTPProxy == nil || main.HTTPProxy.String() != "http://mcp-proxy.example:8080" || main.HTTPProxySource != ProxySource("mcp.http-proxy") {
+				t.Fatalf("main did not inherit MCP proxy: %#v", main)
+			}
+			if main.ClientCertificate == nil || main.ClientCertificate.CertPath != certPath || main.ClientCertificate.KeyPath != keyPath {
+				t.Fatalf("main did not inherit client certificate: %#v", main.ClientCertificate)
+			}
+			if cfg.MCP.ServerURL != main.ServerURL || cfg.MCP.ClientCertificate != main.ClientCertificate || cfg.MCP.TransportKind != main.TransportKind || cfg.MCP.Command != "" || len(cfg.MCP.CommandArgs) != 0 || cfg.MCP.UnixSocketPath != "" || main.UnixSocketPath != "" {
+				t.Fatalf("main projection retained original target fields: %#v", cfg.MCP)
+			}
+			if cfg.MCP.ConnectionMaxTTL != 7*time.Minute || cfg.MCP.StartupWaitTimeout != 3*time.Second || cfg.MCP.MaxConcurrentRequests != 11 {
+				t.Fatalf("shared MCP settings changed: %#v", cfg.MCP)
+			}
+			if target == "none" {
+				if len(cfg.MCP.ChannelBindings) != 1 {
+					t.Fatalf("unexpected bindings: %#v", cfg.MCP.ChannelBindings)
+				}
+				return
+			}
+			docs := cfg.MCP.ChannelBindingFor(types.Channel("docs"))
+			if docs == nil || docs.ServerURL.String() != "https://docs.example/mcp" || docs.HTTPProxy.String() != "http://docs-proxy.example:8080" || docs.HTTPProxySource != ProxySource("mcp.server-url") || docs.ClientCertificate == nil || docs.ClientCertificate.CertPath != certPath {
+				t.Fatalf("non-main HTTP transport defaults changed: %#v", docs)
+			}
+			tools := cfg.MCP.ChannelBindingFor(types.Channel("tools"))
+			if tools == nil || tools.Command != "echo tools" || tools.TransportKind != MCPTransportStdio || tools.HTTPProxySource != ProxySourceIgnored || tools.HTTPProxy != nil || tools.ClientCertificate != nil {
+				t.Fatalf("non-main stdio binding changed: %#v", tools)
+			}
+		})
+	}
+}
+
 func TestLoadRejectsMCPCommandAndServerURLSameChannel(t *testing.T) {
 	t.Parallel()
 

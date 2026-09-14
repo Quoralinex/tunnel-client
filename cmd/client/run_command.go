@@ -23,6 +23,7 @@ import (
 
 type runEmbeddedMCPStubOptions struct {
 	Enabled       bool
+	Stateless     bool
 	ListenAddr    string
 	ServerName    string
 	ServerVersion string
@@ -101,8 +102,9 @@ func newRunCommand(lookupEnv func(string) (string, bool)) *cobra.Command {
 		},
 	}
 	config.RegisterFlags(runCmd.Flags())
-	runCmd.Flags().BoolVar(&embeddedStub.Enabled, "embedded-mcp-stub", false, "Start the embedded demo MCP + OAuth stub and bind the main channel to it for this run")
-	runCmd.Flags().StringVar(&embeddedStub.ListenAddr, "embedded-mcp-listen-addr", defaultDevMCPStubListenAddr, "Listen address for the embedded demo MCP stub used by --embedded-mcp-stub")
+	runCmd.Flags().BoolVar(&embeddedStub.Enabled, "embedded-mcp-stub", false, "Bind the main channel to the embedded demo MCP + OAuth stub with legacy sessions and modern stateless requests; mutually exclusive with --embedded-stateless-mcp-stub")
+	runCmd.Flags().BoolVar(&embeddedStub.Stateless, "embedded-stateless-mcp-stub", false, "Start the embedded demo MCP + OAuth stub with stateless request handling, including initialize, and bind the main channel to it; mutually exclusive with --embedded-mcp-stub")
+	runCmd.Flags().StringVar(&embeddedStub.ListenAddr, "embedded-mcp-listen-addr", defaultDevMCPStubListenAddr, "Listen address for either embedded demo MCP stub mode")
 	runCmd.Flags().StringVar(&embeddedStub.ServerName, "embedded-mcp-server-name", defaultDevMCPStubName, "Server name advertised by the embedded demo MCP stub")
 	runCmd.Flags().StringVar(&embeddedStub.ServerVersion, "embedded-mcp-server-version", defaultDevMCPStubVersion, "Server version advertised by the embedded demo MCP stub")
 
@@ -129,7 +131,7 @@ func runTunnel(cmd *cobra.Command, lookupEnv func(string) (string, bool), embedd
 		}()
 	}
 
-	cfg, err := config.LoadFromFlagSet(cmd.Flags(), lookupEnv)
+	cfg, err := loadRunConfig(cmd, lookupEnv, embeddedStub, stub)
 	if err != nil {
 		if needsFirstUseGuidance(err) {
 			return fmt.Errorf("configure tunnel-client: %w; %s", err, firstUseGuidance(err))
@@ -159,17 +161,38 @@ func runTunnel(cmd *cobra.Command, lookupEnv func(string) (string, bool), embedd
 	return runtimecli.RunFXApp(cmd.Context(), fxApp, "tunnel-client", failureCh)
 }
 
+func loadRunConfig(cmd *cobra.Command, lookupEnv func(string) (string, bool), opts runEmbeddedMCPStubOptions, stub *devMCPStubInstance) (*config.Config, error) {
+	if opts.Stateless && stub != nil {
+		cfg, err := config.LoadFromFlagSetWithMainMCPServerURL(cmd.Flags(), lookupEnv, stub.MCPURL())
+		if err != nil {
+			return nil, err
+		}
+		// The process-owned stub must not inherit proxies for external MCP targets.
+		main := cfg.MCP.MainChannelBinding()
+		main.HTTPProxy = nil
+		main.HTTPProxySource = config.ProxySourceNone
+		main.Stateless = true
+		return cfg, nil
+	}
+	return config.LoadFromFlagSet(cmd.Flags(), lookupEnv)
+}
+
 func configureRunEmbeddedMCPStub(cmd *cobra.Command, opts runEmbeddedMCPStubOptions) (*devMCPStubInstance, error) {
-	if !opts.Enabled {
+	if opts.Enabled && opts.Stateless {
+		return nil, fmt.Errorf("--embedded-mcp-stub and --embedded-stateless-mcp-stub are mutually exclusive")
+	}
+	if !opts.Enabled && !opts.Stateless {
 		return nil, nil
 	}
-	if explicitMainTargetFlagChanged(cmd, "mcp.command", "mcp-command") {
-		return nil, fmt.Errorf("--embedded-mcp-stub cannot be combined with --mcp.command; use one main MCP target path")
+	embeddedFlag := "embedded-mcp-stub"
+	if opts.Stateless {
+		embeddedFlag = "embedded-stateless-mcp-stub"
 	}
-	if explicitMainTargetFlagChanged(cmd, "mcp.server-url", "mcp-server-url") {
-		return nil, fmt.Errorf("--embedded-mcp-stub cannot be combined with --mcp.server-url; use one main MCP target path")
+	if targetFlag := explicitMainTargetFlag(cmd, "mcp.command", "mcp-command", "mcp.server-url", "mcp-server-url"); targetFlag != "" {
+		return nil, fmt.Errorf("--%s cannot be combined with --%s; use one main MCP target path", embeddedFlag, targetFlag)
 	}
 	stub, err := startDevMCPStub(devMCPStubOptions{
+		Stateless:     opts.Stateless,
 		ListenAddr:    opts.ListenAddr,
 		ServerName:    opts.ServerName,
 		ServerVersion: opts.ServerVersion,
@@ -177,11 +200,13 @@ func configureRunEmbeddedMCPStub(cmd *cobra.Command, opts runEmbeddedMCPStubOpti
 	if err != nil {
 		return nil, fmt.Errorf("start embedded MCP stub: %w", err)
 	}
-	if err := cmd.Flags().Set("mcp.server-url", fmt.Sprintf("channel=main,url=%s", stub.MCPURL())); err != nil {
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		_ = stub.Shutdown(shutdownCtx)
-		return nil, fmt.Errorf("configure embedded MCP stub: %w", err)
+	if !opts.Stateless {
+		if err := cmd.Flags().Set("mcp.server-url", fmt.Sprintf("channel=main,url=%s", stub.MCPURL())); err != nil {
+			shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			_ = stub.Shutdown(shutdownCtx)
+			return nil, fmt.Errorf("configure embedded MCP stub: %w", err)
+		}
 	}
 	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Embedded MCP stub enabled.\n")
 	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  MCP URL: %s\n", stub.MCPURL())
@@ -192,9 +217,9 @@ func configureRunEmbeddedMCPStub(cmd *cobra.Command, opts runEmbeddedMCPStubOpti
 	return stub, nil
 }
 
-func explicitMainTargetFlagChanged(cmd *cobra.Command, names ...string) bool {
+func explicitMainTargetFlag(cmd *cobra.Command, names ...string) string {
 	if cmd == nil {
-		return false
+		return ""
 	}
 	for _, name := range names {
 		if name == "" {
@@ -202,10 +227,10 @@ func explicitMainTargetFlagChanged(cmd *cobra.Command, names ...string) bool {
 		}
 		flag := cmd.Flags().Lookup(name)
 		if flag != nil && flag.Changed {
-			return true
+			return name
 		}
 	}
-	return false
+	return ""
 }
 
 func needsFirstUseGuidance(err error) bool {

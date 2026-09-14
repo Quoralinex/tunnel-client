@@ -66,13 +66,40 @@ func TestRuntimeHTTPMCP(t *testing.T) {
 func TestRuntimeEmbeddedMCPStubModernDiscovery(t *testing.T) {
 	t.Parallel()
 
-	const protocolVersion = "2026-07-28"
-	steps := []struct {
+	testRuntimeEmbeddedMCPStub(t, "--embedded-mcp-stub", false)
+}
+
+func TestRuntimeEmbeddedStatelessMCPStub(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name       string
+		initialize bool
+	}{
+		{name: "modern_discovery"},
+		{name: "initialization", initialize: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			testRuntimeEmbeddedMCPStub(t, "--embedded-stateless-mcp-stub", tc.initialize)
+		})
+	}
+}
+
+func testRuntimeEmbeddedMCPStub(t *testing.T, embeddedFlag string, initialize bool) {
+	t.Helper()
+
+	protocolVersion := "2026-07-28"
+	if initialize {
+		protocolVersion = "2025-06-18"
+	}
+	type requestStep struct {
 		requestID string
 		method    string
 		params    map[string]any
 		wantText  string
-	}{
+	}
+	steps := []requestStep{
 		{requestID: "openai-mcp-discover", method: "server/discover"},
 		{requestID: "embedded-tools-list", method: "tools/list"},
 		{
@@ -94,23 +121,42 @@ func TestRuntimeEmbeddedMCPStubModernDiscovery(t *testing.T) {
 			wantText:  "OPENAI TUNNEL",
 		},
 	}
+	if initialize {
+		steps = append([]requestStep{
+			{
+				requestID: "embedded-initialize",
+				method:    "initialize",
+				params: map[string]any{
+					"protocolVersion": protocolVersion,
+					"capabilities":    map[string]any{},
+					"clientInfo":      map[string]any{"name": "embedded-stub-e2e", "version": "1.0.0"},
+				},
+			},
+			{requestID: "embedded-initialized", method: "notifications/initialized"},
+		}, steps[1:]...)
+	}
 	ready := make(chan struct{})
 	commands := make([]mocktunnelservice.CommandResponse, 0, len(steps))
 	for _, step := range steps {
-		params := map[string]any{
-			"_meta": map[string]any{
+		params := map[string]any{}
+		if !initialize {
+			params["_meta"] = map[string]any{
 				"io.modelcontextprotocol/protocolVersion":    protocolVersion,
 				"io.modelcontextprotocol/clientInfo":         map[string]any{"name": "embedded-stub-e2e", "version": "1.0.0"},
 				"io.modelcontextprotocol/clientCapabilities": map[string]any{},
-			},
+			}
 		}
 		maps.Copy(params, step.params)
-		payload, err := json.Marshal(map[string]any{
+		request := map[string]any{
 			"jsonrpc": "2.0",
 			"id":      step.requestID,
 			"method":  step.method,
 			"params":  params,
-		})
+		}
+		if step.method == "notifications/initialized" {
+			delete(request, "id")
+		}
+		payload, err := json.Marshal(request)
 		require.NoError(t, err)
 		headers := http.Header{
 			"Accept":               {"application/json, text/event-stream"},
@@ -129,8 +175,8 @@ func TestRuntimeEmbeddedMCPStubModernDiscovery(t *testing.T) {
 			}},
 		})
 	}
-	// Start with discovery and supply no initialize or session propagation, so
-	// legacy negotiation cannot hide an unsupported modern embedded endpoint.
+	// No step propagates session headers. The initialization case exercises a
+	// complete legacy handshake; the discovery case starts with modern metadata.
 	controlPlane := mocktunnelservice.NewMockTunnelService(
 		mocktunnelservice.WithAPIKey(runtimeArtifactAPIKey),
 		mocktunnelservice.WithTunnelID(runtimeArtifactTunnelID),
@@ -139,12 +185,16 @@ func TestRuntimeEmbeddedMCPStubModernDiscovery(t *testing.T) {
 	controlPlane.Start(t)
 	binary := buildRuntimeArtifact(t, "./cmd/client", "tunnel-client", "full")
 	healthURLFile := filepath.Join(t.TempDir(), "health.url")
+	inheritedMainCommand := ""
+	if embeddedFlag == "--embedded-stateless-mcp-stub" {
+		inheritedMainCommand = "command=embedded-ignored-stdio-target,channel=main"
+	}
 	proc := startRuntimeArtifactWithEnv(t, binary, map[string]string{
-		"MCP_COMMAND":    "",
+		"MCP_COMMAND":    inheritedMainCommand,
 		"MCP_SERVER_URL": "",
 	},
 		"run",
-		"--embedded-mcp-stub",
+		embeddedFlag,
 		"--embedded-mcp-listen-addr", "127.0.0.1:0",
 		"--embedded-mcp-server-name", "embedded-e2e",
 		"--embedded-mcp-server-version", "1.0.0",
@@ -160,15 +210,35 @@ func TestRuntimeEmbeddedMCPStubModernDiscovery(t *testing.T) {
 	close(ready)
 	waitForRuntimeArtifactIdle(t, proc, controlPlane)
 
+	wantServerInfo := `{"version":1,"channels":[{"name":"main"}]}`
+	if embeddedFlag == "--embedded-stateless-mcp-stub" {
+		wantServerInfo = `{"version":2,"channels":[{"name":"main","stateless":true}]}`
+	}
+	pollCount := 0
+	for _, request := range controlPlane.ReceivedHTTPRequests() {
+		if request.Method == http.MethodGet && strings.HasSuffix(request.Path, "/poll") {
+			pollCount++
+			require.Equal(t, wantServerInfo, request.Headers.Get("X-Tunnel-MCP-Server-Info"))
+		}
+	}
+	require.Positive(t, pollCount, "expected actual-binary control-plane polls")
+
 	responses := controlPlane.ReceivedResponses(mocktunnelservice.ResponseMatchMatched)
 	require.Len(t, responses, len(steps))
 	require.Len(t, controlPlane.DeliveredCommands(), len(steps))
 	for i, response := range responses {
 		step := steps[i]
 		require.Equal(t, step.requestID, response.RequestID)
+		require.Empty(t, response.ResponseHeaders.Get("Mcp-Session-Id"), step.method)
+		if step.method == "notifications/initialized" {
+			require.Equal(t, string(wiretypes.ResponsePayloadNotifyAck), response.ResponseType)
+			require.GreaterOrEqual(t, response.ResponseCode, http.StatusOK)
+			require.Less(t, response.ResponseCode, http.StatusMultipleChoices)
+			require.Empty(t, response.JSONResponse)
+			continue
+		}
 		require.Equal(t, string(wiretypes.ResponsePayloadJSONRPC), response.ResponseType)
 		require.Equal(t, http.StatusOK, response.ResponseCode, string(response.JSONResponse))
-		require.Empty(t, response.ResponseHeaders.Get("Mcp-Session-Id"), step.method)
 		var envelope struct {
 			JSONRPC string          `json:"jsonrpc"`
 			ID      string          `json:"id"`
@@ -179,8 +249,13 @@ func TestRuntimeEmbeddedMCPStubModernDiscovery(t *testing.T) {
 		require.Equal(t, "2.0", envelope.JSONRPC)
 		require.Equal(t, step.requestID, envelope.ID)
 		require.Empty(t, envelope.Error, string(response.JSONResponse))
-		require.Equal(t, "complete", envelope.Result["resultType"], step.method)
+		if !initialize {
+			require.Equal(t, "complete", envelope.Result["resultType"], step.method)
+		}
 		switch step.method {
+		case "initialize":
+			require.Equal(t, protocolVersion, envelope.Result["protocolVersion"])
+			require.Equal(t, map[string]any{"name": "embedded-e2e", "version": "1.0.0"}, envelope.Result["serverInfo"])
 		case "server/discover":
 			require.Contains(t, envelope.Result["supportedVersions"], protocolVersion)
 		case "tools/list":

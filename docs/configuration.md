@@ -5,7 +5,8 @@ config file, or a named YAML profile.
 
 - **Precedence**: flags > environment variables > YAML config > defaults.
 - **Requirement**: you must provide a control-plane API key, a tunnel ID, and a
-  `main` MCP channel binding (via `--mcp.server-url` or `--mcp.command`).
+  `main` MCP channel binding (via `--mcp.server-url`, `--mcp.command`, or one of
+  the [embedded demo modes](#embedded-demo-mcp-modes)).
 
 ## Agent-first commands
 
@@ -61,6 +62,64 @@ Starter prompts for Codex:
 - `Use tunnel-client to create or reuse a profile, run doctor --explain, and then start the daemon.`
 - `Install the Codex plugin from the tunnel-client binary, connect the provided tunnel id, and tell me whether the runtime is launched, healthy, or ready.`
 - `Use tunnel-client runtimes to attach a local MCP server to an existing tunnel id and report the ui_url.`
+
+## Embedded demo MCP modes
+
+Both optional `run` flags start the same demo MCP tools (`server_info`, `echo`,
+and `uppercase`) and OAuth metadata endpoints inside the tunnel-client process,
+then bind its `main` MCP channel to that process's stub:
+
+| Flag | MCP compatibility behavior |
+| --- | --- |
+| `--embedded-mcp-stub` | Preserves stateful handling for legacy initialization and session requests, including `initialize` and `notifications/initialized`. Self-contained modern discovery and tool requests use stateless handling. |
+| `--embedded-stateless-mcp-stub` | Uses stateless handling for every MCP request, including `initialize` and `notifications/initialized`, without issuing `Mcp-Session-Id`. |
+
+For example, after replacing the runtime key and tunnel ID:
+
+```bash
+export CONTROL_PLANE_API_KEY="sk-..."
+export CONTROL_PLANE_TUNNEL_ID="tunnel_0123456789abcdef0123456789abcdef"
+tunnel-client run \
+  --embedded-stateless-mcp-stub \
+  --embedded-mcp-listen-addr 127.0.0.1:0 \
+  --embedded-mcp-server-name stateless-demo \
+  --embedded-mcp-server-version 1.0.0 \
+  --health.listen-addr 127.0.0.1:0
+```
+
+The modes are mutually exclusive. Neither can be combined with an explicit
+`--mcp.server-url` or `--mcp.command` flag, including the aliases
+`--mcp-server-url` and `--mcp-command`. Mode selection and embedded options are
+CLI flags for `run`; they have no environment-variable or YAML equivalents.
+Without either mode, the configured MCP target and existing defaults apply.
+
+`--embedded-stateless-mcp-stub` replaces a `main` target resolved from the
+environment, YAML config, or profile, and adds one if none is configured. It
+retains other MCP channels. Its main binding does not inherit configured MCP or
+global HTTP proxies. Replacing the target does not bypass validation of
+configured targets or duplicate-channel checks. This behavior applies only to
+the stateless flag; `--embedded-mcp-stub` keeps its existing configuration
+behavior.
+
+The stateless mode advertises `main` as stateless in v2 server-info metadata.
+Other configured channels retain their own affinity requirements. The compatible
+embedded mode retains its existing declaration.
+
+Shared options:
+
+| Option | Default | Meaning |
+| --- | --- | --- |
+| `--embedded-mcp-listen-addr` | `127.0.0.1:0` | Stub listen address; port `0` chooses an available port for each process. |
+| `--embedded-mcp-server-name` | `mcp-stub` | Server name advertised by the demo. |
+| `--embedded-mcp-server-version` | `0.1.0` | Server version advertised by the demo. |
+
+The stateless demo tools need no MCP session affinity: completed requests in
+one interaction can be followed by requests to another process's embedded
+stub. Clients do not need a session DELETE on exit; the stateless endpoint
+returns HTTP 405 for session DELETE and standalone GET streams. This does not
+provide replay of interrupted requests, shared OAuth state, or shared
+application state. Authentication and any state used by other applications
+must be handled separately.
 
 ## YAML config file
 
