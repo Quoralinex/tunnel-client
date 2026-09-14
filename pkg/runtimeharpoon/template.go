@@ -102,8 +102,8 @@ func CompileTargetTemplate(cfg *runtimeconfig.HarpoonTargetTemplate) (*TargetTem
 		return nil, errors.New("template path must be absolute and bounded")
 	}
 	used := make(map[string]struct{}, len(t.parameters))
-	segments := strings.Split(strings.TrimPrefix(cfg.PathTemplate, "/"), "/")
-	for _, segment := range segments {
+	segments := strings.SplitSeq(strings.TrimPrefix(cfg.PathTemplate, "/"), "/")
+	for segment := range segments {
 		part, err := compileTemplatePart(segment, t.parameters, used)
 		if err != nil {
 			return nil, err

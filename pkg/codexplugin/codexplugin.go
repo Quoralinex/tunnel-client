@@ -526,7 +526,7 @@ type tomlSection struct {
 
 func splitSections(text string) []tomlSection {
 	sections := []tomlSection{{}}
-	for _, line := range strings.Split(text, "\n") {
+	for line := range strings.SplitSeq(text, "\n") {
 		if strings.HasPrefix(line, "[") && strings.HasSuffix(line, "]") {
 			sections = append(sections, tomlSection{
 				name:  strings.TrimSuffix(strings.TrimPrefix(line, "["), "]"),

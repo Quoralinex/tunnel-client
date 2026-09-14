@@ -859,8 +859,8 @@ func (h *headerWriter) addHeaders(src http.Header) {
 }
 
 func acceptsEventStream(req *http.Request) bool {
-	accept := strings.Split(strings.Join(req.Header.Values("Accept"), ","), ",")
-	for _, candidate := range accept {
+	accept := strings.SplitSeq(strings.Join(req.Header.Values("Accept"), ","), ",")
+	for candidate := range accept {
 		switch strings.TrimSpace(candidate) {
 		case "text/event-stream", "text/*", "*/*":
 			return true

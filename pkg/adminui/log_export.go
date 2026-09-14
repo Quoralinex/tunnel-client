@@ -941,7 +941,7 @@ func isSensitiveRuntimeKey(key string) bool {
 	if isSensitiveAttrKey(normalized) {
 		return true
 	}
-	for _, token := range strings.Split(normalized, "_") {
+	for token := range strings.SplitSeq(normalized, "_") {
 		switch token {
 		case "key", "token", "secret", "password", "cookie", "authorization":
 			return true

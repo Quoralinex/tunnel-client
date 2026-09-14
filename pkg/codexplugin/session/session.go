@@ -862,7 +862,7 @@ func tmuxFirstPaneID(rt Runtime, sessionName string) (string, error) {
 	if result.ReturnCode != 0 {
 		return "", fmt.Errorf("tmux list-panes failed: %s", strings.TrimSpace(firstNonEmpty(result.Stderr, result.Stdout)))
 	}
-	for _, line := range strings.Split(result.Stdout, "\n") {
+	for line := range strings.SplitSeq(result.Stdout, "\n") {
 		if trimmed := strings.TrimSpace(line); trimmed != "" {
 			if !tmuxPaneIDPattern.MatchString(trimmed) {
 				return "", fmt.Errorf("tmux list-panes returned invalid pane id %q", trimmed)
