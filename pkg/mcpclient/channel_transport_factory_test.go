@@ -874,7 +874,7 @@ func TestChannelTransportFactoryBuildSingleInstanceUnderConcurrency(t *testing.T
 	results := make([]mcp.Transport, callers)
 	var wg sync.WaitGroup
 	wg.Add(callers)
-	for i := 0; i < callers; i++ {
+	for i := range callers {
 		index := i
 		go func() {
 			defer wg.Done()
