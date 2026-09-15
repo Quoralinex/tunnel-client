@@ -57,7 +57,7 @@ OAuth and application state have separate requirements.
 `--embedded-mcp-stub` keeps its existing compatibility behavior: legacy
 initialization and session requests use stateful handling; self-contained
 modern discovery and tool requests use stateless handling. Choose one embedded
-mode per run. Both share the embedded listen-address, server-name, and
+mode per run. Both share the embedded listen-address, Unix-socket, server-name, and
 server-version options; see [embedded demo configuration](docs/configuration.md#embedded-demo-mcp-modes)
 for defaults and target conflicts.
 

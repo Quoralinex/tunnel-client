@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"sync/atomic"
@@ -62,6 +63,7 @@ func TestRunCommandAddsOnlyEmbeddedStubFlagsToFullConfigSurface(t *testing.T) {
 		"embedded-mcp-server-name",
 		"embedded-mcp-server-version",
 		"embedded-mcp-stub",
+		"embedded-mcp-unix-socket",
 		"embedded-stateless-mcp-stub",
 	)
 	sort.Strings(want)
@@ -69,6 +71,7 @@ func TestRunCommandAddsOnlyEmbeddedStubFlagsToFullConfigSurface(t *testing.T) {
 	require.Equal(t, "false", run.Flags().Lookup("embedded-mcp-stub").DefValue)
 	require.Equal(t, "false", run.Flags().Lookup("embedded-stateless-mcp-stub").DefValue)
 	require.Equal(t, defaultDevMCPStubListenAddr, run.Flags().Lookup("embedded-mcp-listen-addr").DefValue)
+	require.Equal(t, "", run.Flags().Lookup("embedded-mcp-unix-socket").DefValue)
 	require.Equal(t, defaultDevMCPStubName, run.Flags().Lookup("embedded-mcp-server-name").DefValue)
 	require.Equal(t, defaultDevMCPStubVersion, run.Flags().Lookup("embedded-mcp-server-version").DefValue)
 }
@@ -130,9 +133,12 @@ func TestRunEmbeddedMCPStubConfiguresMainChannel(t *testing.T) {
 	for _, mode := range []struct {
 		name      string
 		stateless bool
+		unix      bool
 	}{
 		{name: "Compatible"},
 		{name: "Stateless", stateless: true},
+		{name: "CompatibleUnix", unix: true},
+		{name: "StatelessUnix", stateless: true, unix: true},
 	} {
 		t.Run(mode.name, func(t *testing.T) {
 			t.Parallel()
@@ -146,10 +152,19 @@ func TestRunEmbeddedMCPStubConfiguresMainChannel(t *testing.T) {
 				ServerName:    "custom-stub",
 				ServerVersion: "1.2.3",
 			}
+			if mode.unix {
+				if runtime.GOOS == "windows" {
+					t.Skip("Unix socket listener")
+				}
+				opts.UnixSocket = shortSocketPath(t, "embedded-mcp-*.sock")
+			}
 			stub, err := configureRunEmbeddedMCPStub(run, opts)
 			require.NoError(t, err)
 			t.Cleanup(func() {
 				require.NoError(t, stub.Shutdown(context.TODO()))
+				if mode.unix {
+					require.NoFileExists(t, opts.UnixSocket)
+				}
 			})
 
 			cfg, err := loadRunConfig(run, func(key string) (string, bool) {
@@ -170,16 +185,32 @@ func TestRunEmbeddedMCPStubConfiguresMainChannel(t *testing.T) {
 			require.NotNil(t, binding.ServerURL)
 			require.Equal(t, stub.MCPURL(), binding.ServerURL.String())
 			require.Equal(t, mode.stateless, binding.Stateless)
-			require.Equal(t, "127.0.0.1", stub.BaseURL.Hostname())
-			require.NotEqual(t, "0", stub.BaseURL.Port())
+			require.Equal(t, opts.UnixSocket, stub.UnixSocket)
+			require.Equal(t, opts.UnixSocket, binding.UnixSocketPath)
+			require.Equal(t, opts.UnixSocket, cfg.MCP.UnixSocketPath)
+			if mode.unix {
+				require.Equal(t, "unix", stub.listener.Addr().Network())
+				require.Equal(t, "localhost", stub.BaseURL.Hostname())
+				require.Empty(t, stub.BaseURL.Port())
+				require.Nil(t, binding.HTTPProxy)
+				require.Contains(t, out.String(), "MCP Unix socket: "+opts.UnixSocket)
+			} else {
+				require.Equal(t, "tcp", stub.listener.Addr().Network())
+				require.Equal(t, "127.0.0.1", stub.BaseURL.Hostname())
+				require.NotEqual(t, "0", stub.BaseURL.Port())
+			}
 			require.Contains(t, out.String(), "These are the embedded demo MCP/OAuth endpoints")
+			transport, err := tctransport.ApplyUnixSocketPath(http.DefaultTransport.(*http.Transport).Clone(), binding.UnixSocketPath)
+			require.NoError(t, err)
+			httpClient := &http.Client{Transport: transport, Timeout: 5 * time.Second}
+			t.Cleanup(httpClient.CloseIdleConnections)
 
-			resp, err := http.Get(stub.ProtectedResourceMetadataURL())
+			resp, err := httpClient.Get(stub.ProtectedResourceMetadataURL())
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = resp.Body.Close() })
 			require.Equal(t, http.StatusOK, resp.StatusCode)
 
-			info := readDevMCPStubResult(t, postDevMCPStubRequest(t, stub.MCPURL(), "2026-07-28", "", "tools/call", map[string]any{
+			info := readDevMCPStubResult(t, postDevMCPStubRequestWithClient(t, httpClient, stub.MCPURL(), "2026-07-28", "", "tools/call", map[string]any{
 				"name": "server_info", "arguments": map[string]any{},
 			}))
 			require.Equal(t, []any{map[string]any{
@@ -187,6 +218,53 @@ func TestRunEmbeddedMCPStubConfiguresMainChannel(t *testing.T) {
 			}}, info["content"])
 		})
 	}
+}
+
+func TestRunEmbeddedMCPStubRejectsConflictingListeners(t *testing.T) {
+	t.Parallel()
+	for _, mode := range []string{"embedded-mcp-stub", "embedded-stateless-mcp-stub"} {
+		t.Run(mode, func(t *testing.T) {
+			t.Parallel()
+			run := newRunCommand(func(string) (string, bool) { return "", false })
+			run.SetOut(io.Discard)
+			run.SetErr(io.Discard)
+			run.SetArgs([]string{"--" + mode, "--embedded-mcp-listen-addr=127.0.0.1:0", "--embedded-mcp-unix-socket=/tmp/unused-mcp.sock"})
+			require.EqualError(t, run.Execute(), "--embedded-mcp-listen-addr and --embedded-mcp-unix-socket are mutually exclusive")
+		})
+	}
+}
+
+func TestRunEmbeddedMCPStubClosesUnixSocketAfterConfigFailure(t *testing.T) {
+	t.Parallel()
+	if runtime.GOOS == "windows" {
+		t.Skip("Unix socket listener")
+	}
+	for _, mode := range []string{"embedded-mcp-stub", "embedded-stateless-mcp-stub"} {
+		t.Run(mode, func(t *testing.T) {
+			t.Parallel()
+			socketPath := shortSocketPath(t, "embedded-mcp-failure-*.sock")
+			run := newRunCommand(func(string) (string, bool) { return "", false })
+			run.SetOut(io.Discard)
+			run.SetErr(io.Discard)
+			run.SetArgs([]string{"--" + mode, "--embedded-mcp-unix-socket=" + socketPath})
+			require.ErrorContains(t, run.Execute(), "tunnel ID is required")
+			require.NoFileExists(t, socketPath)
+		})
+	}
+}
+
+func TestRunEmbeddedMCPStubPreservesExistingUnixSocketPath(t *testing.T) {
+	t.Parallel()
+	if runtime.GOOS == "windows" {
+		t.Skip("Unix socket listener")
+	}
+	socketPath := shortSocketPath(t, "embedded-mcp-existing-*.sock")
+	require.NoError(t, os.WriteFile(socketPath, []byte("owned by another process"), 0o600))
+	_, err := startDevMCPStub(devMCPStubOptions{UnixSocket: socketPath})
+	require.Error(t, err)
+	contents, err := os.ReadFile(socketPath)
+	require.NoError(t, err)
+	require.Equal(t, "owned by another process", string(contents))
 }
 
 func TestRunEmbeddedMCPStubRejectsExplicitMainMCPFlags(t *testing.T) {

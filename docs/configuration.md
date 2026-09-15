@@ -110,8 +110,16 @@ Shared options:
 | Option | Default | Meaning |
 | --- | --- | --- |
 | `--embedded-mcp-listen-addr` | `127.0.0.1:0` | Stub listen address; port `0` chooses an available port for each process. |
+| `--embedded-mcp-unix-socket` | Empty | Bind the stub to a Unix socket instead of TCP; cannot be combined with an explicit `--embedded-mcp-listen-addr`. |
 | `--embedded-mcp-server-name` | `mcp-stub` | Server name advertised by the demo. |
 | `--embedded-mcp-server-version` | `0.1.0` | Server version advertised by the demo. |
+
+For local socket-only MCP, add `--embedded-mcp-unix-socket /tmp/my-demo-mcp.sock`
+to either mode. The parent directory must exist and the socket path must be
+unused. The main channel and its OAuth discovery use the socket; the displayed
+`http://localhost/mcp` URL is its logical HTTP address. The listener removes its
+socket on shutdown. Combine this with `--health.unix-socket` to serve health and
+admin endpoints over a separate socket. Existing TCP defaults remain available.
 
 The stateless demo tools need no MCP session affinity: completed requests in
 one interaction can be followed by requests to another process's embedded

@@ -83,7 +83,7 @@ remain separate concerns.
 
 Choose one mode per run, without explicit `--mcp.server-url` or `--mcp.command`
 (or their `--mcp-server-url` / `--mcp-command` aliases). Both modes share
-`--embedded-mcp-listen-addr`, `--embedded-mcp-server-name`, and
+`--embedded-mcp-listen-addr`, `--embedded-mcp-unix-socket`, `--embedded-mcp-server-name`, and
 `--embedded-mcp-server-version`. See [embedded demo configuration](configuration.md#embedded-demo-mcp-modes)
 for defaults and details.
 

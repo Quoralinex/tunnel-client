@@ -25,6 +25,7 @@ type runEmbeddedMCPStubOptions struct {
 	Enabled       bool
 	Stateless     bool
 	ListenAddr    string
+	UnixSocket    string
 	ServerName    string
 	ServerVersion string
 }
@@ -105,6 +106,7 @@ func newRunCommand(lookupEnv func(string) (string, bool)) *cobra.Command {
 	runCmd.Flags().BoolVar(&embeddedStub.Enabled, "embedded-mcp-stub", false, "Bind the main channel to the embedded demo MCP + OAuth stub with legacy sessions and modern stateless requests; mutually exclusive with --embedded-stateless-mcp-stub")
 	runCmd.Flags().BoolVar(&embeddedStub.Stateless, "embedded-stateless-mcp-stub", false, "Start the embedded demo MCP + OAuth stub with stateless request handling, including initialize, and bind the main channel to it; mutually exclusive with --embedded-mcp-stub")
 	runCmd.Flags().StringVar(&embeddedStub.ListenAddr, "embedded-mcp-listen-addr", defaultDevMCPStubListenAddr, "Listen address for either embedded demo MCP stub mode")
+	runCmd.Flags().StringVar(&embeddedStub.UnixSocket, "embedded-mcp-unix-socket", "", "Unix socket path for either embedded demo MCP stub mode; mutually exclusive with --embedded-mcp-listen-addr")
 	runCmd.Flags().StringVar(&embeddedStub.ServerName, "embedded-mcp-server-name", defaultDevMCPStubName, "Server name advertised by the embedded demo MCP stub")
 	runCmd.Flags().StringVar(&embeddedStub.ServerVersion, "embedded-mcp-server-version", defaultDevMCPStubVersion, "Server version advertised by the embedded demo MCP stub")
 
@@ -162,19 +164,32 @@ func runTunnel(cmd *cobra.Command, lookupEnv func(string) (string, bool), embedd
 }
 
 func loadRunConfig(cmd *cobra.Command, lookupEnv func(string) (string, bool), opts runEmbeddedMCPStubOptions, stub *devMCPStubInstance) (*config.Config, error) {
+	var cfg *config.Config
+	var err error
 	if opts.Stateless && stub != nil {
-		cfg, err := config.LoadFromFlagSetWithMainMCPServerURL(cmd.Flags(), lookupEnv, stub.MCPURL())
-		if err != nil {
-			return nil, err
-		}
-		// The process-owned stub must not inherit proxies for external MCP targets.
-		main := cfg.MCP.MainChannelBinding()
-		main.HTTPProxy = nil
-		main.HTTPProxySource = config.ProxySourceNone
-		main.Stateless = true
-		return cfg, nil
+		cfg, err = config.LoadFromFlagSetWithMainMCPServerURL(cmd.Flags(), lookupEnv, stub.MCPURL())
+	} else {
+		cfg, err = config.LoadFromFlagSet(cmd.Flags(), lookupEnv)
 	}
-	return config.LoadFromFlagSet(cmd.Flags(), lookupEnv)
+	if err != nil {
+		return nil, err
+	}
+	if stub != nil {
+		main := cfg.MCP.MainChannelBinding()
+		if stub.UnixSocket != "" {
+			main.UnixSocketPath = stub.UnixSocket
+			cfg.MCP.UnixSocketPath = stub.UnixSocket
+			main.HTTPProxy = nil
+			main.HTTPProxySource = config.ProxySourceIgnored
+		}
+		if opts.Stateless {
+			// The process-owned stub must not inherit proxies for external MCP targets.
+			main.HTTPProxy = nil
+			main.HTTPProxySource = config.ProxySourceNone
+			main.Stateless = true
+		}
+	}
+	return cfg, nil
 }
 
 func configureRunEmbeddedMCPStub(cmd *cobra.Command, opts runEmbeddedMCPStubOptions) (*devMCPStubInstance, error) {
@@ -183,6 +198,9 @@ func configureRunEmbeddedMCPStub(cmd *cobra.Command, opts runEmbeddedMCPStubOpti
 	}
 	if !opts.Enabled && !opts.Stateless {
 		return nil, nil
+	}
+	if strings.TrimSpace(opts.UnixSocket) != "" && cmd.Flags().Changed("embedded-mcp-listen-addr") {
+		return nil, fmt.Errorf("--embedded-mcp-listen-addr and --embedded-mcp-unix-socket are mutually exclusive")
 	}
 	embeddedFlag := "embedded-mcp-stub"
 	if opts.Stateless {
@@ -194,6 +212,7 @@ func configureRunEmbeddedMCPStub(cmd *cobra.Command, opts runEmbeddedMCPStubOpti
 	stub, err := startDevMCPStub(devMCPStubOptions{
 		Stateless:     opts.Stateless,
 		ListenAddr:    opts.ListenAddr,
+		UnixSocket:    opts.UnixSocket,
 		ServerName:    opts.ServerName,
 		ServerVersion: opts.ServerVersion,
 	})
@@ -210,6 +229,9 @@ func configureRunEmbeddedMCPStub(cmd *cobra.Command, opts runEmbeddedMCPStubOpti
 	}
 	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Embedded MCP stub enabled.\n")
 	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  MCP URL: %s\n", stub.MCPURL())
+	if stub.UnixSocket != "" {
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  MCP Unix socket: %s\n", stub.UnixSocket)
+	}
 	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  Protected resource metadata: %s\n", stub.ProtectedResourceMetadataURL())
 	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  Authorization server metadata: %s\n", stub.AuthorizationServerMetadataURL())
 	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  These are the embedded demo MCP/OAuth endpoints. tunnel-client health/ui URLs are separate and will be logged after startup.\n")

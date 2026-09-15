@@ -26,15 +26,17 @@ const (
 type devMCPStubOptions struct {
 	Stateless     bool
 	ListenAddr    string
+	UnixSocket    string
 	ServerName    string
 	ServerVersion string
 }
 
 type devMCPStubInstance struct {
-	BaseURL  *url.URL
-	listener net.Listener
-	server   *http.Server
-	errCh    chan error
+	BaseURL    *url.URL
+	UnixSocket string
+	listener   net.Listener
+	server     *http.Server
+	errCh      chan error
 }
 
 type devStubEchoArgs struct {
@@ -74,17 +76,29 @@ func startDevMCPStub(opts devMCPStubOptions) (*devMCPStubInstance, error) {
 		serverVersion = defaultDevMCPStubVersion
 	}
 
-	listener, err := net.Listen("tcp", listenAddr)
+	network := "tcp"
+	unixSocket := strings.TrimSpace(opts.UnixSocket)
+	if unixSocket != "" {
+		network = "unix"
+		listenAddr = unixSocket
+	}
+	listener, err := net.Listen(network, listenAddr)
 	if err != nil {
 		return nil, err
+	}
+	host := listener.Addr().String()
+	if unixSocket != "" {
+		// HTTP keeps a logical origin while the client dials the owned socket.
+		host = "localhost"
 	}
 
 	instance := &devMCPStubInstance{
 		BaseURL: &url.URL{
 			Scheme: "http",
-			Host:   listener.Addr().String(),
+			Host:   host,
 		},
-		listener: listener,
+		UnixSocket: unixSocket,
+		listener:   listener,
 		server: &http.Server{
 			Handler:           newDevMCPStubHandler(serverName, serverVersion, opts.Stateless),
 			ReadHeaderTimeout: 5 * time.Second,
