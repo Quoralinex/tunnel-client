@@ -529,6 +529,26 @@ routing, streaming, OAuth discovery, and common setup pitfalls, see
     [stdio deployment limits](#stdio-deployment-limits).
   - Note: when using `MCP_COMMAND` with multiple entries, separate entries with
     newlines so semicolons remain part of the command.
+- **Automatic stdio initialization guard**
+  - Each request selects its protocol lifecycle automatically; no configuration
+    is required. This applies to stdio channels only.
+  - Reject legacy requests such as `tools/call`
+    before the shared child completes a successful `initialize` exchange and
+    receives `notifications/initialized`. This prevents requests from reaching
+    a stateful stdio server before it is ready.
+  - The caller owns initialization and recovery. The guard does not synthesize
+    `initialize`, replay rejected requests, or initialize a replacement child.
+    The notification shim below can supply `notifications/initialized` after
+    the caller's successful `initialize` response.
+  - The client reports rejected calls with `status_code: 409`, JSON-RPC code `-32002`, and
+    `error.data.error_type: "mcp_initialization_required"`; it is not written
+    to the child. Send the handshake before retrying the call.
+  - Self-contained requests with a protocol date of `2026-07-28` or later and
+    a client-capabilities object in `params._meta` bypass this guard. The server
+    validates the requested version and capabilities. These requests do not
+    mark the legacy handshake complete.
+  - Legacy callers must complete the handshake even if their server previously
+    tolerated calls before initialization. Stateless HTTP targets are unaffected.
 - **Stdio initialized notification shim (optional)**
   - Flag: `--mcp.stdio-send-initialized-notification`
   - Env: `MCP_STDIO_SEND_INITIALIZED_NOTIFICATION`
@@ -538,7 +558,7 @@ routing, streaming, OAuth discovery, and common setup pitfalls, see
     successful forwarded stdio `initialize` response and suppresses a later
     duplicate from the caller. Enable it only for stdio servers that implement
     the MCP lifecycle notification and callers that can omit it; leaving it
-    disabled preserves legacy verbatim forwarding.
+    disabled forwards the caller's notifications without generating one.
 - **Multiple entries**
   - Flags are repeatable; each entry can target a different channel.
   - Environment variables accept newline-delimited entries.

@@ -235,10 +235,15 @@ func TestHealthDetailsStdioSameChild(t *testing.T) {
 				initialize := healthDiscoveryCommand("initialize", `{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"health-e2e","version":"1"}}`)
 				initialize.DeliverAfter = gate
 				tools := healthDiscoveryCommand("tools/list", `{}`)
+				commands := []mocktunnelservice.CommandResponse{initialize}
+				if !initializedNotification {
+					commands = append(commands, stdioGuardInitializedCommand(t))
+				}
+				commands = append(commands, tools)
 				h := harnesspkg.NewHarness(t,
 					harnesspkg.WithMCPCommand([]string{"bash", script, launches, messages}),
 					harnesspkg.WithScenarioTimeout(10*time.Second),
-					harnesspkg.WithControlPlaneOptions(mocktunnelservice.WithCommandResponses(initialize, tools)),
+					harnesspkg.WithControlPlaneOptions(mocktunnelservice.WithCommandResponses(commands...)),
 					harnesspkg.WithClientConfig(func(cfg *config.Config) {
 						cfg.Health.URLFile = urlFile
 						cfg.MCP.StdioSendInitializedNotification = initializedNotification
@@ -297,12 +302,10 @@ func TestHealthDetailsStdioSameChild(t *testing.T) {
 						pids := strings.Fields(beforeLaunches)
 						require.Len(t, pids, 1)
 						want := pids[0] + ":initialize\n"
-						if initializedNotification {
-							want += pids[0] + ":notifications/initialized\n"
-						}
+						want += pids[0] + ":notifications/initialized\n"
 						want += pids[0] + ":tools/list\n"
 						require.Equal(t, want, beforeMessages)
-						require.Len(t, h.ControlPlane.ReceivedResponses(mocktunnelservice.ResponseMatchMatched), 2)
+						require.Len(t, h.ControlPlane.ReceivedResponses(mocktunnelservice.ResponseMatchMatched), len(commands))
 					}),
 				)
 				h.ExecuteScenarious(t)

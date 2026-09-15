@@ -224,6 +224,13 @@ later requests can reach different children. Stop the old instance before
 starting its replacement, or use distinct tunnel IDs for independent instances.
 See [stdio deployment limits](docs/configuration.md#stdio-deployment-limits).
 
+Stdio initialization is checked automatically. Legacy calls require a successful
+`initialize` exchange followed by `notifications/initialized`; premature calls
+return `mcp_initialization_required` immediately. Self-contained MCP requests
+using protocol version `2026-07-28` or later pass through without a handshake.
+The caller owns initialization, including after child replacement. See
+[configuration](docs/configuration.md#mcp-server) for lifecycle behavior.
+
 If you need the tunnel id or runtime/admin keys first, open the matching URL
 above before running `init`. If your rollout has self-serve tunnel access,
 create the tunnel yourself in Tunnels management or with

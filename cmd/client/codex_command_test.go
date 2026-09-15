@@ -280,7 +280,9 @@ func TestCodexStatusJSONReportsBridgeReadyWhenAssistantProbeStalls(t *testing.T)
 	require.Contains(t, stdout, `"bridge_ready": true`)
 	require.Contains(t, stdout, `"assistant_state": "unavailable"`)
 	require.Regexp(t, `"assistant_error": "thread/start timed out after [0-9]+ms`, stdout)
-	require.Contains(t, stdout, `recent stderr: thread/start is stuck`)
+	// The stderr reader is asynchronous; process/ready is published before
+	// the probe starts. Bridge tests verify inclusion of captured stderr.
+	require.Contains(t, stdout, `recent bridge events: process/ready codex app-server ready`)
 }
 
 func TestCodexInstallPrefersHostDefaultWhenMultipleInstallersAreAvailable(t *testing.T) {

@@ -203,15 +203,15 @@ func newProcessorChannelBindings(p processorChannelBindingsParams) (map[types.Ch
 			// request lifecycle active at a time so concurrent workers cannot
 			// consume another request's JSON-RPC response. Stdio also keeps its
 			// child-process pipes alive when one request deadline expires and filters
-			// that request's late response before the next lifecycle. Completing MCP
+			// that request's late response before the next lifecycle. Legacy stdio
+			// requests require the caller's initialization handshake; self-contained
+			// modern requests pass through without it. Completing MCP
 			// initialization for callers that omit notifications/initialized is an
 			// explicit operator opt-in so legacy stdio servers keep verbatim behavior.
 			if binding.TransportKind == runtimeconfig.MCPTransportStdio {
-				if binding.StdioSendInitializedNotification {
-					transport = mcpclient.NewStdioForwardingTransport(transport)
-				} else {
-					transport = mcpclient.NewStdioDeadlineRetiringForwardingTransport(transport)
-				}
+				transport = mcpclient.NewStdioForwardingTransportWithOptions(transport, mcpclient.StdioForwardingOptions{
+					SendInitializedNotification: binding.StdioSendInitializedNotification,
+				})
 				if canonical == types.DefaultChannel {
 					transport = mcpclient.ObserveStdioForwardingTransport(transport, p.ProtocolObservation)
 				}
