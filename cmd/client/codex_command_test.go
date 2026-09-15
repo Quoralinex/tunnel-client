@@ -267,18 +267,13 @@ func TestCodexStatusTextSeparatesPluginStateAfterUninstall(t *testing.T) {
 }
 
 func TestCodexStatusJSONReportsBridgeReadyWhenAssistantProbeStalls(t *testing.T) {
-	// This test temporarily changes a package-wide timeout and must run serially.
-	originalTimeout := codexStatusAssistantProbeTimeout
-	codexStatusAssistantProbeTimeout = 50 * time.Millisecond
-	t.Cleanup(func() {
-		codexStatusAssistantProbeTimeout = originalTimeout
-	})
+	t.Parallel()
 
 	codexBin := writeFakeCodexScript(t, "GO_WANT_CODEX_STALL_THREAD_START=1")
 
-	stdout, stderr, err := executeCommandWithCodex(t, codexBin, map[string]string{
+	stdout, stderr, err := executeCommandWithCodexTimeouts(t, codexBin, map[string]string{
 		"HOME": t.TempDir(),
-	}, "codex", "status", "--json")
+	}, codexCommandTimeouts{statusAssistantProbe: 50 * time.Millisecond}, "codex", "status", "--json")
 
 	require.NoError(t, err, stderr)
 	require.Contains(t, stdout, `"state": "bridge_ready"`)
@@ -344,19 +339,13 @@ func TestCodexAssistantReadsPromptFromStdin(t *testing.T) {
 }
 
 func TestCodexAssistantReportsTurnStallDiagnostics(t *testing.T) {
-	// This test temporarily changes a package-wide timeout and must run serially.
-	originalTimeout := codexAssistantTurnIdleTimeout
-	codexAssistantTurnIdleTimeout = 50 * time.Millisecond
-	t.Cleanup(func() {
-		codexAssistantTurnIdleTimeout = originalTimeout
-	})
+	t.Parallel()
 
 	codexBin := writeFakeCodexScript(t, "GO_WANT_CODEX_STALL_AFTER_TURN_START=1")
 
-	_, stderr, err := executeCommand(t, map[string]string{
-		"HOME":                               t.TempDir(),
-		"TUNNEL_CLIENT_CODEX_APP_SERVER_CMD": codexBin,
-	}, "codex", "assistant", "describe", "the", "tunnel")
+	_, stderr, err := executeCommandWithCodexTimeouts(t, codexBin, map[string]string{
+		"HOME": t.TempDir(),
+	}, codexCommandTimeouts{assistantTurnIdle: 50 * time.Millisecond}, "codex", "assistant", "describe", "the", "tunnel")
 
 	require.Error(t, err)
 	require.Contains(t, stderr, "waiting for response")
@@ -648,9 +637,14 @@ func TestHandleCodexAssistantSlashCommandRejectsUnknownReasoning(t *testing.T) {
 
 func executeCommandWithCodex(t *testing.T, codexBin string, env map[string]string, args ...string) (string, string, error) {
 	t.Helper()
+	return executeCommandWithCodexTimeouts(t, codexBin, env, codexCommandTimeouts{}, args...)
+}
+
+func executeCommandWithCodexTimeouts(t *testing.T, codexBin string, env map[string]string, timeouts codexCommandTimeouts, args ...string) (string, string, error) {
+	t.Helper()
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
-	root := newRootCommandWithLookPath(func(key string) (string, bool) {
+	root := newRootCommandWithCodexTimeouts(func(key string) (string, bool) {
 		if key == "TUNNEL_CLIENT_CODEX_APP_SERVER_CMD" {
 			return codexBin, true
 		}
@@ -661,7 +655,7 @@ func executeCommandWithCodex(t *testing.T, codexBin string, env map[string]strin
 			return exec.LookPath(codexBin)
 		}
 		return exec.LookPath(name)
-	})
+	}, timeouts)
 	root.SetArgs(args)
 	err := root.Execute()
 	return stdout.String(), stderr.String(), err

@@ -19,16 +19,16 @@ import (
 )
 
 const (
-	defaultCodexAssistantApprovalPolicy = "never"
-	defaultCodexAssistantSandboxType    = "workspace-write"
-	defaultCodexAssistantEffort         = "medium"
-	defaultCodexAssistantLoginTimeout   = 5 * time.Minute
+	defaultCodexAssistantApprovalPolicy  = "never"
+	defaultCodexAssistantSandboxType     = "workspace-write"
+	defaultCodexAssistantEffort          = "medium"
+	defaultCodexAssistantLoginTimeout    = 5 * time.Minute
+	defaultCodexAssistantTurnIdleTimeout = 2 * time.Minute
 )
-
-var codexAssistantTurnIdleTimeout = 2 * time.Minute
 
 type codexAssistantOptions struct {
 	lookupEnv             func(string) (string, bool)
+	turnIdleTimeout       time.Duration
 	CWD                   string
 	Model                 string
 	ModelProvider         string
@@ -49,13 +49,14 @@ type codexAssistantWaitingRenderer struct {
 	promptShown bool
 }
 
-func newCodexAssistantCommand(lookupEnv func(string) (string, bool), stdout io.Writer, stderr io.Writer) *cobra.Command {
+func newCodexAssistantCommand(lookupEnv func(string) (string, bool), stdout io.Writer, stderr io.Writer, turnIdleTimeout time.Duration) *cobra.Command {
 	options := codexAssistantOptions{
-		lookupEnv:      lookupEnv,
-		ApprovalPolicy: defaultCodexAssistantApprovalPolicy,
-		SandboxType:    defaultCodexAssistantSandboxType,
-		Effort:         defaultCodexAssistantEffort,
-		LoginTimeout:   defaultCodexAssistantLoginTimeout,
+		lookupEnv:       lookupEnv,
+		turnIdleTimeout: turnIdleTimeout,
+		ApprovalPolicy:  defaultCodexAssistantApprovalPolicy,
+		SandboxType:     defaultCodexAssistantSandboxType,
+		Effort:          defaultCodexAssistantEffort,
+		LoginTimeout:    defaultCodexAssistantLoginTimeout,
 	}
 	cmd := &cobra.Command{
 		Use:   "assistant [prompt...]",
@@ -386,7 +387,7 @@ func runCodexAssistantPrompt(
 	}
 
 	waiting := newCodexAssistantWaitingRenderer(stderr)
-	return waitForCodexAssistantTurn(ctx, bridge, stdout, result.TurnID, events, waiting)
+	return waitForCodexAssistantTurn(ctx, bridge, stdout, result.TurnID, events, waiting, options.turnIdleTimeout)
 }
 
 func waitForCodexAssistantTurn(
@@ -396,11 +397,12 @@ func waitForCodexAssistantTurn(
 	turnID string,
 	events <-chan codexappserver.Event,
 	waiting *codexAssistantWaitingRenderer,
+	idleTimeout time.Duration,
 ) error {
 	if waiting != nil {
 		defer waiting.Finish()
 	}
-	stallTimer := time.NewTimer(codexAssistantTurnIdleTimeout)
+	stallTimer := time.NewTimer(idleTimeout)
 	defer stallTimer.Stop()
 	resetStallTimer := func() {
 		if !stallTimer.Stop() {
@@ -409,7 +411,7 @@ func waitForCodexAssistantTurn(
 			default:
 			}
 		}
-		stallTimer.Reset(codexAssistantTurnIdleTimeout)
+		stallTimer.Reset(idleTimeout)
 	}
 	streamed := false
 	finalMessage := ""
@@ -421,7 +423,7 @@ func waitForCodexAssistantTurn(
 			return codexAssistantWaitError(
 				"assistant turn stalled after turn/start",
 				bridge,
-				fmt.Sprintf("turn %s produced no completion or output for %s", turnID, codexAssistantTurnIdleTimeout),
+				fmt.Sprintf("turn %s produced no completion or output for %s", turnID, idleTimeout),
 			)
 		case event, ok := <-events:
 			if !ok {
