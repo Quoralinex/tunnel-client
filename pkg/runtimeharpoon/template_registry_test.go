@@ -29,7 +29,7 @@ func TestTemplateRegistryDoesNotAuthorizeOriginOrRenderedURLs(t *testing.T) {
 		require.False(t, found, raw)
 	}
 	_, err = registry.Resolve("resource")
-	require.ErrorContains(t, err, "call_target_template")
+	require.ErrorContains(t, err, "discovered invocation schema")
 	_, ok = registry.ExactURL("resource")
 	require.False(t, ok)
 	require.Empty(t, registry.targetURLKeys)
@@ -55,7 +55,7 @@ func TestTemplateRegistryReregistrationPreservesCompiledPolicy(t *testing.T) {
 	require.False(t, second.AllowsURL(runtimeRegistryTestURL(t, cfg.Origin)))
 	require.False(t, second.AllowsURL(rendered))
 	_, err = second.Resolve("resource")
-	require.ErrorContains(t, err, "call_target_template")
+	require.ErrorContains(t, err, "discovered invocation schema")
 	_, ok = second.ExactURL("resource")
 	require.False(t, ok)
 	require.Equal(t,

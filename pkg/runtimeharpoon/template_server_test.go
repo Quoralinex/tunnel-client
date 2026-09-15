@@ -27,7 +27,7 @@ func TestTemplateMCPInstructionsAndDiscovery(t *testing.T) {
 
 	const legacyInstructions = "Harpoon provides a constrained outbound HTTP client. Use list_targets to see allowlisted targets and call_target to make GET/POST/PUT requests with strict size, timeout, and redirect limits. Harpoon cannot reach arbitrary hosts or paths outside the configured allowlist."
 	const customInstructions = "Operator instructions: inspect the target schema before making requests."
-	const templateRoute = "For entries with template_version and parameters_schema, use call_target_template with the label and all parameters declared by parameters_schema; each value must satisfy that schema."
+	const templateRoute = "For entries with template_version and parameters_schema, use call_target without method, with the label and all parameters declared by parameters_schema; each value must satisfy that schema."
 	// Capture the existing exact-target contract before constructing template
 	// servers; their conditional discovery schema must not mutate this shared value.
 	legacySchemaJSON, err := json.Marshal(listTargetsOutputSchema)
@@ -97,8 +97,7 @@ func TestTemplateMCPInstructionsAndDiscovery(t *testing.T) {
 			}
 			require.Contains(t, tools, "call_target")
 			require.Contains(t, tools, "list_targets")
-			_, templateToolPresent := tools[callTargetTemplateTool]
-			require.Equal(t, tc.template, templateToolPresent)
+			require.NotContains(t, tools, "call_target_template")
 			outputJSON, err := json.Marshal(tools["list_targets"].OutputSchema)
 			require.NoError(t, err)
 			var output map[string]any
@@ -151,7 +150,7 @@ func TestTemplateDiscoveryInvocationSchema(t *testing.T) {
 		}
 	}
 	require.NotNil(t, template.Invocation)
-	require.Equal(t, callTargetTemplateTool, template.Invocation.ToolName)
+	require.Equal(t, callTargetTool, template.Invocation.ToolName)
 	require.Len(t, template.Invocation.Examples, 1)
 	encoded, err := json.Marshal(discovery)
 	require.NoError(t, err)
@@ -338,7 +337,7 @@ func TestTemplateHandlerPrivacyAndBounds(t *testing.T) {
 				WithHTTPTransport(transport), WithCallObserver(func(CallEvent) { observed++ }))
 			require.NoError(t, err)
 			result, err := server.callTemplateHandler(context.Background(), &mcp.CallToolRequest{Params: &mcp.CallToolParamsRaw{
-				Name: callTargetTemplateTool, Arguments: json.RawMessage(`{"label":"resource","parameters":{"resourceId":"` + identifier + `"}}`),
+				Name: callTargetTool, Arguments: json.RawMessage(`{"label":"resource","parameters":{"resourceId":"` + identifier + `"}}`),
 			}})
 			require.NoError(t, err)
 			require.Equal(t, mode == "transport error" || mode == "too large", result.IsError)
@@ -418,7 +417,7 @@ func TestTemplateMetricsIncludeRejectedTargetsWithoutUnboundedLabels(t *testing.
 		raw, err := json.Marshal(callTargetTemplateRequest{Label: test.label, Parameters: map[string]any{"resourceId": test.identifier}})
 		require.NoError(t, err)
 		result, err := server.callTemplateHandler(context.Background(), &mcp.CallToolRequest{Params: &mcp.CallToolParamsRaw{
-			Name: callTargetTemplateTool, Arguments: raw,
+			Name: callTargetTool, Arguments: raw,
 		}})
 		require.NoError(t, err)
 		require.Equal(t, test.wantError, result.IsError)

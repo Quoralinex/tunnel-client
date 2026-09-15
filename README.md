@@ -661,16 +661,20 @@ Starter prompts for Codex:
 ### Harpoon target templates
 
 Opt-in Harpoon templates let callers provide bounded identifiers for an
-operator-configured HTTPS GET operation, such as `/cases/{case_id}` or
+operator-configured HTTPS GET, POST, or PUT operation, such as `/cases/{case_id}` or
 `/profiles?session-id={session_id}`. The client fixes the destination, method,
 query names, and authentication headers, validates each identifier, and never
-follows redirects. Existing exact-URL targets continue to work.
+follows redirects. POST/PUT require an explicit body policy for content types,
+byte limits, required or optional bodies, and validation. GET remains bodyless;
+DELETE is unsupported. Existing exact-URL targets continue to work.
 
 Templates use YAML `config_version: 2` and `template.version: 1`, and execute
-through the separate `call_target_template` MCP tool. `list_targets` publishes
+through the shared `call_target` MCP tool without a caller-supplied method.
+Exact targets keep their required method argument. `list_targets` publishes
 each template's complete invocation schema, public parameter descriptions, and
-validated examples when available. Upgrade the client before adding parameter
-metadata to configuration. See the
+validated examples when available. Writes require the advertised `operation`
+constant and never automatically replay after an ambiguous failure. Upgrade all
+eligible clients before enabling writes or adding parameter metadata. See the
 [target template guide](docs/harpoon-target-templates.md) for complete
 configuration, discovery and invocation examples, authorization requirements,
 limits, and upgrade behavior.

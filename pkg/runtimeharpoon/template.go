@@ -36,9 +36,11 @@ const (
 var templateNamePattern = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_]{0,63}$`)
 var templateHeaderNamePattern = regexp.MustCompile(headerNamePattern)
 
-// TargetTemplate is an immutable, compiled GET operation. It never adds rendered
+// TargetTemplate is an immutable, compiled HTTP operation. It never adds rendered
 // URLs to the registry's exact-URL allowlist.
 type TargetTemplate struct {
+	method         string
+	bodyPolicy     *compiledTemplateBodyPolicy
 	origin         url.URL
 	path           []templatePart
 	query          map[string]templatePart
@@ -47,6 +49,7 @@ type TargetTemplate struct {
 	headers        http.Header
 	allowedHeaders map[string]struct{}
 	policyDigest   string
+	operationToken string
 }
 
 type templatePart struct {
@@ -66,8 +69,12 @@ func CompileTargetTemplate(cfg *runtimeconfig.HarpoonTargetTemplate) (*TargetTem
 	if cfg == nil || cfg.Version != 1 {
 		return nil, errors.New("template version must be 1")
 	}
-	if cfg.Method != http.MethodGet {
-		return nil, errors.New("template method must be GET")
+	if cfg.Method != http.MethodGet && cfg.Method != http.MethodPost && cfg.Method != http.MethodPut {
+		return nil, errors.New("template method must be GET, POST, or PUT")
+	}
+	bodyPolicy, err := compileTemplateBodyPolicy(cfg.Method, cfg.BodyPolicy)
+	if err != nil {
+		return nil, err
 	}
 	if cfg.FollowRedirects {
 		return nil, errors.New("template redirects must be disabled")
@@ -80,6 +87,8 @@ func CompileTargetTemplate(cfg *runtimeconfig.HarpoonTargetTemplate) (*TargetTem
 		return nil, fmt.Errorf("template must declare 1 to %d parameters", maxTemplateParameters)
 	}
 	t := &TargetTemplate{
+		method:         cfg.Method,
+		bodyPolicy:     bodyPolicy,
 		origin:         *origin,
 		query:          make(map[string]templatePart, len(cfg.Query)),
 		parameters:     make(map[string]compiledTemplateParameter, len(cfg.Parameters)),
@@ -134,13 +143,20 @@ func CompileTargetTemplate(cfg *runtimeconfig.HarpoonTargetTemplate) (*TargetTem
 			return nil, fmt.Errorf("parameter %s is unused", name)
 		}
 	}
-	if len(cfg.Headers)+len(cfg.AllowedHeaders) > maxTemplateHeaders {
+	managedContentType := 0
+	if bodyPolicy != nil {
+		managedContentType = 1
+	}
+	if len(cfg.Headers)+len(cfg.AllowedHeaders)+managedContentType > maxTemplateHeaders {
 		return nil, errors.New("template has too many headers")
 	}
 	for key, value := range cfg.Headers {
 		canonical, err := canonicalTemplateHeader(key)
 		if err != nil {
 			return nil, err
+		}
+		if bodyPolicy != nil && (canonical == "Content-Type" || canonical == "Content-Encoding") {
+			return nil, errors.New("template writes require the body policy content type and unencoded body bytes")
 		}
 		if _, exists := t.headers[canonical]; exists {
 			return nil, errors.New("duplicate template header name")
@@ -157,6 +173,9 @@ func CompileTargetTemplate(cfg *runtimeconfig.HarpoonTargetTemplate) (*TargetTem
 		}
 		if isTemplateCredentialHeader(canonical) {
 			return nil, errors.New("template authentication headers must be fixed by the operator")
+		}
+		if bodyPolicy != nil && (canonical == "Content-Type" || canonical == "Content-Encoding") {
+			return nil, errors.New("template writes require the body policy content type and unencoded body bytes")
 		}
 		if _, exists := t.headers[canonical]; exists {
 			return nil, errors.New("template caller header conflicts with a fixed header")
@@ -182,6 +201,20 @@ func CompileTargetTemplate(cfg *runtimeconfig.HarpoonTargetTemplate) (*TargetTem
 	if err != nil {
 		return nil, err
 	}
+	if bodyPolicy != nil {
+		// This token deliberately hashes only metadata already exposed through
+		// discovery. The private policy digest must remain inside the catalog HMAC.
+		public, err := json.Marshal(struct {
+			Method     string                                   `json:"method"`
+			BodyPolicy *runtimeconfig.HarpoonTemplateBodyPolicy `json:"body_policy"`
+			Parameters map[string]any                           `json:"parameters_schema"`
+		}{t.method, bodyPolicy.canonicalPolicy(), templateParametersSchema(t)})
+		if err != nil {
+			return nil, errors.New("cannot fingerprint public template operation")
+		}
+		sum := sha256.Sum256(public)
+		t.operationToken = "write-v1:" + hex.EncodeToString(sum[:])
+	}
 	return t, nil
 }
 
@@ -199,7 +232,8 @@ func (t *TargetTemplate) computePolicyDigest() (string, error) {
 	policy := runtimeconfig.HarpoonTargetTemplate{
 		Version:        1,
 		Origin:         t.origin.String(),
-		Method:         http.MethodGet,
+		Method:         t.method,
+		BodyPolicy:     t.bodyPolicy.canonicalPolicy(),
 		Query:          make(map[string]string, len(t.query)),
 		Parameters:     t.PublicParameters(),
 		Headers:        make(map[string]string, len(t.headers)),
@@ -538,15 +572,19 @@ func (t *TargetTemplate) ValidateCallerHeaders(headers map[string]string) (http.
 // selected operation and the original invocation values. Equivalent but
 // differently encoded URLs and changes to another valid identifier are rejected.
 func (t *TargetTemplate) ValidateRequest(req *http.Request, parameters map[string]any) error {
+	return t.validateRequest(req, parameters, nil, nil)
+}
+
+func (t *TargetTemplate) validateRequest(req *http.Request, parameters map[string]any, body, contentType *string) error {
 	expected, err := t.Render(parameters)
 	if err != nil {
 		return err
 	}
-	if req == nil || req.URL == nil || req.Method != http.MethodGet || req.URL.String() != expected.String() || req.URL.User != nil || req.URL.Opaque != "" || req.RequestURI != "" || req.Host != "" && req.Host != expected.Host {
+	if req == nil || req.URL == nil || req.Method != t.method || req.URL.String() != expected.String() || req.URL.User != nil || req.URL.Opaque != "" || req.RequestURI != "" || req.Host != "" && req.Host != expected.Host {
 		return errors.New("outbound request does not match the selected template")
 	}
-	if req.Body != nil && req.Body != http.NoBody || req.ContentLength != 0 || len(req.TransferEncoding) != 0 || len(req.Trailer) != 0 {
-		return errors.New("template GET requests cannot contain a body")
+	if err := t.validateRequestBody(req, body, contentType); err != nil {
+		return err
 	}
 	seen := make(map[string]struct{}, len(req.Header))
 	for key, values := range req.Header {
@@ -556,6 +594,9 @@ func (t *TargetTemplate) ValidateRequest(req *http.Request, parameters map[strin
 		}
 		seen[canonical] = struct{}{}
 		if canonical == "User-Agent" && values[0] == version.UserAgent {
+			continue
+		}
+		if t.bodyPolicy != nil && canonical == "Content-Type" && contentType != nil && values[0] == *contentType {
 			continue
 		}
 		if _, err := canonicalTemplateHeader(key); err != nil {

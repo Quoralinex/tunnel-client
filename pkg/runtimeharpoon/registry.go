@@ -333,7 +333,7 @@ func (r *Registry) Resolve(label string) (*url.URL, error) {
 		return nil, fmt.Errorf("unknown target label %q", label)
 	}
 	if target.template != nil {
-		return nil, errors.New("template target requires call_target_template")
+		return nil, errors.New("template target requires its discovered invocation schema")
 	}
 	if target.BaseURL == nil {
 		return nil, fmt.Errorf("target %q has empty url", label)

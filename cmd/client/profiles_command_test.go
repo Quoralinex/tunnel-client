@@ -181,7 +181,9 @@ harpoon:
           Authorization: env:UNAVAILABLE_TEMPLATE_CREDENTIAL
 `
 	for _, tc := range []struct{ name, from, to, want string }{
-		{"method", "method: GET", "method: POST", "method must be GET"},
+		{"method", "method: GET", "method: DELETE", "method must be GET, POST, or PUT"},
+		{"POST without body policy", "method: GET", "method: POST", "explicit body policy"},
+		{"PUT without body policy", "method: GET", "method: PUT", "explicit body policy"},
 		{"origin", "https://private.example.invalid", "http://private.example.invalid", "HTTPS"},
 		{"path", "/cases/{case_id}", "/../{case_id}", "invalid literal segment"},
 		{"parameter", "            pattern: '[A-Za-z0-9_-]+'\n", "", "pattern or enum"},
@@ -429,7 +431,9 @@ harpoon:
 `
 	for _, tc := range []struct{ name, from, to, want string }{
 		{"valid secret references", "", "", ""},
-		{"wrong method", "method: GET", "method: POST", "method must be GET"},
+		{"wrong method", "method: GET", "method: DELETE", "method must be GET, POST, or PUT"},
+		{"POST without body policy", "method: GET", "method: POST", "explicit body policy"},
+		{"PUT without body policy", "method: GET", "method: PUT", "explicit body policy"},
 		{"insecure origin", "https://private.example.invalid", "http://private.example.invalid", "HTTPS"},
 		{"unsafe path", "/cases/{case_id}", "/../{case_id}", "invalid literal segment"},
 		{"unconstrained parameter", "            pattern: '[A-Za-z0-9_-]+'\n", "", "pattern or enum"},

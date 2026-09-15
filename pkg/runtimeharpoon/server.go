@@ -35,8 +35,8 @@ const (
 	maxContentTypeLogBytes  = 256
 	headerNamePattern       = "^[!#$%&'*+.^_`|~0-9A-Za-z-]+$"
 	defaultInstructions     = "Harpoon provides a constrained outbound HTTP client. Use list_targets to see allowlisted targets and call_target to make GET/POST/PUT requests with strict size, timeout, and redirect limits. Harpoon cannot reach arbitrary hosts or paths outside the configured allowlist."
-	templateInstructions    = "Harpoon provides a constrained outbound HTTP client. Use list_targets to see allowlisted targets. For exact targets, use call_target to make GET/POST/PUT requests with strict size, timeout, and redirect limits. For entries with template_version and parameters_schema, use call_target_template with the label and all parameters declared by parameters_schema; each value must satisfy that schema. Templates make GET requests to a fixed destination and do not follow redirects. Harpoon cannot reach arbitrary hosts or paths outside the configured allowlist."
-	templateListDescription = "Allowlisted targets: use call_target for exact targets. For entries with template_version and parameters_schema, use call_target_template with the label and all parameters declared by parameters_schema; each value must satisfy that schema."
+	templateInstructions    = "Harpoon provides a constrained outbound HTTP client. Use list_targets to see allowlisted targets. For exact targets, use call_target to make GET/POST/PUT requests with strict size, timeout, and redirect limits. For entries with template_version and parameters_schema, use call_target without method, with the label and all parameters declared by parameters_schema; each value must satisfy that schema. Use the discovered invocation.input_schema for all arguments, including the required operation constant on every write. Templates use an operator-fixed GET, POST, or PUT method and destination. GET is bodyless; writes enforce the advertised body policy. Templates do not follow redirects or automatically replay writes. Harpoon cannot reach arbitrary hosts or paths outside the configured allowlist."
+	templateListDescription = "Allowlisted targets: use call_target for exact targets. For entries with template_version and parameters_schema, use call_target without method, with the label and all parameters declared by parameters_schema; each value must satisfy that schema. Use the discovered invocation.input_schema for all arguments, including the required operation constant on every write."
 )
 
 var (
@@ -134,7 +134,7 @@ type listTargetsRequest struct {
 
 type targetInfo struct {
 	TemplateVersion  int               `json:"template_version,omitempty" jsonschema:"description=Template contract version; absent for exact targets."`
-	ParametersSchema map[string]any    `json:"parameters_schema,omitempty" jsonschema:"description=Required string parameter schema for call_target_template."`
+	ParametersSchema map[string]any    `json:"parameters_schema,omitempty" jsonschema:"description=Required string parameter schema for template calls."`
 	Invocation       *targetInvocation `json:"invocation,omitempty" jsonschema:"description=Self-contained template tool invocation contract; absent for exact targets."`
 	Label            string            `json:"label" jsonschema:"minLength=1,maxLength=64,pattern=^[a-z0-9][a-z0-9_-]{0\\,63}$,description=Target label."`
 	Description      string            `json:"description,omitempty" jsonschema:"description=Target description."`
@@ -301,14 +301,13 @@ func (s *Server) MCPServer() *mcp.Server {
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "call_target",
 		Title:       "Call Harpoon target",
-		Description: "Call an allowlisted HTTP target by label.",
+		Description: "Call an allowlisted exact target or operator-configured template. Exact targets require method; templates require their discovered parameters and forbid method. GET templates are bodyless; POST/PUT enforce the advertised body policy and may change upstream state. Templates never follow redirects or automatically replay writes. Inspect upstream state after an ambiguous write failure.",
 		Annotations: &mcp.ToolAnnotations{
-			OpenWorldHint: &openWorldTrue,
+			ReadOnlyHint: false, IdempotentHint: false, OpenWorldHint: &openWorldTrue,
 		},
-		InputSchema:  buildCallTargetSchema(s.cfg),
+		InputSchema:  s.callTargetInputSchema(),
 		OutputSchema: buildCallTargetOutputSchema(s.cfg),
-	}, s.callTargetHandler())
-	s.addTemplateTool(server)
+	}, s.callUnifiedTargetHandler())
 	return server
 }
 
@@ -346,6 +345,28 @@ func (s *Server) listTargetsHandler() mcp.ToolHandlerFor[map[string]any, any] {
 			return toolErrorResult("", "failed to encode response"), nil, nil
 		}
 		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: string(payload)}}}, structured, nil
+	}
+}
+
+// The typed SDK wrapper validates the advertised union and retains the original
+// request bytes. Template decoding must use those bytes, before duplicate keys
+// or malformed string encodings can be lost by a map conversion.
+func (s *Server) callUnifiedTargetHandler() mcp.ToolHandlerFor[map[string]any, any] {
+	exact := s.callTargetHandler()
+	return func(ctx context.Context, req *mcp.CallToolRequest, args map[string]any) (*mcp.CallToolResult, any, error) {
+		label, _ := args["label"].(string)
+		target, exists := s.registry.Lookup(strings.TrimSpace(label))
+		templateCall := exists && target.template != nil
+		for _, field := range []string{"parameters", "operation", "content_type"} {
+			if _, present := args[field]; present {
+				templateCall = true
+			}
+		}
+		if templateCall {
+			result, err := s.callTemplateHandler(ctx, req)
+			return result, nil, err
+		}
+		return exact(ctx, req, args)
 	}
 }
 
@@ -395,7 +416,7 @@ func (s *Server) listTargets(params listTargetsRequest) listTargetsResponse {
 			AllowedMethods: allowed,
 		}
 		if target.template != nil {
-			info.AllowedMethods = []string{http.MethodGet}
+			info.AllowedMethods = []string{target.template.method}
 			info.TemplateVersion = 1
 			info.ParametersSchema = templateParametersSchema(target.template)
 			info.Invocation = s.templateInvocation(target)
@@ -426,7 +447,7 @@ func (s *Server) callTarget(ctx context.Context, params callTargetRequest) (*cal
 	}
 	if target.template != nil {
 		recordMetrics(0, metricOutcomeInvalidInput, 0)
-		return nil, newToolError(label, "template target requires call_target_template")
+		return nil, newToolError(label, "template target requires its discovered invocation schema")
 	}
 	metricsLabel = label
 

@@ -406,18 +406,36 @@ type HarpoonTarget struct {
 }
 
 // HarpoonTargetTemplate defines an opt-in operation with an operator-fixed
-// destination and bounded caller-supplied identifiers. Version 1 permits GET
-// over HTTPS and never follows redirects.
+// destination and bounded caller-supplied identifiers. Version 1 permits GET,
+// POST, and PUT over HTTPS and never follows redirects. Writes require a body policy.
 type HarpoonTargetTemplate struct {
 	Version         int                                 `yaml:"version" json:"version"`
 	Origin          string                              `yaml:"origin" json:"origin"`
 	Method          string                              `yaml:"method" json:"method"`
+	BodyPolicy      *HarpoonTemplateBodyPolicy          `yaml:"body_policy,omitempty" json:"body_policy,omitempty"`
 	PathTemplate    string                              `yaml:"path_template" json:"path_template"`
 	Query           map[string]string                   `yaml:"query" json:"query,omitempty"`
 	Parameters      map[string]HarpoonTemplateParameter `yaml:"parameters" json:"parameters"`
 	Headers         map[string]string                   `yaml:"headers" json:"headers,omitempty"`
 	AllowedHeaders  []string                            `yaml:"allowed_headers" json:"allowed_headers,omitempty"`
 	FollowRedirects bool                                `yaml:"follow_redirects" json:"follow_redirects"`
+}
+
+// HarpoonTemplateBodyPolicy constrains raw UTF-8 write payloads independently
+// of response limits. Content types and validators are fixed by the operator.
+type HarpoonTemplateBodyPolicy struct {
+	ContentTypes []string                       `yaml:"content_types" json:"content_types"`
+	MaxBytes     int                            `yaml:"max_bytes" json:"max_bytes"`
+	Required     *bool                          `yaml:"required" json:"required"`
+	Validation   *HarpoonTemplateBodyValidation `yaml:"validation" json:"validation"`
+}
+
+// HarpoonTemplateBodyValidation applies every configured check to the raw body.
+// JSON checks syntax; pattern and enum can impose application-specific limits.
+type HarpoonTemplateBodyValidation struct {
+	JSON    bool     `yaml:"json,omitempty" json:"json,omitempty"`
+	Pattern string   `yaml:"pattern,omitempty" json:"pattern,omitempty"`
+	Enum    []string `yaml:"enum,omitempty" json:"enum,omitempty"`
 }
 
 // HarpoonTemplateParameter describes one bounded identifier. The runtime

@@ -638,7 +638,7 @@ func TestHarpoonTemplateInstructionsAndDiscovery(t *testing.T) {
 	t.Parallel()
 
 	const legacyInstructions = "Harpoon provides a constrained outbound HTTP client. Use list_targets to see allowlisted targets and call_target to make GET/POST/PUT requests with strict size, timeout, and redirect limits. get_oauth_target_audience is a narrow opt-in lookup for OAuth token-endpoint private_key_jwt audiences. Harpoon cannot reach arbitrary hosts or paths outside the configured allowlist."
-	const templateRoute = "For entries with template_version and parameters_schema, use call_target_template with the label and all parameters declared by parameters_schema; each value must satisfy that schema."
+	const templateRoute = "For entries with template_version and parameters_schema, use call_target without method, with the label and all parameters declared by parameters_schema; each value must satisfy that schema."
 	for _, tc := range []struct {
 		name     string
 		exact    bool
@@ -706,8 +706,7 @@ func TestHarpoonTemplateInstructionsAndDiscovery(t *testing.T) {
 			for _, name := range []string{"list_targets", "call_target", "get_oauth_target_audience"} {
 				require.Contains(t, tools, name)
 			}
-			_, templateToolPresent := tools["call_target_template"]
-			require.Equal(t, tc.template, templateToolPresent)
+			require.NotContains(t, tools, "call_target_template")
 			outputJSON, err := json.Marshal(tools["list_targets"].OutputSchema)
 			require.NoError(t, err)
 			var output map[string]any
@@ -740,7 +739,7 @@ func TestHarpoonTemplateInstructionsAndDiscovery(t *testing.T) {
 					require.Equal(t, "Public resource identifier", resource["description"])
 					require.Equal(t, []any{"resource-123"}, resource["examples"])
 					invocation := target["invocation"].(map[string]any)
-					require.Equal(t, "call_target_template", invocation["tool_name"])
+					require.Equal(t, "call_target", invocation["tool_name"])
 					require.Equal(t, []any{map[string]any{"label": "template", "parameters": map[string]any{"resourceId": "resource-123"}}}, invocation["examples"])
 				} else {
 					require.NotContains(t, target, "template_version")

@@ -21,13 +21,14 @@ import (
 	"github.com/openai/tunnel-client/pkg/version"
 )
 
-// A separate tool name makes unsupported executors reject template calls rather
-// than interpreting them as legacy calls with ignored arguments.
-const callTargetTemplateTool = "call_target_template"
+const callTargetTool = "call_target"
 
 type callTargetTemplateRequest struct {
 	Label            string            `json:"label" jsonschema:"minLength=1,maxLength=64,pattern=^[a-z0-9][a-z0-9_-]{0\\,63}$"`
 	Parameters       map[string]any    `json:"parameters" jsonschema:"minProperties=1,maxProperties=16,description=Required string values matching the target parameters_schema."`
+	Operation        *string           `json:"operation,omitempty" jsonschema:"minLength=1,maxLength=73,description=Copy the required write operation constant from the discovered invocation schema; unavailable for GET."`
+	Body             *string           `json:"body,omitempty" jsonschema:"maxLength=102400,description=Raw UTF-8 request body for a write template; must satisfy the discovered body policy."`
+	ContentType      *string           `json:"content_type,omitempty" jsonschema:"minLength=1,maxLength=128,description=Exact allowed media type, required with body; unavailable for GET templates."`
 	Headers          map[string]string `json:"headers,omitempty"`
 	TimeoutMS        *int              `json:"timeout_ms,omitempty"`
 	MaxResponseBytes *int              `json:"max_response_bytes,omitempty"`
@@ -45,23 +46,22 @@ type targetInvocation struct {
 func (callTargetTemplateRequest) JSONSchemaExtend(schema *jsonschema.Schema) {
 	(callTargetRequest{}).JSONSchemaExtend(schema)
 	schema.Title = "Call Harpoon target template"
-	schema.Description = "Call a configured GET operation with bounded string identifiers."
+	schema.Description = "Call a configured GET, POST, or PUT operation with bounded string identifiers and an operator-controlled body policy."
 }
 
-func (s *Server) addTemplateTool(server *mcp.Server) {
+// Keep exact requests in their original schema branch. Template calls omit the
+// method and are authorized against the operator-selected policy at dispatch.
+func (s *Server) callTargetInputSchema() *jsonschema.Schema {
+	exact := buildCallTargetSchema(s.cfg)
 	for _, target := range s.registry.Targets() {
-		if target.template == nil {
-			continue
+		if target.template != nil {
+			return &jsonschema.Schema{
+				Version: exact.Version, Type: "object",
+				OneOf: []*jsonschema.Schema{exact, s.templateCallInputSchema()},
+			}
 		}
-		schema := s.templateCallInputSchema()
-		server.AddTool(&mcp.Tool{
-			Name: callTargetTemplateTool, Title: "Call Harpoon target template",
-			Description: "Call a version-1 GET target template using only its declared string parameters and permitted headers. Discover the tool name, complete input schema, and available examples in each list_targets entry's invocation. The target fixes the destination and disables redirects.",
-			InputSchema: schema, OutputSchema: buildCallTargetOutputSchema(s.cfg),
-			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true, IdempotentHint: true},
-		}, s.callTemplateHandler)
-		return
 	}
+	return exact
 }
 
 func (s *Server) templateCallInputSchema() *jsonschema.Schema {
@@ -80,6 +80,40 @@ func (s *Server) templateInvocation(target Target) *targetInvocation {
 	label, _ := base.Properties.Get("label")
 	label.Const = target.Label
 	properties["parameters"] = templateParametersSchema(target.template)
+	required := append([]string(nil), base.Required...)
+	bodyPolicy := target.template.bodyPolicy
+	if bodyPolicy == nil {
+		delete(properties, "operation")
+		delete(properties, "body")
+		delete(properties, "content_type")
+	} else {
+		properties["operation"] = map[string]any{"type": "string", "const": target.template.operationToken}
+		required = append(required, "operation")
+		policy := bodyPolicy.canonicalPolicy()
+		bodySchema := map[string]any{
+			"type": "string", "maxLength": policy.MaxBytes, "x-maxBytes": policy.MaxBytes,
+			"description": "Raw UTF-8 body. x-maxBytes is an enforced byte limit; maxLength is a character limit. All configured JSON, full-string pattern, and exact raw-string enum checks must pass.",
+		}
+		if *policy.Required {
+			bodySchema["minLength"] = 1
+			required = append(required, "body", "content_type")
+		}
+		if policy.Validation.JSON {
+			bodySchema["contentMediaType"] = "application/json"
+		}
+		if policy.Validation.Pattern != "" {
+			bodySchema["pattern"] = "^(?:" + policy.Validation.Pattern + ")$"
+			// Body patterns consume only printable ASCII. Advertise that
+			// constraint explicitly: some schema regex engines allow $ before
+			// a final newline, while the executor requires the entire string.
+			bodySchema["not"] = map[string]any{"pattern": "[^ -~]"}
+		}
+		if len(policy.Validation.Enum) > 0 {
+			bodySchema["enum"] = policy.Validation.Enum
+		}
+		properties["body"] = bodySchema
+		properties["content_type"] = map[string]any{"type": "string", "enum": policy.ContentTypes}
+	}
 	// Advertise the canonical spellings. Runtime header matching remains
 	// case-insensitive; pinned header names and values stay private.
 	headers := make(map[string]any, len(target.template.allowedHeaders))
@@ -95,12 +129,15 @@ func (s *Server) templateInvocation(target Target) *targetInvocation {
 		"description": "Optional caller headers using the advertised spelling. Values must be valid UTF-8 without control characters. The client also enforces an 8192-byte total header budget including managed headers.",
 	}
 	invocation := &targetInvocation{
-		ToolName: callTargetTemplateTool,
+		ToolName: callTargetTool,
 		InputSchema: map[string]any{
 			"$schema": base.Version, "type": "object", "properties": properties,
-			"required": base.Required, "additionalProperties": false,
-			"description": "Arguments for this fixed-origin HTTPS GET operation. Redirects and request bodies are disabled. Supply raw parameter values without URL encoding; the client renders them. Optional call controls use the advertised defaults.",
+			"required": required, "additionalProperties": false,
+			"description": "Arguments for this fixed-origin HTTPS " + target.template.method + " operation. Supply raw parameter values without URL encoding; the client renders them. The method, path structure, and query names are fixed. Redirects are disabled. GET rejects bodies; writes enforce the advertised body policy and are never automatically replayed.",
 		},
+	}
+	if bodyPolicy != nil {
+		invocation.InputSchema["dependentRequired"] = map[string][]string{"body": {"content_type"}, "content_type": {"body"}}
 	}
 	values := make(map[string]any, len(target.template.parameters))
 	for name, parameter := range target.template.PublicParameters() {
@@ -118,7 +155,17 @@ func (s *Server) templateInvocation(target Target) *targetInvocation {
 	}
 	// Revalidate the complete public example with the same renderer as calls.
 	if _, err := target.template.Render(values); err == nil {
-		invocation.Examples = []map[string]any{{"label": target.Label, "parameters": values}}
+		example := map[string]any{"label": target.Label, "parameters": values}
+		if bodyPolicy != nil {
+			example["operation"] = target.template.operationToken
+			policy := bodyPolicy.canonicalPolicy()
+			if len(policy.Validation.Enum) > 0 {
+				example["body"], example["content_type"] = policy.Validation.Enum[0], policy.ContentTypes[0]
+			} else if *policy.Required {
+				return invocation
+			}
+		}
+		invocation.Examples = []map[string]any{example}
 	}
 	return invocation
 }
@@ -148,7 +195,8 @@ func (s *Server) callTemplateHandler(ctx context.Context, req *mcp.CallToolReque
 // Decode the original argument bytes before converting objects to maps, which
 // would erase duplicate keys. Bound work independently of the MCP transport.
 func decodeTemplateArguments(raw json.RawMessage, out *callTargetTemplateRequest) error {
-	if len(raw) > 32768 {
+	// Escaped JSON strings can occupy six bytes per body byte on the wire.
+	if len(raw) > 32768+6*maxTemplateBodyBytes || !validTemplateJSONStrings(raw) {
 		return errors.New("invalid template arguments")
 	}
 	raw = bytes.TrimSpace(raw)
@@ -174,7 +222,7 @@ func decodeTemplateArguments(raw json.RawMessage, out *callTargetTemplateRequest
 			return errors.New("null template argument")
 		}
 		switch name {
-		case "label", "parameters", "headers", "timeout_ms", "max_response_bytes":
+		case "label", "parameters", "headers", "operation", "body", "content_type", "timeout_ms", "max_response_bytes":
 		default:
 			return errors.New("unknown template argument")
 		}
@@ -258,6 +306,16 @@ func (s *Server) callTargetTemplate(ctx context.Context, params callTargetTempla
 		return nil, newToolError("", "unknown template target")
 	}
 	label = target.Label
+	if target.template.bodyPolicy != nil {
+		if params.Operation == nil || *params.Operation != target.template.operationToken {
+			return nil, newToolError(label, "write operation must match the discovered invocation schema")
+		}
+	} else if params.Operation != nil {
+		return nil, newToolError(label, "GET templates do not accept a write operation")
+	}
+	if err := target.template.bodyPolicy.validate(params.Body, params.ContentType); err != nil {
+		return nil, newToolError(label, err.Error())
+	}
 	parameters := maps.Clone(params.Parameters)
 	resolved, err := target.template.Render(parameters)
 	if err != nil {
@@ -269,6 +327,9 @@ func (s *Server) callTargetTemplate(ctx context.Context, params callTargetTempla
 	}
 	maps.Copy(headers, target.template.FixedHeaders())
 	headers.Set("User-Agent", version.UserAgent)
+	if params.ContentType != nil {
+		headers.Set("Content-Type", *params.ContentType)
+	}
 	timeout, err := normalizeTimeout(params.TimeoutMS)
 	if err != nil {
 		return nil, newToolError(label, err.Error())
@@ -279,13 +340,24 @@ func (s *Server) callTargetTemplate(ctx context.Context, params callTargetTempla
 	}
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, resolved.String(), nil)
+	var requestBody io.Reader
+	bodyText := ""
+	if params.Body != nil {
+		bodyText = *params.Body
+	}
+	if target.template.method != http.MethodGet {
+		// Hide the replayable reader from net/http, even for an empty write.
+		// An operator-pinned Idempotency-Key must not enable transport retries.
+		requestBody = io.NopCloser(strings.NewReader(bodyText))
+	}
+	req, err := http.NewRequestWithContext(ctx, target.template.method, resolved.String(), requestBody)
 	if err != nil {
 		return nil, newToolError(label, "invalid template request")
 	}
 	req.Header = headers
+	req.ContentLength = int64(len(bodyText))
 	client := &http.Client{
-		Transport:     templateRoundTripper{policy: target.template, parameters: parameters, base: s.httpTransport},
+		Transport:     templateRoundTripper{policy: target.template, parameters: parameters, body: params.Body, contentType: params.ContentType, base: s.httpTransport},
 		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 	}
 	outcome = metricOutcomeRequestError
@@ -311,13 +383,15 @@ func (s *Server) callTargetTemplate(ctx context.Context, params callTargetTempla
 }
 
 type templateRoundTripper struct {
-	policy     *TargetTemplate
-	parameters map[string]any
-	base       http.RoundTripper
+	policy      *TargetTemplate
+	parameters  map[string]any
+	body        *string
+	contentType *string
+	base        http.RoundTripper
 }
 
 func (t templateRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
-	if err := t.policy.ValidateRequest(req, t.parameters); err != nil {
+	if err := t.policy.validateRequest(req, t.parameters, t.body, t.contentType); err != nil {
 		return nil, err
 	}
 	return t.base.RoundTrip(req)

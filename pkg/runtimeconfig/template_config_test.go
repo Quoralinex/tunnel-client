@@ -122,6 +122,46 @@ func TestLoadTemplateParameterMetadataAcrossFlavors(t *testing.T) {
 	}
 }
 
+func TestLoadTemplateWriteBodyPolicyAcrossFlavors(t *testing.T) {
+	t.Parallel()
+	const bodyPolicy = `        body_policy:
+          content_types: [application/json]
+          max_bytes: 1024
+          required: false
+          validation:
+            json: true
+            enum: ['{"state":"ready"}']
+`
+	contents := strings.Replace(templateConfigFixture, "        method: GET\n", "        method: POST\n"+bodyPolicy, 1)
+	for _, flavor := range []Flavor{FlavorRuntime, FlavorRuntimeCloudflared, FlavorFull} {
+		t.Run(string(flavor), func(t *testing.T) {
+			t.Parallel()
+			cfg, err := Load([]string{"--config", writeRuntimeConfig(t, contents)}, flavor, lookupEnvMap(map[string]string{
+				"TEST_API_KEY": testAPIKey, "TEST_TEMPLATE_AUTH": "Bearer secret",
+			}))
+			if err != nil {
+				t.Fatal(err)
+			}
+			policy := cfg.Harpoon.Targets[0].Template.BodyPolicy
+			if policy == nil || policy.Required == nil || *policy.Required || policy.MaxBytes != 1024 || policy.Validation == nil || !policy.Validation.JSON || !reflect.DeepEqual(policy.Validation.Enum, []string{`{"state":"ready"}`}) {
+				t.Fatalf("write body policy was not preserved: %#v", policy)
+			}
+		})
+	}
+	for name, change := range map[string]string{
+		"unknown body field": strings.Replace(contents, "          max_bytes: 1024", "          maxBytes: 1024", 1),
+		"unknown validator":  strings.Replace(contents, "            json: true", "            schema: true", 1),
+		"duplicate required": strings.Replace(contents, "          required: false", "          required: false\n          required: true", 1),
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			if _, err := parseFileConfig("write.yaml", []byte(change), true, true); err == nil {
+				t.Fatal("invalid write body policy must fail strict YAML decoding")
+			}
+		})
+	}
+}
+
 func TestTemplateConfigStrictSchemaAndVersion(t *testing.T) {
 	t.Parallel()
 

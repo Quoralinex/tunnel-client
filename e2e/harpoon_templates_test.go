@@ -379,13 +379,14 @@ func runHarpoonTemplatesRuntime(t *testing.T, subject runtimeSubject) {
 		{name: "authorization_denied", arguments: fmt.Sprintf(`{"label":"get_resource","parameters":{"id":%q}}`, deniedID), statusCode: http.StatusForbidden},
 		{name: "redirect", arguments: fmt.Sprintf(`{"label":"redirect_resource","parameters":{"id":%q}}`, caseID), redirect: true},
 		{name: "legacy_exact", tool: "call_target", arguments: `{"label":"legacy","method":"GET"}`, statusCode: http.StatusOK},
+		{name: "removed_template_tool", tool: "call_target_template", arguments: validArgs, wantError: true},
 		{name: "missing", arguments: `{"label":"get_resource","parameters":{}}`, wantError: true},
 		{name: "unknown_parameter", arguments: `{"label":"get_resource","parameters":{"id":"abc","extra":"abc"}}`, wantError: true},
 		{name: "duplicate_parameter", arguments: `{"label":"get_resource","parameters":{"id":"first","id":"second"}}`, wantError: true},
 		{name: "missing_parameters", arguments: `{"label":"get_resource"}`, wantError: true},
 		{name: "unknown_target", arguments: `{"label":"not_configured","parameters":{"id":"abc"}}`, wantError: true},
-		{name: "exact_target_via_template_tool", arguments: `{"label":"legacy","parameters":{}}`, wantError: true},
-		{name: "template_target_via_legacy_tool", tool: "call_target", arguments: `{"label":"get_resource","method":"GET"}`, wantError: true},
+		{name: "exact_target_with_template_arguments", arguments: `{"label":"legacy","parameters":{}}`, wantError: true},
+		{name: "template_target_with_method", tool: "call_target", arguments: `{"label":"get_resource","method":"GET"}`, wantError: true},
 		{name: "alternate_method", arguments: strings.TrimSuffix(validArgs, "}") + `,"method":"POST"}`, wantError: true},
 		{name: "get_body", arguments: strings.TrimSuffix(validArgs, "}") + `,"body":"private-request-body"}`, wantError: true},
 		{name: "redirect_override", arguments: strings.TrimSuffix(validArgs, "}") + `,"follow_redirects":true}`, wantError: true},
@@ -452,7 +453,7 @@ func runHarpoonTemplatesRuntime(t *testing.T, subject runtimeSubject) {
 	for _, tc := range cases {
 		tool := tc.tool
 		if tool == "" {
-			tool = "call_target_template"
+			tool = "call_target"
 		}
 		params := json.RawMessage(fmt.Sprintf(`{"name":%q,"arguments":%s}`, tool, tc.arguments))
 		commands = append(commands, templateRuntimeCommand(t, "template-"+tc.name, "tools/call", params, ready))
@@ -516,13 +517,13 @@ log:
 	initialized := templateRuntimeResult(t, byID["template-initialize"])
 	instructions, ok := initialized["instructions"].(string)
 	require.True(t, ok, "initialize must advertise Harpoon instructions")
-	for _, guidance := range []string{"call_target_template", "template_version", "parameters_schema", "label", "all parameters"} {
+	for _, guidance := range []string{"call_target", "template_version", "parameters_schema", "label", "all parameters"} {
 		require.Contains(t, instructions, guidance, "initialize must explain how to call template targets")
 	}
 	tools := templateRuntimeResult(t, byID["template-tools-list"])
 	encodedTools, err := json.Marshal(tools)
 	require.NoError(t, err)
-	require.Contains(t, string(encodedTools), `"call_target_template"`)
+	require.NotContains(t, string(encodedTools), `"call_target_template"`)
 	require.Contains(t, string(encodedTools), `"call_target"`)
 	discovery := templateRuntimeResult(t, byID["template-list-targets"])
 	structured, ok := discovery["structuredContent"].(map[string]any)
