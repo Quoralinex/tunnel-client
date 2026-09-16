@@ -507,8 +507,7 @@ func maybeWriteAdminJSONError(cmd *cobra.Command, err error) error {
 		},
 	}
 
-	var requestErr *admin.RequestError
-	if errors.As(err, &requestErr) {
+	if requestErr, ok := errors.AsType[*admin.RequestError](err); ok {
 		errorPayload := payload["error"].(map[string]any)
 		errorPayload["method"] = requestErr.Method
 		errorPayload["path"] = requestErr.Path

@@ -154,8 +154,7 @@ func (s *Server) oauthTargetAudienceHandler() mcp.ToolHandlerFor[map[string]any,
 		}
 		resp, err := s.getOAuthTargetAudience(params)
 		if err != nil {
-			var toolErr *audienceToolError
-			if errors.As(err, &toolErr) {
+			if toolErr, ok := errors.AsType[*audienceToolError](err); ok {
 				return audienceToolErrorResult(toolErr.label, toolErr.message), nil, nil
 			}
 			return audienceToolErrorResult(params.Label, "failed to resolve audience"), nil, nil

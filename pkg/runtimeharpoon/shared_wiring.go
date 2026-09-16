@@ -227,8 +227,7 @@ func RegisterAdditionalTransport(p AdditionalTransportParams) error {
 	var handler http.Handler = http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		legacy, err := isLegacyHarpoonStreamableRequest(req)
 		if err != nil {
-			var maxBytesErr *http.MaxBytesError
-			if errors.As(err, &maxBytesErr) {
+			if _, ok := errors.AsType[*http.MaxBytesError](err); ok {
 				http.Error(w, "request body too large", http.StatusRequestEntityTooLarge)
 				return
 			}

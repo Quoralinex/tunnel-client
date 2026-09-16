@@ -12,8 +12,7 @@ func healthFailure(err error) (string, int) {
 	if err == nil {
 		return "", 0
 	}
-	var status *APIStatusError
-	if errors.As(err, &status) {
+	if status, ok := errors.AsType[*APIStatusError](err); ok {
 		return "http_error", status.StatusCode()
 	}
 	if errors.Is(err, context.DeadlineExceeded) {
@@ -22,8 +21,7 @@ func healthFailure(err error) (string, int) {
 	if errors.Is(err, context.Canceled) {
 		return "canceled", 0
 	}
-	var network net.Error
-	if errors.As(err, &network) {
+	if network, ok := errors.AsType[net.Error](err); ok {
 		if network.Timeout() {
 			return "timeout", 0
 		}

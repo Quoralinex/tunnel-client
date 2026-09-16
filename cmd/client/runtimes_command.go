@@ -322,8 +322,7 @@ func validateRuntimeListScope(organizationIDs, workspaceIDs []string, tenantID s
 }
 
 func maybeWritePayloadError(cmd *cobra.Command, jsonOutput bool, payload map[string]any, err error) error {
-	var payloadErr *codexplugin.PayloadError
-	if errors.As(err, &payloadErr) {
+	if payloadErr, ok := errors.AsType[*codexplugin.PayloadError](err); ok {
 		if jsonOutput && payload != nil {
 			if writeErr := writeJSON(cmd.OutOrStdout(), payload); writeErr != nil {
 				return writeErr

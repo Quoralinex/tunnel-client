@@ -277,8 +277,7 @@ func runMetadataFetch(p metadataParams) error {
 					if errors.Is(err, context.Canceled) {
 						return
 					}
-					var statusErr *internal.MetadataStatusError
-					if errors.As(err, &statusErr) {
+					if statusErr, ok := errors.AsType[*internal.MetadataStatusError](err); ok {
 						attrs := []any{
 							slog.Int("status_code", statusErr.StatusCode()),
 							slog.String("status", statusErr.Status()),

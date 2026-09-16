@@ -1114,8 +1114,7 @@ func jsonRPCResponseCorrelationAttrs(req *jsonrpc.Request, response *jsonrpc.Res
 		attrs = append(attrs, jsonRPCIDAttr("rpc_response_id", response.ID))
 	}
 	if response.Error != nil {
-		var rpcErr *jsonrpc.Error
-		if errors.As(response.Error, &rpcErr) {
+		if rpcErr, ok := errors.AsType[*jsonrpc.Error](response.Error); ok {
 			attrs = append(attrs, slog.Int64("rpc_error_code", rpcErr.Code))
 		}
 	}

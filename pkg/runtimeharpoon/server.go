@@ -1175,11 +1175,8 @@ func (e *toolError) Error() string {
 }
 
 func asToolError(err error) *toolError {
-	var te *toolError
-	if errors.As(err, &te) {
-		return te
-	}
-	return nil
+	toolErr, _ := errors.AsType[*toolError](err)
+	return toolErr
 }
 
 func toolErrorResult(label, msg string) *mcp.CallToolResult {
@@ -1196,8 +1193,7 @@ func classifyRequestError(err error) string {
 	if err == nil {
 		return "request failed"
 	}
-	var te *toolError
-	if errors.As(err, &te) {
+	if te, ok := errors.AsType[*toolError](err); ok {
 		if te.redirectMismatchKind == redirectMismatchSchemeHTTPToHTTPS || te.redirectMismatchKind == redirectMismatchSchemeHTTPSToHTTP {
 			return te.msg
 		}

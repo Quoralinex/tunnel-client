@@ -54,8 +54,7 @@ func classifyDiscoveryFailure(err error) discoveryFailureType {
 	if err == nil {
 		return discoveryFailureTypeNotApplicable
 	}
-	var classified *classifiedDiscoveryError
-	if errors.As(err, &classified) {
+	if classified, ok := errors.AsType[*classifiedDiscoveryError](err); ok {
 		return classified.failureType
 	}
 	if errors.Is(err, context.DeadlineExceeded) {

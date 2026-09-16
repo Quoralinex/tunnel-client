@@ -1459,8 +1459,7 @@ func AsExitError(err error, target **exec.ExitError) bool {
 	if err == nil {
 		return false
 	}
-	var exitErr *exec.ExitError
-	if errors.As(err, &exitErr) {
+	if exitErr, ok := errors.AsType[*exec.ExitError](err); ok {
 		*target = exitErr
 		return true
 	}
@@ -1471,8 +1470,7 @@ func AsExecError(err error, target **exec.Error) bool {
 	if err == nil {
 		return false
 	}
-	var execErr *exec.Error
-	if errors.As(err, &execErr) {
+	if execErr, ok := errors.AsType[*exec.Error](err); ok {
 		*target = execErr
 		return true
 	}
