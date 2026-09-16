@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"maps"
 	"net/http"
 	"strings"
 	"testing"
@@ -330,9 +331,7 @@ func TestTemplateWriteDiscoverySchema(t *testing.T) {
 				require.NoError(t, resolved.Validate(target.Invocation.Examples[0]))
 				for _, key := range []string{"operation", "body", "content_type"} {
 					example := map[string]any{}
-					for k, v := range target.Invocation.Examples[0] {
-						example[k] = v
-					}
+					maps.Copy(example, target.Invocation.Examples[0])
 					delete(example, key)
 					require.Error(t, resolved.Validate(example))
 				}
