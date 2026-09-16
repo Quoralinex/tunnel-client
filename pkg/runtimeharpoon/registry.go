@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net/url"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 
@@ -57,6 +58,8 @@ type Registry struct {
 	explainCache      map[string]redirectExplainCacheEntry
 	explainCacheOrder []string
 	stateCh           chan struct{}
+	discoveryBytes    int
+	hasRichTemplates  bool
 }
 
 // RegistryCounter is the minimal cross-package contract needed by polling and
@@ -198,6 +201,10 @@ func (r *Registry) RegisterTarget(target Target) error {
 		originalURL:     &original,
 		template:        template,
 	}
+	discoveryBytes, err := targetDiscoveryBytes(cleanTarget)
+	if err != nil {
+		return errors.New("harpoon: cannot encode public target discovery")
+	}
 
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -210,6 +217,16 @@ func (r *Registry) RegisterTarget(target Target) error {
 	if len(r.targets) >= r.limit {
 		return fmt.Errorf("harpoon: registry limit %d exceeded", r.limit)
 	}
+	// Enforce the aggregate bound before changing registry state, including
+	// legacy targets that share discovery with a rich-header template. Catalogs
+	// without structured rules retain their existing limits; saturated
+	// accounting prevents a later rich rule from activating an oversized one.
+	hasRichTemplates := r.hasRichTemplates || (template != nil && template.HasRichHeaderRules())
+	if hasRichTemplates && discoveryBytes > maxTemplateCatalogBytes-r.discoveryBytes {
+		return errors.New("harpoon: structured-header discovery exceeds the 512 KiB catalog budget; reduce target metadata or split the catalog")
+	}
+	r.discoveryBytes = min(maxTemplateCatalogBytes+1, r.discoveryBytes+discoveryBytes)
+	r.hasRichTemplates = hasRichTemplates
 	r.targets[label] = cleanTarget
 	r.ordered = append(r.ordered, cleanTarget)
 	if template == nil {
@@ -251,8 +268,16 @@ func (r *Registry) Targets() []Target {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	out := make([]Target, len(r.ordered))
-	copy(out, r.ordered)
+	for i, target := range r.ordered {
+		out[i] = targetSnapshot(target)
+	}
 	return out
+}
+
+// Public metadata must not be mutable after its discovery size is budgeted.
+func targetSnapshot(target Target) Target {
+	target.Tags = slices.Clone(target.Tags)
+	return target
 }
 
 // Count reports the number of registered targets.
@@ -274,7 +299,7 @@ func (r *Registry) Lookup(label string) (Target, bool) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	target, ok := r.targets[label]
-	return target, ok
+	return targetSnapshot(target), ok
 }
 
 // ExactURL returns the pre-normalization URL for a registered target. Thin
@@ -315,7 +340,7 @@ func (r *Registry) WaitForTarget(ctx context.Context, label string) (Target, err
 		state := r.stateCh
 		r.mu.RUnlock()
 		if ok {
-			return target, nil
+			return targetSnapshot(target), nil
 		}
 
 		select {
@@ -418,7 +443,7 @@ func (r *Registry) TargetForURL(candidate *url.URL) (Target, bool) {
 			continue
 		}
 		if candidateKey == targetKey {
-			return target, true
+			return targetSnapshot(target), true
 		}
 	}
 	return Target{}, false

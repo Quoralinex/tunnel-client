@@ -569,7 +569,10 @@ func buildControlPlaneHTTPTransportWithLogging(cfg *runtimeconfig.ControlPlaneCo
 		base,
 		otelhttp.WithMeterProvider(meterProvider),
 	)
-	if includeRawHTTPLogging {
+	// A poll body can contain rich-header credentials, and the response body
+	// can contain results from the same invocation. Exclude both directions
+	// from raw capture even when the operator enables unsafe HTTP debugging.
+	if includeRawHTTPLogging && !cfg.SuppressRawHTTPLogging {
 		base = tclog.NewRoundTripper(base, logger, loggingCfg, tclog.ComponentControlPlane)
 	}
 

@@ -123,6 +123,108 @@ embedded line breaks and invalid HTTP header values are rejected. References
 resolve at startup. Restart the process after changing configuration or rotating
 the referenced credential; templates do not reload automatically.
 
+## Caller header rules
+
+Use `template.header_rules` to allow caller-supplied headers with public
+descriptions, validation, and optional private renaming. `allowed_headers` is a
+supported alias with the same behavior and no removal deadline. Either key
+accepts a list mixing strings and rule objects. Use only one key per template;
+both keys are rejected even when empty or identical. Omit the list or use `[]`
+to allow no caller headers; explicit `null` is rejected. Profile round trips
+preserve the chosen alias and structured rules.
+
+This example adds runtime authentication and correlation to a GET template:
+
+```yaml
+template:
+  version: 1
+  origin: https://cases.example
+  method: GET
+  path_template: /cases/{case_id}
+  parameters:
+    case_id:
+      type: string
+      required: true
+      pattern: '^[A-Za-z0-9_-]+$'
+      max_length: 64
+  headers:
+    Accept: application/json
+  header_rules:
+    - X-Request-Tag
+    - name: Authorization
+      description: Complete bearer value issued by the case application
+      credential: true
+      required: true
+      validation:
+        pattern: '^Bearer [A-Za-z0-9._~+/-]+=*$'
+        min_length: 8
+        max_length: 4096
+    - name: X-Trace-Id
+      description: Correlation identifier for this request
+      forward_as: X-Correlation-Id
+      validation:
+        pattern: '^[A-Za-z0-9_-]+$'
+        min_length: 1
+        max_length: 64
+  follow_redirects: false
+```
+
+String entries preserve the existing allowlist behavior: optional, no renaming,
+and empty or UTF-8 values allowed subject to the existing transport limits.
+String-form `Authorization` remains prohibited. A structured rule requires
+`name` and a nonempty public `description`; `required` and `credential` default
+to false, and `forward_as` defaults to the source name. Required means present;
+set `min_length: 1` to prohibit an empty value.
+
+Validation combines every supplied constraint: full-string `pattern`, exact
+`enum`, `min_length`, and `max_length`. Length bounds count Unicode code points;
+the separate 8,192-byte aggregate header budget still applies. Patterns are
+limited to 512 printable ASCII bytes and the same explicit ASCII subset as body
+patterns: literals, positive character classes, grouping, alternation, anchors,
+and quantifiers. Wildcards, shorthand or negated classes, lookarounds,
+backreferences, and flags are rejected. Values subject to a pattern must
+contain only printable ASCII. A description-only
+noncredential rule is valid. Constraints may tighten the transport limits but
+cannot relax them.
+
+`Authorization`, `X-API-Key`, and `API-Key` require `credential: true` plus
+positive minimum and maximum lengths and a nonempty format pattern. Credential
+rules reject `enum`, even alongside a pattern: enumerating accepted credentials
+would disclose their values through discovery. Noncredential headers may use
+public enums. The rule
+can use one of those names as its public name or private destination. Other
+credential-like names and reserved transport or identity fields remain
+prohibited. Both names are checked. Header names match case-insensitively;
+duplicate sources, duplicate destinations, overlaps between separate source
+and destination rules, and collisions with fixed or body-managed headers are
+rejected. Only one outgoing field is sent after renaming; the public alias is
+not also sent. Values are passed unchanged, without prefixes or interpolation.
+
+For structured header rules, `tools/list` and
+`list_targets.invocation.input_schema` expose the same target-specific schema,
+including public names, descriptions, requiredness, and validation constraints.
+Legacy templates retain a shared generic `tools/list` branch and expose their
+target-specific constraints through `list_targets`. Neither surface exposes
+`forward_as` or its destination.
+Descriptions and validation constraints are public metadata: never put an
+actual secret in an enum, pattern, or description. Required credentials are
+never synthesized into discovery examples.
+
+Copy the `label` constant from the discovered invocation schema. For structured
+header rules it is an opaque policy-bound handle beginning with `hr1:`, while
+the top-level target label remains the logical name. A call using the logical
+name alone is rejected. The handle is bound to the complete private policy,
+the tunnel ID, and the resolved runtime API key. Equivalent replicas using
+the same key can accept it; a changed policy or runtime key requires fresh
+discovery. Callers must not construct, trim, or rewrite the handle.
+
+Only values supplied in the tool's `headers` argument are eligible for these
+rules. HTTP ingress, MCP, tunnel, and actor credentials are never implicitly
+forwarded. Each call supplies its own upstream credential; Harpoon does not
+cache, refresh, or retry it. Tool arguments may be visible to the caller,
+model, or conversation transcript. These rules do not provide a model-hidden
+secret channel.
+
 ## Call and discover targets
 
 Call `list_targets` to discover operations. A template entry contains enough
@@ -188,7 +290,7 @@ arguments object and resulting operation:
 Query key order is canonicalized during encoding and has no semantic meaning.
 
 The caller can supply `headers` only for names explicitly listed in that
-target's `allowed_headers`. For example, `get_profile` accepts:
+target's `header_rules` or `allowed_headers`. For example, `get_profile` accepts:
 
 ```json
 {
@@ -476,6 +578,17 @@ documents, including a trailing `---`; version 1 and files without a version ret
 their existing behavior of reading only the first document. Invalid policy fails
 startup.
 
+Catalogs containing structured header rules have a 512 KiB discovery budget,
+including public schemas, descriptions, enums, examples, the escaped JSON text
+copy returned by `list_targets`, and reserved space for response envelopes.
+Registration rejects a target before it would exceed this budget, including
+exact and legacy template targets in a mixed catalog. Reduce metadata or split
+the catalog across clients if this happens. Catalogs without structured header
+rules retain their existing limits and compact `tools/list` template schema.
+For catalogs using structured rules, this keeps both `tools/list` and
+`list_targets` comfortably below the tunnel response size limit; unrelated tools
+registered by extensions are outside this catalog budget.
+
 Profile add, edit, and init validate the same template policy before saving. They
 check secret-reference syntax without reading environment variables or files.
 Startup resolves those references and validates the actual header values and their
@@ -496,7 +609,7 @@ combined size; a profile can be saved before its credentials are available.
 | Parameter `description` | Optional public text, valid UTF-8 and at most 1,024 bytes. |
 | Parameter `examples` | Optional list of at most eight unique strings, each valid under the parameter's complete policy. |
 | URL length | At most 4,096 bytes after encoding. Policies whose longest permitted identifiers could exceed that limit are rejected at startup. |
-| `headers` and `allowed_headers` | At most 32 names in total, including the managed write `Content-Type` slot. Names are at most 128 bytes and case-insensitive. Caller names cannot overlap fixed names. Total outbound header names and values, including the managed `User-Agent`, cannot exceed 8,192 bytes. Values must be valid UTF-8 without control characters. |
+| `headers` and `header_rules` (alias `allowed_headers`) | At most 32 names in total, including the managed write `Content-Type` slot. Names are at most 128 bytes and case-insensitive. Caller names cannot overlap fixed names. Total outbound header names and values, including the managed `User-Agent`, cannot exceed 8,192 bytes. Values must be valid UTF-8 without control characters. Renamed inputs and outputs both obey the byte limit. |
 | `follow_redirects` | Omit or set to `false`. A redirect response is returned without following it, even for the same origin or an independently configured target. |
 
 Literal path segments and query keys use the same ASCII unreserved character
@@ -514,8 +627,9 @@ subset keeps public JSON Schema validation consistent with runtime validation.
 The separate identifier character and length restrictions apply to every
 pattern, including permissive patterns such as `.*`.
 
-Authentication headers belong in the operator's fixed `headers` map. Caller
-allowlists cannot include names containing an `authorization`, `cookie`, `key`,
+Authentication headers belong in the operator's fixed `headers` map or an
+explicit supported structured credential rule. String caller allowlists cannot
+include names containing an `authorization`, `cookie`, `key`,
 `secret`, `token`, or `password` component, or recognizable joined names such as
 `ApiKey`, `X-AuthToken`, and `ClientSecret`. Transport, forwarding, trusted
 identity, and method-override headers are prohibited even when explicitly
@@ -554,8 +668,31 @@ surface. Fixed header values and environment variables referenced by those
 headers are redacted in support exports, regardless of the header or variable's
 name.
 
+Invalid caller header values produce generic errors without reflecting the
+submitted value. Validation and requiredness are checked again at the outbound
+boundary. These protections do not redact secrets an upstream chooses to put
+in its response to the caller.
+
+When any structured header rule is configured, control-plane raw HTTP dumps
+are disabled even if `log.http_raw_unsafe` is enabled. Poll envelopes can carry
+runtime credentials, so this exclusion covers the connection's requests and
+responses. Ordinary metadata logs remain available. Legacy string-only
+configurations retain their existing logging behavior.
+
 ## Compatibility and upgrades
 
+- Upgrade executors before using `header_rules` or structured entries. Older
+  clients reject the new key and cannot decode objects in `allowed_headers`.
+  Existing string lists keep their behavior under either key on new clients.
+  Replace an explicit null list with `[]` or omit it before upgrading.
+- Policy-bound invocations are incompatible with old or differently configured
+  executors and fail without falling back to the logical label. They retain
+  the existing `call_target` tool and tunnel envelopes. This is an invocation
+  check, not a service-side poller admission fence. Old processes can still
+  expose and execute their old configuration for stale, unbound callers.
+  Retire all old configurations and pollers when tightening a policy; mixed
+  incompatible replicas may reject calls. Rediscover after policy or runtime
+  key changes, and never replay an ambiguous write automatically.
 - Existing exact-URL configurations with no `config_version` or version 1 keep
   their existing behavior. Version 2 can contain exact targets alongside
   templates.

@@ -33,6 +33,7 @@ type harpoonParams struct {
 	Logger        *slog.Logger
 	MeterProvider *sdkmetric.MeterProvider `optional:"true"`
 	Config        *runtimeconfig.HarpoonConfig
+	ControlPlane  *runtimeconfig.ControlPlaneConfig `optional:"true"`
 	Health        *runtimeconfig.HealthConfig
 	HealthSvc     runtimehealth.Service
 	AdminMux      *http.ServeMux `name:"admin_mux"`
@@ -55,6 +56,7 @@ func newHarpoonService(p harpoonParams) (harpoonOutputs, error) {
 		Logger:        p.Logger,
 		MeterProvider: p.MeterProvider,
 		Config:        p.Config,
+		ControlPlane:  p.ControlPlane,
 		Health:        p.Health,
 		HealthSvc:     p.HealthSvc,
 		TLSBundle:     p.TLSBundle,

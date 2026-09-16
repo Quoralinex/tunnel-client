@@ -3100,3 +3100,43 @@ func generateControlPlaneSignedClientCertificate(t *testing.T, caCert *x509.Cert
 	}
 	return clientPair, clientCertPath, clientKeyPath
 }
+
+func TestControlPlaneRichHeaderPrivacySuppressesBothRawDirections(t *testing.T) {
+	t.Parallel()
+	const requestSecret = "synthetic-rich-request-secret"
+	const responseSecret = "synthetic-rich-response-secret"
+	for _, suppress := range []bool{false, true} {
+		t.Run(strconv.FormatBool(suppress), func(t *testing.T) {
+			t.Parallel()
+			server := newHTTPTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				body, err := io.ReadAll(r.Body)
+				require.NoError(t, err)
+				require.Contains(t, string(body), requestSecret)
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(`{"nested_result":"` + responseSecret + `"}`))
+			}))
+			var logs bytes.Buffer
+			logger := slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
+			transport, err := buildControlPlaneHTTPTransport(&config.ControlPlaneConfig{
+				BaseURL: mustParseURL(t, server.URL), TunnelID: types.TunnelID("cli-tunnel"), APIKey: "runtime-key",
+				SuppressRawHTTPLogging: suppress,
+			}, nil, logger, &config.LoggingConfig{HTTPRawUnsafe: true}, testMeterProvider)
+			require.NoError(t, err)
+			req, err := http.NewRequest(http.MethodPost, server.URL+"/v1/tunnels/cli-tunnel/response", strings.NewReader(`{"headers":{"Authorization":"Bearer `+requestSecret+`"}}`))
+			require.NoError(t, err)
+			response, err := transport.RoundTrip(req)
+			require.NoError(t, err)
+			defer func() { require.NoError(t, response.Body.Close()) }()
+			body, err := io.ReadAll(response.Body)
+			require.NoError(t, err)
+			require.Contains(t, string(body), responseSecret)
+			for _, marker := range []string{requestSecret, responseSecret, "raw http request", "raw http response"} {
+				if suppress {
+					require.NotContains(t, logs.String(), marker)
+				} else {
+					require.Contains(t, logs.String(), marker, "legacy unsafe logging must remain unchanged")
+				}
+			}
+		})
+	}
+}

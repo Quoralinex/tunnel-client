@@ -3703,3 +3703,60 @@ func equalStringSlices(a, b []string) bool {
 	}
 	return true
 }
+
+func TestEffectiveRichHeadersSuppressControlPlaneRawCapture(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name, rule, replacement string
+		want                    bool
+	}{
+		{name: "legacy strings", rule: `allowed_headers: [X-Tag]`},
+		{name: "canonical strings", rule: `header_rules: [X-Tag]`},
+		{name: "canonical structured", rule: `header_rules: [{name: X-Tag, description: Caller value}]`, want: true},
+		{name: "alias structured", rule: `allowed_headers: [{name: X-Tag, description: Caller value}]`, want: true},
+		{name: "replacement flags", rule: `header_rules: [{name: X-Tag, description: Caller value}]`, replacement: "flag"},
+		{name: "replacement env", rule: `header_rules: [{name: X-Tag, description: Caller value}]`, replacement: "env"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			path := writeTempConfigFile(t, fmt.Sprintf(`config_version: 2
+control_plane:
+  poll_channels: [harpoon]
+harpoon:
+  targets:
+    - label: resource
+      template:
+        version: 1
+        origin: https://example.com
+        method: GET
+        path_template: /resource/{id}
+        parameters:
+          id: {type: string, required: true, pattern: '[a-z]+', max_length: 32}
+        %s
+log:
+  level: debug
+  format: json
+  http_raw_unsafe: true
+`, tc.rule))
+			args := []string{"--config", path}
+			env := map[string]string{"CONTROL_PLANE_TUNNEL_ID": envTunnelID, "CONTROL_PLANE_API_KEY": "runtime-key"}
+			const replacement = "label=replacement,url=https://example.com/resource"
+			switch tc.replacement {
+			case "flag":
+				args = append(args, "--harpoon.target", replacement)
+			case "env":
+				env["HARPOON_TARGETS"] = replacement
+			}
+			cfg, err := LoadRuntimeForTest(args, lookupEnvMap(env))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if cfg.ControlPlane.SuppressRawHTTPLogging != tc.want {
+				t.Fatalf("suppression=%v, want %v", cfg.ControlPlane.SuppressRawHTTPLogging, tc.want)
+			}
+			if !cfg.Logging.HTTPRawUnsafe {
+				t.Fatal("effective logging setting was changed globally")
+			}
+		})
+	}
+}

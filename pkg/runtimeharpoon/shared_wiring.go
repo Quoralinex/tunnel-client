@@ -55,6 +55,7 @@ type SharedServiceParams struct {
 	Logger                   *slog.Logger
 	MeterProvider            *sdkmetric.MeterProvider
 	Config                   *runtimeconfig.HarpoonConfig
+	ControlPlane             *runtimeconfig.ControlPlaneConfig
 	Health                   *runtimeconfig.HealthConfig
 	HealthSvc                runtimehealth.Service
 	TLSBundle                *tlsconfig.Bundle
@@ -98,8 +99,19 @@ func NewSharedService(p SharedServiceParams) (SharedServiceOutputs, error) {
 			return SharedServiceOutputs{}, err
 		}
 	}
+	// Programmatic targets are absent from the config loader's policy scan.
+	// Both Fx adapters publish this registry before the control-plane client
+	// is constructed, so finish deriving its privacy policy here as well.
+	if p.ControlPlane != nil {
+		for _, target := range registry.Targets() {
+			if target.template.HasRichHeaderRules() {
+				p.ControlPlane.SuppressRawHTTPLogging = true
+				break
+			}
+		}
+	}
 
-	serverOptions := make([]ServerOption, 0, 2)
+	serverOptions := []ServerOption{WithPolicyBinding(p.ControlPlane)}
 	if p.MeterProvider != nil {
 		serverOptions = append(serverOptions, WithMeter(p.MeterProvider.Meter("harpoon")))
 	}

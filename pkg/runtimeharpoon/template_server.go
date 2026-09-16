@@ -18,6 +18,7 @@ import (
 	"github.com/invopop/jsonschema"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"github.com/openai/tunnel-client/pkg/runtimeconfig"
 	"github.com/openai/tunnel-client/pkg/version"
 )
 
@@ -53,32 +54,53 @@ func (callTargetTemplateRequest) JSONSchemaExtend(schema *jsonschema.Schema) {
 // method and are authorized against the operator-selected policy at dispatch.
 func (s *Server) callTargetInputSchema() *jsonschema.Schema {
 	exact := buildCallTargetSchema(s.cfg)
+	branches := []*jsonschema.Schema{exact}
+	hasLegacyTemplate := false
 	for _, target := range s.registry.Targets() {
 		if target.template != nil {
-			return &jsonschema.Schema{
-				Version: exact.Version, Type: "object",
-				OneOf: []*jsonschema.Schema{exact, s.templateCallInputSchema()},
+			if !target.template.HasRichHeaderRules() {
+				// Preserve the compact legacy discovery contract regardless of
+				// catalog size. Its label pattern excludes the ':' in rich labels,
+				// so this branch cannot overlap a policy-bound invocation.
+				if !hasLegacyTemplate {
+					branches = append(branches, s.templateCallInputSchema())
+					hasLegacyTemplate = true
+				}
+				continue
 			}
+			// Both discovery surfaces use the identical target-specific public
+			// rich-header projection. The exact branch requires method;
+			// templates forbid it.
+			branches = append(branches, &jsonschema.Schema{Extras: s.templateInvocation(target).InputSchema})
 		}
+	}
+	if len(branches) > 1 {
+		return &jsonschema.Schema{Version: exact.Version, Type: "object", OneOf: branches}
 	}
 	return exact
 }
 
 func (s *Server) templateCallInputSchema() *jsonschema.Schema {
+	return buildTemplateCallInputSchema(s.cfg)
+}
+
+func buildTemplateCallInputSchema(cfg *runtimeconfig.HarpoonConfig) *jsonschema.Schema {
 	reflector := &jsonschema.Reflector{DoNotReference: true}
 	schema := reflector.Reflect(callTargetTemplateRequest{})
-	applyCallTargetSchemaBounds(schema, s.cfg)
+	applyCallTargetSchemaBounds(schema, cfg)
 	return schema
 }
 
 func (s *Server) templateInvocation(target Target) *targetInvocation {
-	base := s.templateCallInputSchema()
+	return templateInvocationForLabel(target, s.templateInvocationLabel(target), s.templateCallInputSchema())
+}
+
+func templateInvocationForLabel(target Target, invocationLabel string, base *jsonschema.Schema) *targetInvocation {
 	properties := make(map[string]any, base.Properties.Len())
 	for pair := base.Properties.Oldest(); pair != nil; pair = pair.Next() {
 		properties[pair.Key] = pair.Value
 	}
-	label, _ := base.Properties.Get("label")
-	label.Const = target.Label
+	properties["label"] = map[string]any{"type": "string", "const": invocationLabel}
 	properties["parameters"] = templateParametersSchema(target.template)
 	required := append([]string(nil), base.Required...)
 	bodyPolicy := target.template.bodyPolicy
@@ -114,19 +136,10 @@ func (s *Server) templateInvocation(target Target) *targetInvocation {
 		properties["body"] = bodySchema
 		properties["content_type"] = map[string]any{"type": "string", "enum": policy.ContentTypes}
 	}
-	// Advertise the canonical spellings. Runtime header matching remains
-	// case-insensitive; pinned header names and values stay private.
-	headers := make(map[string]any, len(target.template.allowedHeaders))
-	for name := range target.template.allowedHeaders {
-		headers[name] = map[string]any{
-			"type": "string", "maxLength": maxTemplateHeaderBytes,
-			"not": map[string]any{"pattern": "[\x00-\x1f\x7f]"},
-		}
-	}
-	properties["headers"] = map[string]any{
-		"type": "object", "properties": headers, "additionalProperties": false,
-		"maxProperties": maxTemplateHeaders, "default": map[string]string{},
-		"description": "Optional caller headers using the advertised spelling. Values must be valid UTF-8 without control characters. The client also enforces an 8192-byte total header budget including managed headers.",
+	headers, requiredHeaders := target.template.templateHeadersSchema()
+	properties["headers"] = headers
+	if requiredHeaders {
+		required = append(required, "headers")
 	}
 	invocation := &targetInvocation{
 		ToolName: callTargetTool,
@@ -138,6 +151,11 @@ func (s *Server) templateInvocation(target Target) *targetInvocation {
 	}
 	if bodyPolicy != nil {
 		invocation.InputSchema["dependentRequired"] = map[string][]string{"body": {"content_type"}, "content_type": {"body"}}
+	}
+	// Required header values, especially credentials, are supplied by the
+	// caller. Do not synthesize or publish a credential-bearing example.
+	if requiredHeaders {
+		return invocation
 	}
 	values := make(map[string]any, len(target.template.parameters))
 	for name, parameter := range target.template.PublicParameters() {
@@ -155,7 +173,7 @@ func (s *Server) templateInvocation(target Target) *targetInvocation {
 	}
 	// Revalidate the complete public example with the same renderer as calls.
 	if _, err := target.template.Render(values); err == nil {
-		example := map[string]any{"label": target.Label, "parameters": values}
+		example := map[string]any{"label": invocationLabel, "parameters": values}
 		if bodyPolicy != nil {
 			example["operation"] = target.template.operationToken
 			policy := bodyPolicy.canonicalPolicy()
@@ -244,7 +262,7 @@ func decodeTemplateArguments(raw json.RawMessage, out *callTargetTemplateRequest
 	if err := decoder.Decode(out); err != nil {
 		return errors.New("invalid template arguments")
 	}
-	if out.Parameters == nil || !labelPattern.MatchString(out.Label) {
+	if out.Parameters == nil || (!labelPattern.MatchString(out.Label) && !isPolicyBoundTemplateLabel(out.Label)) {
 		return errors.New("invalid template arguments")
 	}
 	return nil
@@ -301,7 +319,7 @@ func (s *Server) callTargetTemplate(ctx context.Context, params callTargetTempla
 			slog.String("label", label), slog.String("outcome", outcome),
 			slog.Int("status_code", status), slog.Int64("latency_ms", time.Since(start).Milliseconds()))
 	}()
-	target, ok := s.registry.Lookup(params.Label)
+	target, ok := s.lookupTemplateInvocation(params.Label)
 	if !ok || target.template == nil {
 		return nil, newToolError("", "unknown template target")
 	}

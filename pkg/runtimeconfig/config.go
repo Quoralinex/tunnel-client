@@ -215,6 +215,11 @@ type ControlPlaneConfig struct {
 	MCPServerInfoHeader func() (string, error)
 	HTTPProxy           *url.URL
 	HTTPProxySource     ProxySource
+	// SuppressRawHTTPLogging is derived from effective structured Harpoon
+	// policies. Poll requests and responses can contain caller credentials even
+	// when they are nested in JSON rather than HTTP headers. It is not an
+	// operator-configurable override and cannot be disabled by unsafe logging.
+	SuppressRawHTTPLogging bool `json:"-" yaml:"-"`
 }
 
 // LoggingConfig defines logging behavior for the client.
@@ -410,16 +415,21 @@ type HarpoonTarget struct {
 // destination and bounded caller-supplied identifiers. Version 1 permits GET,
 // POST, and PUT over HTTPS and never follows redirects. Writes require a body policy.
 type HarpoonTargetTemplate struct {
-	Version         int                                 `yaml:"version" json:"version"`
-	Origin          string                              `yaml:"origin" json:"origin"`
-	Method          string                              `yaml:"method" json:"method"`
-	BodyPolicy      *HarpoonTemplateBodyPolicy          `yaml:"body_policy,omitempty" json:"body_policy,omitempty"`
-	PathTemplate    string                              `yaml:"path_template" json:"path_template"`
-	Query           map[string]string                   `yaml:"query" json:"query,omitempty"`
-	Parameters      map[string]HarpoonTemplateParameter `yaml:"parameters" json:"parameters"`
-	Headers         map[string]string                   `yaml:"headers" json:"headers,omitempty"`
-	AllowedHeaders  []string                            `yaml:"allowed_headers" json:"allowed_headers,omitempty"`
-	FollowRedirects bool                                `yaml:"follow_redirects" json:"follow_redirects"`
+	Version      int                                 `yaml:"version" json:"version"`
+	Origin       string                              `yaml:"origin" json:"origin"`
+	Method       string                              `yaml:"method" json:"method"`
+	BodyPolicy   *HarpoonTemplateBodyPolicy          `yaml:"body_policy,omitempty" json:"body_policy,omitempty"`
+	PathTemplate string                              `yaml:"path_template" json:"path_template"`
+	Query        map[string]string                   `yaml:"query" json:"query,omitempty"`
+	Parameters   map[string]HarpoonTemplateParameter `yaml:"parameters" json:"parameters"`
+	Headers      map[string]string                   `yaml:"headers" json:"headers,omitempty"`
+	// AllowedHeaders preserves the original Go API for name-only entries.
+	// HeaderRules supports both name-only and structured entries; decoding and
+	// encoding retain the operator's header_rules or allowed_headers spelling.
+	AllowedHeaders  []string            `yaml:"-" json:"-"`
+	HeaderRules     []HarpoonHeaderRule `yaml:"-" json:"-"`
+	FollowRedirects bool                `yaml:"follow_redirects" json:"follow_redirects"`
+	headerRulesKey  string
 }
 
 // HarpoonTemplateBodyPolicy constrains raw UTF-8 write payloads independently
@@ -692,6 +702,21 @@ func loadRuntimeFromFlagSet(fs *pflag.FlagSet, lookupEnv func(string) (string, b
 		harpoon.Targets, err = resolveFileHarpoonTargets(fileValues.HarpoonTargets, lookupEnv, harpoon.AllowPlaintextHTTP)
 		if err != nil {
 			return nil, nil, lookupEnv, fmt.Errorf("parse config file %s: %w", fileValues.Path, err)
+		}
+	}
+	for _, target := range harpoon.Targets {
+		if target.Template == nil {
+			continue
+		}
+		rules, err := target.Template.NormalizedHeaderRules()
+		if err != nil {
+			return nil, nil, lookupEnv, err
+		}
+		for _, rule := range rules {
+			if !rule.Legacy {
+				controlPlane.SuppressRawHTTPLogging = true
+				break
+			}
 		}
 	}
 	if err := validateConfiguredPollChannels(controlPlane, mcp, harpoon); err != nil {

@@ -1,11 +1,15 @@
 package fx
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"strings"
 	"sync"
@@ -19,10 +23,131 @@ import (
 	"github.com/openai/tunnel-client/pkg/config"
 	"github.com/openai/tunnel-client/pkg/controlplane"
 	"github.com/openai/tunnel-client/pkg/controlplane/internal"
+	"github.com/openai/tunnel-client/pkg/harpoon"
 	"github.com/openai/tunnel-client/pkg/mcpclient"
 	"github.com/openai/tunnel-client/pkg/mcpserverinfo"
+	"github.com/openai/tunnel-client/pkg/runtimeconfig"
+	"github.com/openai/tunnel-client/pkg/runtimeharpoon"
+	"github.com/openai/tunnel-client/pkg/runtimehealth"
+	"github.com/openai/tunnel-client/pkg/tlsconfig"
+	"github.com/openai/tunnel-client/pkg/tunnelctx"
 	"github.com/openai/tunnel-client/pkg/types"
 )
+
+func TestRegisteredHeaderRulesSuppressControlPlaneRawLogging(t *testing.T) {
+	t.Parallel()
+	const callerSecret = "synthetic-registered-caller-secret"
+	const resultSecret = "synthetic-registered-result-secret"
+	for _, flavor := range []string{"full", "runtime"} {
+		for _, registration := range []string{"with_target", "registrar"} {
+			for _, rich := range []bool{false, true} {
+				t.Run(fmt.Sprintf("%s/%s/rich=%t", flavor, registration, rich), func(t *testing.T) {
+					t.Parallel()
+					posted := make(chan string, 1)
+					server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+						w.Header().Set("Content-Type", "application/json")
+						switch req.URL.Path {
+						case "/v1/tunnels/test-tunnel/poll":
+							_, _ = io.WriteString(w, `{"commands":[{"command_type":"jsonrpc","request_id":"test-request","channel":"harpoon","shard_token":"test-shard","created_at":"2026-01-01T00:00:00Z","meta":{},"jsonrpc":{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"call_target","arguments":{"headers":{"Authorization":"Bearer `+callerSecret+`"}}}}}]}`)
+						case "/v1/tunnels/test-tunnel/response":
+							body, err := io.ReadAll(req.Body)
+							if err != nil {
+								t.Errorf("read posted response: %v", err)
+							}
+							posted <- string(body)
+							w.WriteHeader(http.StatusOK)
+						default:
+							t.Errorf("unexpected control-plane request: %s", req.URL.Path)
+							w.WriteHeader(http.StatusNotFound)
+						}
+					}))
+					t.Cleanup(server.Close)
+					baseURL, err := url.Parse(server.URL)
+					if err != nil {
+						t.Fatal(err)
+					}
+					controlPlaneConfig := &runtimeconfig.ControlPlaneConfig{
+						BaseURL: baseURL, TunnelID: "test-tunnel", APIKey: "runtime-key",
+					}
+					policy := &runtimeconfig.HarpoonTargetTemplate{
+						Version: 1, Origin: "https://inventory.example", Method: http.MethodGet, PathTemplate: "/items/{id}",
+						Parameters: map[string]runtimeconfig.HarpoonTemplateParameter{
+							"id": {Type: "string", Required: true, Pattern: "^[a-z]+$", MaxLength: 32},
+						},
+					}
+					if rich {
+						minLength, maxLength := 8, 128
+						policy.HeaderRules = []runtimeconfig.HarpoonHeaderRule{{
+							Name: "Authorization", Description: "Caller bearer token", Credential: true,
+							Validation: &runtimeconfig.HarpoonHeaderValidation{
+								Pattern: "^Bearer [A-Za-z0-9_-]+$", MinLength: &minLength, MaxLength: &maxLength,
+							},
+						}}
+					} else {
+						policy.AllowedHeaders = []string{"Accept"}
+					}
+					target := runtimeharpoon.Target{Label: "inventory", Template: policy}
+					registrar := runtimeharpoon.WithTarget(target)
+					if registration == "registrar" {
+						registrar = func(registry *runtimeharpoon.Registry) error { return registry.RegisterTarget(target) }
+					} else if flavor == "full" {
+						registrar = harpoon.WithTarget(target)
+					}
+					var logs bytes.Buffer
+					logger := slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
+					meterProvider := sdkmetric.NewMeterProvider()
+					t.Cleanup(func() { _ = meterProvider.Shutdown(context.Background()) })
+					var client *internal.TunnelServiceClient
+					options := []fx.Option{
+						fx.Supply(logger, meterProvider, controlPlaneConfig,
+							&runtimeconfig.MCPConfig{TransportKind: runtimeconfig.MCPTransportHTTPStreamable},
+							&runtimeconfig.LoggingConfig{HTTPRawUnsafe: true}, &runtimeconfig.HealthConfig{}),
+						fx.Provide(newTunnelServiceClient,
+							func() *tlsconfig.Bundle { return nil },
+							func() runtimehealth.Service { return registeredHeaderRulesHealth{} },
+							fx.Annotate(http.NewServeMux, fx.ResultTags(`name:"admin_mux"`))),
+						fx.Supply(fx.Annotate(registrar, fx.ResultTags(`group:"harpoon_target_registrars"`))),
+						// Request the client first so the test proves its registry
+						// dependency completes registration before transport setup.
+						fx.Populate(&client),
+					}
+					if flavor == "full" {
+						options = append(options, fx.Supply(&config.HarpoonConfig{}), harpoon.Module)
+					} else {
+						options = append(options, fx.Supply(&runtimeconfig.HarpoonConfig{}), runtimeharpoon.Module)
+					}
+					app := fxtest.New(t, options...)
+					app.RequireStart()
+					t.Cleanup(func() { app.RequireStop() })
+					if controlPlaneConfig.SuppressRawHTTPLogging != rich {
+						t.Fatalf("suppression = %t, want %t", controlPlaneConfig.SuppressRawHTTPLogging, rich)
+					}
+					commands, _, err := client.Poll(t.Context(), 1)
+					if err != nil || len(commands) != 1 {
+						t.Fatalf("poll = %d commands, %v", len(commands), err)
+					}
+					response := types.NewTunnelResponse(types.ChannelHarpoon, json.RawMessage(`{"jsonrpc":"2.0","id":1,"result":{"value":"`+resultSecret+`"}}`), http.StatusOK, nil)
+					ctx := tunnelctx.ContextWithShardToken(t.Context(), "test-shard")
+					if _, err := client.PostResponse(ctx, "test-request", response); err != nil {
+						t.Fatal(err)
+					}
+					if body := <-posted; !strings.Contains(body, resultSecret) {
+						t.Fatal("control-plane transport did not deliver the response payload")
+					}
+					for _, marker := range []string{callerSecret, resultSecret, "raw http request", "raw http response"} {
+						if strings.Contains(logs.String(), marker) == rich {
+							t.Fatalf("log marker %q visibility did not match header policy (rich=%t)", marker, rich)
+						}
+					}
+				})
+			}
+		}
+	}
+}
+
+type registeredHeaderRulesHealth struct{}
+
+func (registeredHeaderRulesHealth) Addr(time.Duration) (string, error) { return "", nil }
 
 func TestBuildMCPServerInfoHeaderAdvertisesEffectiveBindings(t *testing.T) {
 	t.Parallel()

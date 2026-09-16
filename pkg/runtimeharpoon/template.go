@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"maps"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -39,17 +38,18 @@ var templateHeaderNamePattern = regexp.MustCompile(headerNamePattern)
 // TargetTemplate is an immutable, compiled HTTP operation. It never adds rendered
 // URLs to the registry's exact-URL allowlist.
 type TargetTemplate struct {
-	method         string
-	bodyPolicy     *compiledTemplateBodyPolicy
-	origin         url.URL
-	path           []templatePart
-	query          map[string]templatePart
-	parameters     map[string]compiledTemplateParameter
-	names          []string
-	headers        http.Header
-	allowedHeaders map[string]struct{}
-	policyDigest   string
-	operationToken string
+	method             string
+	bodyPolicy         *compiledTemplateBodyPolicy
+	origin             url.URL
+	path               []templatePart
+	query              map[string]templatePart
+	parameters         map[string]compiledTemplateParameter
+	names              []string
+	headers            http.Header
+	headerRules        map[string]compiledTemplateHeaderRule
+	headerDestinations map[string]compiledTemplateHeaderRule
+	policyDigest       string
+	operationToken     string
 }
 
 type templatePart struct {
@@ -87,13 +87,12 @@ func CompileTargetTemplate(cfg *runtimeconfig.HarpoonTargetTemplate) (*TargetTem
 		return nil, fmt.Errorf("template must declare 1 to %d parameters", maxTemplateParameters)
 	}
 	t := &TargetTemplate{
-		method:         cfg.Method,
-		bodyPolicy:     bodyPolicy,
-		origin:         *origin,
-		query:          make(map[string]templatePart, len(cfg.Query)),
-		parameters:     make(map[string]compiledTemplateParameter, len(cfg.Parameters)),
-		headers:        make(http.Header),
-		allowedHeaders: make(map[string]struct{}, len(cfg.AllowedHeaders)),
+		method:     cfg.Method,
+		bodyPolicy: bodyPolicy,
+		origin:     *origin,
+		query:      make(map[string]templatePart, len(cfg.Query)),
+		parameters: make(map[string]compiledTemplateParameter, len(cfg.Parameters)),
+		headers:    make(http.Header),
 	}
 	for name, schema := range cfg.Parameters {
 		if !templateNamePattern.MatchString(name) {
@@ -147,7 +146,11 @@ func CompileTargetTemplate(cfg *runtimeconfig.HarpoonTargetTemplate) (*TargetTem
 	if bodyPolicy != nil {
 		managedContentType = 1
 	}
-	if len(cfg.Headers)+len(cfg.AllowedHeaders)+managedContentType > maxTemplateHeaders {
+	rules, err := cfg.NormalizedHeaderRules()
+	if err != nil {
+		return nil, err
+	}
+	if len(cfg.Headers)+len(rules)+managedContentType > maxTemplateHeaders {
 		return nil, errors.New("template has too many headers")
 	}
 	for key, value := range cfg.Headers {
@@ -166,24 +169,8 @@ func CompileTargetTemplate(cfg *runtimeconfig.HarpoonTargetTemplate) (*TargetTem
 		}
 		t.headers.Set(canonical, value)
 	}
-	for _, key := range cfg.AllowedHeaders {
-		canonical, err := canonicalTemplateHeader(key)
-		if err != nil {
-			return nil, err
-		}
-		if isTemplateCredentialHeader(canonical) {
-			return nil, errors.New("template authentication headers must be fixed by the operator")
-		}
-		if bodyPolicy != nil && (canonical == "Content-Type" || canonical == "Content-Encoding") {
-			return nil, errors.New("template writes require the body policy content type and unencoded body bytes")
-		}
-		if _, exists := t.headers[canonical]; exists {
-			return nil, errors.New("template caller header conflicts with a fixed header")
-		}
-		if _, exists := t.allowedHeaders[canonical]; exists {
-			return nil, errors.New("duplicate template caller header name")
-		}
-		t.allowedHeaders[canonical] = struct{}{}
+	if err := t.compileHeaderRules(rules); err != nil {
+		return nil, err
 	}
 	if err := validateTemplateHeaderSize(t.headers); err != nil {
 		return nil, err
@@ -229,15 +216,29 @@ func (t *TargetTemplate) PolicyDigest() string {
 }
 
 func (t *TargetTemplate) computePolicyDigest() (string, error) {
-	policy := runtimeconfig.HarpoonTargetTemplate{
-		Version:        1,
-		Origin:         t.origin.String(),
-		Method:         t.method,
-		BodyPolicy:     t.bodyPolicy.canonicalPolicy(),
-		Query:          make(map[string]string, len(t.query)),
-		Parameters:     t.PublicParameters(),
-		Headers:        make(map[string]string, len(t.headers)),
-		AllowedHeaders: make([]string, 0, len(t.allowedHeaders)),
+	// This explicit private representation preserves the historical JSON field
+	// order and string-allowlist digest. Config export has a different purpose:
+	// it must retain alias spelling, which must never affect policy identity.
+	policy := struct {
+		Version         int                                               `json:"version"`
+		Origin          string                                            `json:"origin"`
+		Method          string                                            `json:"method"`
+		BodyPolicy      *runtimeconfig.HarpoonTemplateBodyPolicy          `json:"body_policy,omitempty"`
+		PathTemplate    string                                            `json:"path_template"`
+		Query           map[string]string                                 `json:"query,omitempty"`
+		Parameters      map[string]runtimeconfig.HarpoonTemplateParameter `json:"parameters"`
+		Headers         map[string]string                                 `json:"headers,omitempty"`
+		AllowedHeaders  []string                                          `json:"allowed_headers,omitempty"`
+		FollowRedirects bool                                              `json:"follow_redirects"`
+		HeaderRules     []runtimeconfig.HarpoonHeaderRule                 `json:"header_rules,omitempty"`
+	}{
+		Version:    1,
+		Origin:     t.origin.String(),
+		Method:     t.method,
+		BodyPolicy: t.bodyPolicy.canonicalPolicy(),
+		Query:      make(map[string]string, len(t.query)),
+		Parameters: t.PublicParameters(),
+		Headers:    make(map[string]string, len(t.headers)),
 	}
 	parts := make([]string, len(t.path))
 	for i, part := range t.path {
@@ -258,10 +259,14 @@ func (t *TargetTemplate) computePolicyDigest() (string, error) {
 	for key, values := range t.headers {
 		policy.Headers[key] = values[0]
 	}
-	for key := range t.allowedHeaders {
-		policy.AllowedHeaders = append(policy.AllowedHeaders, key)
+	if t.HasRichHeaderRules() {
+		policy.HeaderRules = t.canonicalHeaderRules()
+	} else {
+		for source := range t.headerRules {
+			policy.AllowedHeaders = append(policy.AllowedHeaders, source)
+		}
+		sort.Strings(policy.AllowedHeaders)
 	}
-	sort.Strings(policy.AllowedHeaders)
 	encoded, err := json.Marshal(policy)
 	if err != nil {
 		return "", errors.New("cannot fingerprint template policy")
@@ -541,29 +546,38 @@ func (t *TargetTemplate) ValidateCallerHeaders(headers map[string]string) (http.
 		return nil, errors.New("template policy is missing")
 	}
 	if len(headers) > maxTemplateHeaders {
-		return nil, errors.New("too many template headers")
+		return nil, t.headerError("header_budget_exceeded", errors.New("too many template headers"))
 	}
 	out := make(http.Header, len(headers))
+	sources := make(http.Header, len(headers))
 	for key, value := range headers {
 		canonical, err := canonicalTemplateHeader(key)
 		if err != nil {
-			return nil, err
+			return nil, t.headerError("header_invalid", err)
 		}
-		if _, allowed := t.allowedHeaders[canonical]; !allowed {
-			return nil, errors.New("caller header is not permitted by the target")
+		rule, allowed := t.headerRules[canonical]
+		if !allowed {
+			return nil, t.headerError("header_not_allowed", errors.New("caller header is not permitted by the target"))
 		}
-		if _, exists := out[canonical]; exists {
-			return nil, errors.New("duplicate caller header name")
+		if _, exists := sources[canonical]; exists {
+			return nil, t.headerError("header_duplicate", errors.New("duplicate caller header name"))
 		}
-		if !validTemplateHeaderValue(value) {
-			return nil, errors.New("invalid caller header value")
+		if err := rule.validate(value); err != nil {
+			return nil, t.headerError("header_invalid", err)
 		}
-		out.Set(canonical, value)
+		sources.Set(canonical, value)
+		out.Set(rule.schema.ForwardAs, value)
 	}
-	combined := t.FixedHeaders()
-	maps.Copy(combined, out)
-	if err := validateTemplateHeaderSize(combined); err != nil {
-		return nil, err
+	for source, rule := range t.headerRules {
+		if _, present := sources[source]; rule.schema.Required && !present {
+			return nil, t.headerError("header_required", errors.New("required caller header is missing"))
+		}
+	}
+	if err := t.validateCallerHeaderBudget(sources); err != nil {
+		return nil, t.headerError("header_budget_exceeded", err)
+	}
+	if err := t.validateCallerHeaderBudget(out); err != nil {
+		return nil, t.headerError("header_budget_exceeded", err)
 	}
 	return out, nil
 }
@@ -606,13 +620,24 @@ func (t *TargetTemplate) validateRequest(req *http.Request, parameters map[strin
 			if values[0] != fixed[0] {
 				return errors.New("fixed template header was modified")
 			}
-		} else if _, allowed := t.allowedHeaders[canonical]; !allowed {
-			return errors.New("outbound header is not permitted by the target")
+		} else {
+			rule, allowed := t.headerDestinations[canonical]
+			if !allowed {
+				return errors.New("outbound header is not permitted by the target")
+			}
+			if err := rule.validate(values[0]); err != nil {
+				return err
+			}
 		}
 	}
 	for key := range t.headers {
 		if _, exists := seen[key]; !exists {
 			return errors.New("fixed template header is missing")
+		}
+	}
+	for destination, rule := range t.headerDestinations {
+		if _, present := seen[destination]; rule.schema.Required && !present {
+			return errors.New("required outbound template header is missing")
 		}
 	}
 	return validateTemplateHeaderSize(req.Header)

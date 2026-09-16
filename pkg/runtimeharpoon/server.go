@@ -3,6 +3,7 @@ package runtimeharpoon
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -18,6 +19,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	validateschema "github.com/google/jsonschema-go/jsonschema"
 	"github.com/invopop/jsonschema"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
@@ -35,8 +37,8 @@ const (
 	maxContentTypeLogBytes  = 256
 	headerNamePattern       = "^[!#$%&'*+.^_`|~0-9A-Za-z-]+$"
 	defaultInstructions     = "Harpoon provides a constrained outbound HTTP client. Use list_targets to see allowlisted targets and call_target to make GET/POST/PUT requests with strict size, timeout, and redirect limits. Harpoon cannot reach arbitrary hosts or paths outside the configured allowlist."
-	templateInstructions    = "Harpoon provides a constrained outbound HTTP client. Use list_targets to see allowlisted targets. For exact targets, use call_target to make GET/POST/PUT requests with strict size, timeout, and redirect limits. For entries with template_version and parameters_schema, use call_target without method, with the label and all parameters declared by parameters_schema; each value must satisfy that schema. Use the discovered invocation.input_schema for all arguments, including the required operation constant on every write. Templates use an operator-fixed GET, POST, or PUT method and destination. GET is bodyless; writes enforce the advertised body policy. Templates do not follow redirects or automatically replay writes. Harpoon cannot reach arbitrary hosts or paths outside the configured allowlist."
-	templateListDescription = "Allowlisted targets: use call_target for exact targets. For entries with template_version and parameters_schema, use call_target without method, with the label and all parameters declared by parameters_schema; each value must satisfy that schema. Use the discovered invocation.input_schema for all arguments, including the required operation constant on every write."
+	templateInstructions    = "Harpoon provides a constrained outbound HTTP client. Use list_targets to see allowlisted targets. For exact targets, use call_target to make GET/POST/PUT requests with strict size, timeout, and redirect limits. For entries with template_version and parameters_schema, use call_target without method, with the label and all parameters declared by parameters_schema; each value must satisfy that schema. Use the discovered invocation.input_schema for all arguments, including the required operation constant on every write. Copy invocation.input_schema.properties.label.const exactly: structured header rules use an opaque bound label that differs from the target's logical label. Templates use an operator-fixed GET, POST, or PUT method and destination. GET is bodyless; writes enforce the advertised body policy. Templates do not follow redirects or automatically replay writes. Harpoon cannot reach arbitrary hosts or paths outside the configured allowlist."
+	templateListDescription = "Allowlisted targets: use call_target for exact targets. For entries with template_version and parameters_schema, use call_target without method, with the label and all parameters declared by parameters_schema; each value must satisfy that schema. Use the discovered invocation.input_schema for all arguments, including the required operation constant on every write. Copy invocation.input_schema.properties.label.const exactly; it may differ from the target's logical label."
 )
 
 var (
@@ -91,16 +93,17 @@ var (
 
 // Server provides MCP tools for constrained HTTP access.
 type Server struct {
-	logger        *slog.Logger
-	registry      *Registry
-	cfg           *runtimeconfig.HarpoonConfig
-	httpTransport http.RoundTripper
-	metrics       *serverMetrics
-	instructions  string
-	registrars    []ToolRegistrar
-	observers     []CallObserver
-	unixMu        sync.Mutex
-	unixBySocket  map[string]http.RoundTripper
+	logger           *slog.Logger
+	registry         *Registry
+	cfg              *runtimeconfig.HarpoonConfig
+	httpTransport    http.RoundTripper
+	metrics          *serverMetrics
+	instructions     string
+	registrars       []ToolRegistrar
+	observers        []CallObserver
+	policyBindingKey []byte
+	unixMu           sync.Mutex
+	unixBySocket     map[string]http.RoundTripper
 }
 
 type callTargetRequest struct {
@@ -237,15 +240,24 @@ func NewServer(cfg *runtimeconfig.HarpoonConfig, registry *Registry, logger *slo
 	if serverOpts.httpTransport == nil {
 		serverOpts.httpTransport = transport.CloneDefault()
 	}
+	if len(serverOpts.policyBindingKey) == 0 {
+		// Standalone adapters have a process-local discovery contract. Runtime
+		// wiring supplies a stable, tunnel-scoped key for equivalent replicas.
+		serverOpts.policyBindingKey = make([]byte, 32)
+		if _, err := rand.Read(serverOpts.policyBindingKey); err != nil {
+			return nil, errors.New("harpoon: initialize invocation binding")
+		}
+	}
 	return &Server{
-		logger:        logger.With(tclog.FieldComponent, tclog.ComponentHarpoon),
-		registry:      registry,
-		cfg:           cfg,
-		httpTransport: serverOpts.httpTransport,
-		metrics:       serverMetrics,
-		instructions:  serverOpts.instructions,
-		registrars:    append([]ToolRegistrar(nil), serverOpts.registrars...),
-		observers:     append([]CallObserver(nil), serverOpts.observers...),
+		logger:           logger.With(tclog.FieldComponent, tclog.ComponentHarpoon),
+		registry:         registry,
+		cfg:              cfg,
+		httpTransport:    serverOpts.httpTransport,
+		metrics:          serverMetrics,
+		instructions:     serverOpts.instructions,
+		registrars:       append([]ToolRegistrar(nil), serverOpts.registrars...),
+		observers:        append([]CallObserver(nil), serverOpts.observers...),
+		policyBindingKey: append([]byte(nil), serverOpts.policyBindingKey...),
 	}, nil
 }
 
@@ -298,7 +310,7 @@ func (s *Server) MCPServer() *mcp.Server {
 			registrar(server)
 		}
 	}
-	mcp.AddTool(server, &mcp.Tool{
+	server.AddTool(&mcp.Tool{
 		Name:        "call_target",
 		Title:       "Call Harpoon target",
 		Description: "Call an allowlisted exact target or operator-configured template. Exact targets require method; templates require their discovered parameters and forbid method. GET templates are bodyless; POST/PUT enforce the advertised body policy and may change upstream state. Templates never follow redirects or automatically replay writes. Inspect upstream state after an ambiguous write failure.",
@@ -307,7 +319,7 @@ func (s *Server) MCPServer() *mcp.Server {
 		},
 		InputSchema:  s.callTargetInputSchema(),
 		OutputSchema: buildCallTargetOutputSchema(s.cfg),
-	}, s.callUnifiedTargetHandler())
+	}, s.callRawTargetHandler())
 	return server
 }
 
@@ -348,21 +360,65 @@ func (s *Server) listTargetsHandler() mcp.ToolHandlerFor[map[string]any, any] {
 	}
 }
 
-// The typed SDK wrapper validates the advertised union and retains the original
-// request bytes. Template decoding must use those bytes, before duplicate keys
-// or malformed string encodings can be lost by a map conversion.
+// Header values may be credentials. The SDK's automatic schema errors include
+// rejected values, so this raw wrapper leaves template validation to the strict
+// private compiler and sanitizes exact-target schema failures. Public schemas
+// remain available to callers for discovery and local validation.
+func (s *Server) callRawTargetHandler() mcp.ToolHandler {
+	var schema validateschema.Schema
+	encoded, compileErr := json.Marshal(buildCallTargetSchema(s.cfg))
+	if compileErr == nil {
+		compileErr = json.Unmarshal(encoded, &schema)
+	}
+	var exactSchema *validateschema.Resolved
+	if compileErr == nil {
+		exactSchema, compileErr = schema.Resolve(nil)
+	}
+	unified := s.callUnifiedTargetHandler()
+	return func(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		if req == nil || req.Params == nil || compileErr != nil {
+			return toolErrorResult("", "invalid parameters"), nil
+		}
+		var args map[string]any
+		if err := json.Unmarshal(req.Params.Arguments, &args); err != nil || args == nil {
+			return toolErrorResult("", "invalid parameters"), nil
+		}
+		if !s.isTemplateCall(req, args) && exactSchema.Validate(args) != nil {
+			return toolErrorResult("", "invalid parameters"), nil
+		}
+		result, structured, err := unified(ctx, req, args)
+		if result != nil && structured != nil {
+			result.StructuredContent = structured
+		}
+		return result, err
+	}
+}
+
+func (s *Server) isTemplateCall(req *mcp.CallToolRequest, args map[string]any) bool {
+	label, _ := args["label"].(string)
+	target, exists := s.registry.Lookup(strings.TrimSpace(label))
+	if exists && target.template != nil {
+		return true
+	}
+	// Inspect original bytes as well: a duplicate label must not erase a bound
+	// invocation and redirect it into permissive legacy decoding.
+	if req != nil && req.Params != nil && containsBoundInvocationLabel(req.Params.Arguments) {
+		return true
+	}
+	for _, field := range []string{"parameters", "operation", "content_type"} {
+		if _, present := args[field]; present {
+			return true
+		}
+	}
+	return false
+}
+
+// Template decoding uses the original bytes before duplicate keys or malformed
+// string encodings can be lost by a map conversion.
 func (s *Server) callUnifiedTargetHandler() mcp.ToolHandlerFor[map[string]any, any] {
 	exact := s.callTargetHandler()
 	return func(ctx context.Context, req *mcp.CallToolRequest, args map[string]any) (*mcp.CallToolResult, any, error) {
-		label, _ := args["label"].(string)
-		target, exists := s.registry.Lookup(strings.TrimSpace(label))
-		templateCall := exists && target.template != nil
-		for _, field := range []string{"parameters", "operation", "content_type"} {
-			if _, present := args[field]; present {
-				templateCall = true
-			}
-		}
-		if templateCall {
+		if s.isTemplateCall(req, args) {
 			result, err := s.callTemplateHandler(ctx, req)
 			return result, nil, err
 		}
@@ -399,7 +455,6 @@ func (s *Server) callTargetHandler() mcp.ToolHandlerFor[map[string]any, any] {
 }
 
 func (s *Server) listTargets(params listTargetsRequest) listTargetsResponse {
-	allowed := allowedMethodsList()
 	targets := s.registry.Targets()
 	filters := normalizeListTargetsFilters(params)
 	out := make([]targetInfo, 0, len(targets))
@@ -407,21 +462,11 @@ func (s *Server) listTargets(params listTargetsRequest) listTargetsResponse {
 		if !filters.matches(target) {
 			continue
 		}
-		info := targetInfo{
-			Label:          target.Label,
-			Description:    target.Description,
-			Category:       target.Category,
-			Source:         target.Source,
-			Tags:           target.Tags,
-			AllowedMethods: allowed,
-		}
+		var invocation *targetInvocation
 		if target.template != nil {
-			info.AllowedMethods = []string{target.template.method}
-			info.TemplateVersion = 1
-			info.ParametersSchema = templateParametersSchema(target.template)
-			info.Invocation = s.templateInvocation(target)
+			invocation = s.templateInvocation(target)
 		}
-		out = append(out, info)
+		out = append(out, targetPublicInfo(target, invocation))
 	}
 	return listTargetsResponse{Targets: out}
 }

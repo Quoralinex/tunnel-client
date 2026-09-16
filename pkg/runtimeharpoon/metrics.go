@@ -34,11 +34,12 @@ type serverMetrics struct {
 }
 
 type serverOptions struct {
-	meter         metric.Meter
-	httpTransport http.RoundTripper
-	instructions  string
-	registrars    []ToolRegistrar
-	observers     []CallObserver
+	meter            metric.Meter
+	httpTransport    http.RoundTripper
+	instructions     string
+	registrars       []ToolRegistrar
+	observers        []CallObserver
+	policyBindingKey []byte
 }
 
 // ServerOption configures optional server behavior.
