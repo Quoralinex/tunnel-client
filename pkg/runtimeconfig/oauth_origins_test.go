@@ -1,6 +1,7 @@
 package runtimeconfig
 
 import (
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -33,6 +34,11 @@ mcp:
 				{
 					name: "environment overrides yaml",
 					args: []string{"--config", configPath},
+					env:  map[string]string{"MCP_OAUTH_TRUSTED_ORIGINS": "https://env-auth.example.invalid\nhttp://[::1]:8080/"},
+					want: []string{"https://env-auth.example.invalid", "http://[::1]:8080"},
+				},
+				{
+					name: "environment with legacy configuration",
 					env:  map[string]string{"MCP_OAUTH_TRUSTED_ORIGINS": "https://env-auth.example.invalid\nhttp://[::1]:8080/"},
 					want: []string{"https://env-auth.example.invalid", "http://[::1]:8080"},
 				},
@@ -77,6 +83,71 @@ mcp:
 				})
 			}
 		})
+	}
+}
+
+func TestValidateProfileOAuthTrustedOrigins(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name    string
+		origins string
+		wantErr bool
+	}{
+		{name: "omitted"},
+		{name: "empty list", origins: "  oauth_trusted_origins: []\n"},
+		{name: "public and private origins", origins: "  oauth_trusted_origins: [https://auth.example.invalid, 'http://[::1]:8080/', http://10.0.0.2]\n"},
+		{name: "path", origins: "  oauth_trusted_origins: [https://auth.example.invalid/path]\n", wantErr: true},
+		{name: "credentials", origins: "  oauth_trusted_origins: [https://user:password@auth.example.invalid]\n", wantErr: true},
+		{name: "invalid port", origins: "  oauth_trusted_origins: [https://auth.example.invalid:65536]\n", wantErr: true},
+		{name: "empty origin", origins: "  oauth_trusted_origins: ['']\n", wantErr: true},
+		{name: "multiple origins in one entry", origins: "  oauth_trusted_origins: [\"https://auth.example.invalid\\nhttps://other.example.invalid\"]\n", wantErr: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			data := []byte("control_plane:\n  api_key: env:UNRESOLVED_API_KEY\nmcp:\n  server_urls:\n    - url: env:UNRESOLVED_MCP_URL\n" + tc.origins)
+			for name, validate := range map[string]func(string, []byte) error{
+				"runtime": ValidateProfileBytes,
+				"full":    ValidateFullProfileBytes,
+			} {
+				t.Run(name, func(t *testing.T) {
+					t.Parallel()
+					err := validate("profile.yaml", data)
+					if tc.wantErr {
+						if err == nil || !strings.Contains(err.Error(), "mcp.oauth_trusted_origins") {
+							t.Fatalf("profile validation error = %v, want invalid trusted-origin error", err)
+						}
+					} else if err != nil {
+						t.Fatalf("profile validation: %v", err)
+					}
+				})
+			}
+		})
+	}
+}
+
+func TestOAuthTrustedOriginsEmptyFlagClearsInvalidLowerPrecedence(t *testing.T) {
+	t.Parallel()
+
+	configPath := writeRuntimeConfig(t, "mcp:\n  oauth_trusted_origins: [https://yaml-auth.example.invalid/path]\n")
+	for _, flavor := range []Flavor{FlavorFull, FlavorRuntime, FlavorRuntimeCloudflared} {
+		for _, args := range [][]string{{"--mcp.oauth-trusted-origin="}, {"--mcp.oauth-trusted-origin", ""}} {
+			t.Run(fmt.Sprintf("%s/%q", flavor, args), func(t *testing.T) {
+				t.Parallel()
+				cfg, err := Load(append([]string{"--config", configPath}, args...), flavor, lookupEnvMap(map[string]string{
+					"CONTROL_PLANE_API_KEY":     testAPIKey,
+					"CONTROL_PLANE_TUNNEL_ID":   testTunnelID,
+					"MCP_SERVER_URL":            "https://mcp.example.invalid/mcp",
+					"MCP_OAUTH_TRUSTED_ORIGINS": "https://env-auth.example.invalid/path",
+				}))
+				if err != nil {
+					t.Fatalf("Load: %v", err)
+				}
+				if len(cfg.MCP.OAuthTrustedOrigins) != 0 {
+					t.Fatalf("OAuthTrustedOrigins = %v, want empty", cfg.MCP.OAuthTrustedOrigins)
+				}
+			})
+		}
 	}
 }
 

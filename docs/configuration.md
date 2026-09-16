@@ -676,16 +676,26 @@ routing, streaming, OAuth discovery, and common setup pitfalls, see
   `https://auth.example.com/tenant` needs `https://auth.example.com` in
   `mcp.oauth_trusted_origins`. An untrusted server cannot expand this list by
   advertising more origins.
-- Stage the new binary and matching configuration together: older releases
-  reject the new flag and YAML key. Each deployment can upgrade independently;
-  no coordinated tunnel-service upgrade is required. Explicit-origin
-  enforcement takes effect immediately, with no permissive transition period.
+- For a mixed-version rollout, first set `MCP_OAUTH_TRUSTED_ORIGINS` in the
+  process environment and leave existing YAML and flags unchanged. Older
+  releases ignore this environment variable; updated binaries enforce it.
+  For the example above, use
+  `MCP_OAUTH_TRUSTED_ORIGINS=https://auth.example.com`. Separate multiple origins
+  with newlines. This single configuration supports both binary versions.
+- Keep the environment setting throughout the mixed-version rollout and
+  rollback window. Canary the new binary, validate discovery and authenticated
+  MCP requests, then upgrade the remaining deployments independently. Only
+  switch to the new YAML key or flag after no older binary needs to read that
+  configuration: older releases reject those new settings. No coordinated
+  tunnel-service upgrade is required. Updated binaries enforce explicit trust
+  immediately; the compatibility window does not enable permissive discovery.
 - Before promoting the upgrade, validate OAuth discovery and an authenticated
   MCP request using the deployment's configured transport. Retain the previous
-  binary and matching configuration until validation completes. Prefer correcting
-  missing trusted origins. If a rollback is approved, restore both the previous
-  binary and its matching configuration; this temporarily removes the new
-  protection.
+  binary and compatible configuration until validation completes. Prefer
+  correcting missing trusted origins. If a rollback is approved, restore the
+  previous binary with the unchanged legacy YAML/flags and pre-staged environment
+  variable, or restore its matching configuration if new YAML/flags were adopted.
+  Running the previous binary temporarily removes the new protection.
 - Forwards inbound `Authorization` headers and protected-resource discovery
   GETs through the tunnel client. Discovery payload `resource` values and
   `WWW-Authenticate resource_metadata` values are rewritten to tunnel-service

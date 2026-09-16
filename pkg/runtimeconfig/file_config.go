@@ -394,10 +394,8 @@ func (c fileConfig) toEnv(lookupEnv func(string) (string, bool)) (map[string]str
 	if c.MCP.OAuthTrustedOrigins != nil {
 		// Validate each YAML element before encoding the environment list so a
 		// newline inside one element cannot grant trust to additional origins.
-		for _, raw := range c.MCP.OAuthTrustedOrigins {
-			if _, err := parseOAuthTrustedOrigin(raw); err != nil {
-				return nil, fmt.Errorf("mcp.oauth_trusted_origins: %w", err)
-			}
+		if err := validateFileOAuthTrustedOrigins(c.MCP.OAuthTrustedOrigins); err != nil {
+			return nil, err
 		}
 		env["MCP_OAUTH_TRUSTED_ORIGINS"] = strings.Join(c.MCP.OAuthTrustedOrigins, "\n")
 	}
@@ -426,6 +424,15 @@ func (c fileConfig) toEnv(lookupEnv func(string) (string, bool)) (map[string]str
 	setString(env, "PROXY_CHECK_INTERVAL", c.Proxy.CheckInterval)
 
 	return env, nil
+}
+
+func validateFileOAuthTrustedOrigins(origins []string) error {
+	for _, raw := range origins {
+		if _, err := parseOAuthTrustedOrigin(raw); err != nil {
+			return fmt.Errorf("mcp.oauth_trusted_origins: %w", err)
+		}
+	}
+	return nil
 }
 
 func setString(env map[string]string, key string, value *string) {

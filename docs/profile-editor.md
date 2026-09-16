@@ -29,9 +29,14 @@ evaluation options such as `-c`, `--cmd`, `--eval`, and `+command` are rejected
 before any process starts. Use `code --wait` or `subl --wait` so the editor
 finishes before the profile is validated and saved.
 
-When upgrading, replace settings such as `EDITOR="env vim"` or interpreter
-wrappers with `EDITOR=vim` or `EDITOR="code --wait"`. Check `VISUAL` as well:
-a nonempty value takes precedence over `EDITOR` and must use a supported editor.
+Before upgrading any binaries, replace settings such as `EDITOR="env vim"` or
+interpreter wrappers with `EDITOR=vim` or `EDITOR="code --wait"`. Check `VISUAL`
+as well: a nonempty value takes precedence over `EDITOR` and must use a supported
+editor. Validate `profiles edit` with that setting on the existing release,
+then canary the updated binary and validate editing again before wider rollout.
+Keep the same supported editor setting throughout the mixed-version and rollback
+window: both releases accept it. Updated binaries do not provide a permissive
+mode for arbitrary commands or evaluating options.
 
 This policy limits what the editor environment value can request; naming an
 unrelated executable `vim` does not make an explicit path acceptable. The editor

@@ -381,6 +381,9 @@ func validateFileConfigSyntax(c fileConfig) error {
 	if err := validateHeaderReferenceSyntax("mcp.discovery_extra_headers", c.MCP.DiscoveryExtraHeaders); err != nil {
 		return err
 	}
+	if err := validateFileOAuthTrustedOrigins(c.MCP.OAuthTrustedOrigins); err != nil {
+		return err
+	}
 	for _, entry := range c.MCP.ServerURLs {
 		if err := validateConfigValueReferenceSyntax("mcp.server_urls.url", stringPtr(entry.URL)); err != nil {
 			return err
