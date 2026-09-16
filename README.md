@@ -644,6 +644,12 @@ Starter prompts for Codex:
   is reachable.
 - For OAuth auth-server handling, `authorization_servers[0]` from PRMD is the
   only source of truth and metadata fetch target.
+- OAuth discovery trusts the configured MCP origin by default. Before upgrading
+  deployments with separate metadata or authorization hosts, explicitly list
+  those origins with `--mcp.oauth-trusted-origin`, `MCP_OAUTH_TRUSTED_ORIGINS`, or
+  `mcp.oauth_trusted_origins`. See the [configuration reference](docs/configuration.md#mcp-server)
+  for trust boundaries and staged upgrade guidance. Full-client profile editing
+  also requires a [supported editor command](docs/profile-editor.md).
 - Metadata is accepted even when `issuer` differs from
   `authorization_servers[0]` (external IdP issuer URLs are supported), with
   mismatch diagnostics preserved in logs/state.
