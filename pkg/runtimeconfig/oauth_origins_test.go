@@ -2,6 +2,7 @@ package runtimeconfig
 
 import (
 	"fmt"
+	"maps"
 	"reflect"
 	"strings"
 	"testing"
@@ -66,9 +67,7 @@ mcp:
 						"CONTROL_PLANE_TUNNEL_ID": testTunnelID,
 						"MCP_SERVER_URL":          "https://mcp.example.invalid/mcp",
 					}
-					for key, value := range tc.env {
-						env[key] = value
-					}
+					maps.Copy(env, tc.env)
 					cfg, err := Load(tc.args, flavor, lookupEnvMap(env))
 					if err != nil {
 						t.Fatalf("Load: %v", err)
