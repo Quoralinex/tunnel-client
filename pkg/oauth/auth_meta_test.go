@@ -509,8 +509,7 @@ func TestFetchAuthServerMetadataInvalidIssuerPreservesURLError(t *testing.T) {
 	if fetchErr == nil {
 		t.Fatal("expected invalid issuer error")
 	}
-	var urlErr *url.Error
-	if !errors.As(fetchErr, &urlErr) {
+	if _, ok := errors.AsType[*url.Error](fetchErr); !ok {
 		t.Fatalf("expected wrapped *url.Error, got %T: %v", fetchErr, fetchErr)
 	}
 	for _, sensitive := range []string{
