@@ -10,6 +10,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
+	"github.com/openai/tunnel-client/pkg/clientcapabilities"
 	"github.com/openai/tunnel-client/pkg/clientinstance"
 	"github.com/openai/tunnel-client/pkg/mcpserverinfo"
 	"github.com/openai/tunnel-client/pkg/version"
@@ -53,6 +54,8 @@ func TestControlPlaneRoundTripperAddsDefaultHeaders(t *testing.T) {
 	assert.Equal(t, version.Version, seen.Get(headerTunnelClientVersion), "expected tunnel client version header to be set")
 	assert.Equal(t, version.WireProtocolVersion, seen.Get(version.WireProtocolHeaderName), "expected tunnel wire protocol version header to be set")
 	assert.Equal(t, clientinstance.ID(), seen.Get(clientinstance.HeaderName), "expected tunnel client instance ID header to be set")
+	assert.Equal(t, clientcapabilities.WrongClusterV1, seen.Get(clientcapabilities.HeaderName), "expected client capabilities to be set")
+	assert.Empty(t, seen.Values("X-Tunnel-Routing-Capability"), "do not advertise the obsolete one-off header")
 	assert.Equal(t, serverInfo, seen.Get(mcpserverinfo.HeaderName), "expected MCP server info header to be set")
 	assert.Equal(t, "true", seen.Get("extra-header"), "expected extra header to be forwarded")
 }
@@ -116,6 +119,7 @@ func TestControlPlaneRoundTripperPreservesProtectedHeaders(t *testing.T) {
 		headerTunnelClientVersion:      "dev",
 		version.WireProtocolHeaderName: "attacker",
 		clientinstance.HeaderName:      "configured-id",
+		"x-tunnel-client-capabilities": "unimplemented-v1",
 		"x-tunnel-mcp-server-info":     `{"version":1,"channels":[{"name":"attacker"}]}`,
 	}, logger)
 
@@ -132,6 +136,7 @@ func TestControlPlaneRoundTripperPreservesProtectedHeaders(t *testing.T) {
 	assert.Equal(t, version.Version, req.Header.Get(headerTunnelClientVersion), "expected client version to be preserved")
 	assert.Equal(t, version.WireProtocolVersion, req.Header.Get(version.WireProtocolHeaderName), "expected tunnel wire protocol version to be preserved")
 	assert.Equal(t, clientinstance.ID(), req.Header.Get(clientinstance.HeaderName), "expected client instance ID to be preserved")
+	assert.Equal(t, clientcapabilities.WrongClusterV1, req.Header.Get(clientcapabilities.HeaderName), "configuration cannot claim unimplemented capabilities")
 	assert.Equal(t, serverInfo, req.Header.Get(mcpserverinfo.HeaderName), "expected MCP server info to be preserved")
 }
 

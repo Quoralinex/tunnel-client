@@ -169,7 +169,7 @@ func (p *poller) Run(ctx context.Context) {
 				requestIDValue = "missing_request_id"
 			}
 			attrs := []any{
-				slog.String("error", err.Error()),
+				slog.String("error", tclog.ErrorForLog(err)),
 				slog.Int64("retry_in_ms", delay.Milliseconds()),
 				slog.String(tclog.FieldTunnelServiceRequestID, requestIDValue),
 			}

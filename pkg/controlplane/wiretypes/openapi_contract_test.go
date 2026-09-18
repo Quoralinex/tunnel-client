@@ -91,6 +91,21 @@ func TestOpenAPIContractSurface(t *testing.T) {
 		if got := mustString(t, wireVersion["example"], path+".WireProtocolVersion.example"); got != wantWireProtocolVersion {
 			t.Fatalf("%s %s tunnel wire protocol example = %q, want %q", strings.ToUpper(method), path, got, wantWireProtocolVersion)
 		}
+
+		capabilities := headerParameter(t, operation(t, spec, path, method), "X-Tunnel-Client-Capabilities")
+		if capabilities["required"] == true || capabilities["example"] != "wrong-cluster-v1" {
+			t.Fatalf("%s %s client capabilities must be optional and document wrong-cluster-v1", strings.ToUpper(method), path)
+		}
+		capabilitySchema := mustMap(t, capabilities["schema"], path+".ClientCapabilities.schema")
+		if capabilitySchema["type"] != "string" || capabilitySchema["maxLength"] != float64(4096) {
+			t.Fatalf("%s %s client capabilities must be a string bounded to 4096 bytes", strings.ToUpper(method), path)
+		}
+		for _, value := range []string{"wrong-cluster-v1", "future-feature", "wrong-cluster-v1, future-feature"} {
+			requireValidAgainstSchema(t, spec, capabilitySchema, value, "extensible client capabilities")
+		}
+	}
+	if strings.Contains(string(raw), "X-Tunnel-Routing-Capability") {
+		t.Fatal("the one-off routing capability header must not be part of the public contract")
 	}
 	runtime := operation(t, spec, "/v1/tunnels/{tunnel_id}/cloudflare/runtime", "get")
 	runtimeResponses := mustMap(t, runtime["responses"], "runtime.responses")
@@ -232,6 +247,60 @@ func TestOpenAPIContractSurface(t *testing.T) {
 	bearer := mustMap(t, securitySchemes["BearerAuth"], "components.securitySchemes.BearerAuth")
 	if got := mustString(t, bearer["scheme"], "BearerAuth.scheme"); got != "bearer" {
 		t.Fatalf("expected bearer auth scheme, got %q", got)
+	}
+}
+
+func TestOpenAPIPollRoutingCorrectionContract(t *testing.T) {
+	t.Parallel()
+	spec, _ := readOpenAPISpec(t)
+	poll := operation(t, spec, "/v1/tunnels/{tunnel_id}/poll", "get")
+	token := headerParameter(t, poll, "X-Tunnel-Shard-Token")
+	if token["required"] == true {
+		t.Fatal("poll shard token must remain optional for bootstrap and older services")
+	}
+	responses := mustMap(t, poll["responses"], "poll.responses")
+	correction := mustMap(t, responses["409"], "poll.responses.409")
+	headers := mustMap(t, correction["headers"], "correction.headers")
+	replacement := mustMap(t, headers["X-Tunnel-Shard-Token"], "correction.token")
+	if replacement["required"] != true {
+		t.Fatal("correction must require the replacement token header")
+	}
+	if !reflect.DeepEqual(token["schema"], replacement["schema"]) {
+		t.Fatal("poll and correction header token schemas differ")
+	}
+	tokenSchema := mustMap(t, replacement["schema"], "correction.token.schema")
+	for _, token := range []string{"opaque-placement-token", strings.Repeat("x", 4096)} {
+		requireValidAgainstSchema(t, spec, tokenSchema, token, "valid replacement header")
+	}
+	for _, token := range []any{nil, "", "a,b", "a b", "a\tb", "a\nb", "é", strings.Repeat("x", 4097)} {
+		if err := validateAgainstSchema(spec, tokenSchema, token, "$"); err == nil {
+			t.Fatalf("invalid replacement header accepted by schema: %v", token)
+		}
+	}
+	if _, ok := headers["Retry-After"]; !ok {
+		t.Fatal("corrections must document Retry-After")
+	}
+	content := mustMap(t, correction["content"], "correction.content")
+	jsonContent := mustMap(t, content["application/json"], "correction.json")
+	schema := mustMap(t, jsonContent["schema"], "correction.schema")
+	requireValidAgainstSchema(t, spec, schema, jsonContent["example"], "correction example")
+	for _, revision := range []float64{0, 42, 9007199254740991} {
+		errorBody := map[string]any{"code": "wrong_cluster", "policy_revision": revision, "future_metadata": true}
+		requireValidAgainstSchema(t, spec, schema, map[string]any{"error": errorBody}, "valid correction")
+	}
+	invalid := []map[string]any{
+		{},
+		{"code": "wrong_cluster"},
+		{"policy_revision": float64(42)},
+		{"code": "ordinary_conflict", "policy_revision": float64(42)},
+	}
+	for _, revision := range []any{nil, true, "42", float64(-1), 1.5, float64(9007199254740992)} {
+		invalid = append(invalid, map[string]any{"code": "wrong_cluster", "policy_revision": revision})
+	}
+	for _, errorBody := range invalid {
+		if err := validateAgainstSchema(spec, schema, map[string]any{"error": errorBody}, "$"); err == nil {
+			t.Fatalf("invalid correction accepted by schema: %v", errorBody)
+		}
 	}
 }
 

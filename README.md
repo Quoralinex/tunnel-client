@@ -33,7 +33,12 @@ then read the onboarding guide below.
   [`docs/troubleshooting.md`](docs/troubleshooting.md).
 - **Building a compatible client in another language?** Read
   [`docs/protocol.md`](docs/protocol.md) and use
-  [`docs/openapi.json`](docs/openapi.json).
+  [`docs/openapi.json`](docs/openapi.json). Optional client features use the
+  common [`X-Tunnel-Client-Capabilities` header](docs/protocol.md#tunnel-client-capabilities).
+- **Upgrading for server-directed polling placement?** Read the
+  [routing correction and activation notes](docs/routing-correction.md).
+  Supporting clients work with existing services immediately; corrections are
+  enabled separately after client release. No configuration change is needed.
 - **Embedding an MCP server directly in a Go process?** Use the Go SDK with
   the MCP SDK's in-memory transport; see
   [`examples/go-sdk-inmemory`](examples/go-sdk-inmemory).

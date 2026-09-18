@@ -21,6 +21,14 @@ type valueFreeContext struct {
 	context.Context
 }
 
+type withoutRawHTTPLoggingKey struct{}
+
+// WithoutRawHTTPLogging excludes a sensitive exchange from unsafe raw dumps,
+// while retaining its normal tracing, metrics and cancellation.
+func WithoutRawHTTPLogging(ctx context.Context) context.Context {
+	return context.WithValue(ctx, withoutRawHTTPLoggingKey{}, true)
+}
+
 func (valueFreeContext) Value(any) any { return nil }
 
 // NewRoundTripper constructs a RoundTripper that logs raw HTTP traffic when the provided logging config enables it.
@@ -52,6 +60,9 @@ func NewRoundTripper(base http.RoundTripper, logger *slog.Logger, cfg *runtimeco
 
 // RoundTrip logs raw request and response dumps surrounding the underlying transport call.
 func (l *LoggingRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
+	if skip, _ := req.Context().Value(withoutRawHTTPLoggingKey{}).(bool); skip {
+		return l.base.RoundTrip(req)
+	}
 	if l.logger == nil || !l.logger.Enabled(req.Context(), slog.LevelDebug) {
 		return l.base.RoundTrip(req)
 	}

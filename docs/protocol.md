@@ -8,6 +8,13 @@ The machine-readable contract is [`openapi.json`](openapi.json). Use it to
 generate types or validate fixtures, and use this document for behavior that
 OpenAPI alone cannot express.
 
+Supporting clients advertise their optional protocol features through the
+common `X-Tunnel-Client-Capabilities` header. Its first defined capability is the
+[`wrong-cluster-v1` routing correction protocol](routing-correction.md).
+Its replacement polling token stays separate from each command's original
+response/notification token. Existing services and legacy command tokens remain
+compatible; server activation follows client release separately.
+
 ## Scope
 
 A tunnel client:
@@ -47,6 +54,62 @@ headers are diagnostic metadata, not feature negotiation:
 X-Tunnel-Client-Name: example-rust-client
 X-Tunnel-Client-Version: 1.2.3
 ```
+
+### Tunnel client capabilities
+
+`X-Tunnel-Client-Capabilities` describes features implemented by the tunnel
+client itself. Send it on all control-plane requests: tunnel metadata, managed
+Cloudflare runtime, polling, and command responses or notifications. The
+official client currently advertises one capability:
+
+```http
+X-Tunnel-Client-Capabilities: wrong-cluster-v1
+```
+
+This is a common, extensible set of capability names, not a header dedicated to
+routing. A client advertises only behavior it implements. New optional features
+add names to this set; each feature defines what its name means and which
+operations it affects. Names use case-sensitive ASCII HTTP `token` syntax, with
+no quoted strings, parameters, or whitespace inside a name.
+
+Consumers parse the header as follows:
+
+- Combine repeated header fields as a comma-separated list. Trim spaces and
+  tabs around each member, ignore empty members, and deduplicate names. Order
+  has no meaning.
+- Allow up to 4096 aggregate value bytes, counting one comma between field
+  values; the bound includes whitespace and empty members. Allow up to 64
+  nonempty members before deduplication and up to 128 bytes per name.
+- Ignore unknown valid names. Their presence does not disable known names.
+  Matching is exact and case-sensitive; `Wrong-Cluster-v1` does not advertise
+  `wrong-cluster-v1`.
+- If any member is malformed or any bound is exceeded, treat the whole
+  declaration as having no recognized capabilities. An absent or empty header
+  also means no capabilities; preserve the legacy operation in these cases.
+
+For example, the following two field lines have the same set semantics as
+`wrong-cluster-v1, example-future-v1`:
+
+```http
+X-Tunnel-Client-Capabilities: wrong-cluster-v1, example-future-v1
+X-Tunnel-Client-Capabilities: , wrong-cluster-v1
+```
+
+`example-future-v1` is illustrative, not an implemented capability. A service
+that understands only `wrong-cluster-v1` ignores the example name and recognizes
+routing support. Repetition alone does not invalidate a capability.
+
+Capability declarations belong to the current request. Do not remember a
+capability for every process sharing a tunnel ID: replicas can run different
+client versions. Advertising support is separate from the server's decision to
+enable a feature; it grants no authentication or authorization privileges. The
+`wrong-cluster-v1` name permits the specified polling correction behavior only,
+not retries of command responses or tool execution.
+
+This header is distinct from `X-Tunnel-MCP-Server-Info`, which describes the MCP
+servers or channels behind the tunnel, and from the dated wire protocol version
+below. Existing services may ignore it, and new services must keep legacy
+behavior for clients that do not advertise the capability they require.
 
 ### Tunnel wire protocol version
 

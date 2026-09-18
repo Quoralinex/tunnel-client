@@ -126,6 +126,13 @@ func TestRegisteredHeaderRulesSuppressControlPlaneRawLogging(t *testing.T) {
 					if err != nil || len(commands) != 1 {
 						t.Fatalf("poll = %d commands, %v", len(commands), err)
 					}
+					// Every poll can carry routing or command tokens, so polling
+					// suppresses unsafe raw dumps independently of header policy.
+					for _, marker := range []string{callerSecret, "test-shard", "raw http request", "raw http response"} {
+						if strings.Contains(logs.String(), marker) {
+							t.Fatalf("poll raw logging exposed %q (rich=%t)", marker, rich)
+						}
+					}
 					response := types.NewTunnelResponse(types.ChannelHarpoon, json.RawMessage(`{"jsonrpc":"2.0","id":1,"result":{"value":"`+resultSecret+`"}}`), http.StatusOK, nil)
 					ctx := tunnelctx.ContextWithShardToken(t.Context(), "test-shard")
 					if _, err := client.PostResponse(ctx, "test-request", response); err != nil {
@@ -134,7 +141,9 @@ func TestRegisteredHeaderRulesSuppressControlPlaneRawLogging(t *testing.T) {
 					if body := <-posted; !strings.Contains(body, resultSecret) {
 						t.Fatal("control-plane transport did not deliver the response payload")
 					}
-					for _, marker := range []string{callerSecret, resultSecret, "raw http request", "raw http response"} {
+					// Response delivery retains its existing rich-header policy:
+					// it must suppress payload dumps only for registered secrets.
+					for _, marker := range []string{resultSecret, "raw http request", "raw http response"} {
 						if strings.Contains(logs.String(), marker) == rich {
 							t.Fatalf("log marker %q visibility did not match header policy (rich=%t)", marker, rich)
 						}

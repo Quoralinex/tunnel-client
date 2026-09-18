@@ -1028,34 +1028,42 @@ func TestPollerRetriesOnCanceledErrorWithoutStop(t *testing.T) {
 		_ = meterProvider.Shutdown(context.Background())
 	}()
 
-	poller, err := NewPoller(queue, fetcher, logger, meterProvider.Meter("test"), 25*time.Millisecond, 0, time.Millisecond, 2*time.Millisecond)
+	runner, err := NewPoller(queue, fetcher, logger, meterProvider.Meter("test"), 25*time.Millisecond, 0, time.Millisecond, 2*time.Millisecond)
 	if err != nil {
 		t.Fatalf("new poller: %v", err)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	var wg sync.WaitGroup
-	wg.Go(func() {
-		poller.Run(ctx)
-	})
-
-	fetcher.waitForPoll(t)
-	select {
-	case <-fetcher.pollCh:
-	case <-time.After(50 * time.Millisecond):
-		t.Fatal("poller did not retry after context.Canceled error")
+	// Drive retry waits directly so scheduler delays cannot expire the parent
+	// context before the retry under test. Both canceled fetches must back off
+	// while that parent remains active; only the test ends the loop afterward.
+	retries := 0
+	runner.(*poller).retrySleep = func(retryCtx context.Context, delay time.Duration) bool {
+		if err := retryCtx.Err(); err != nil {
+			t.Fatalf("retry unexpectedly inherited parent cancellation: %v", err)
+		}
+		if delay <= 0 {
+			t.Fatalf("retry backoff must be positive, got %v", delay)
+		}
+		retries++
+		if retries == 2 {
+			cancel()
+			return false
+		}
+		return true
 	}
-
-	cancel()
-	wg.Wait()
+	runner.Run(ctx)
+	if retries != 2 || len(fetcher.pollCh) != 2 {
+		t.Fatalf("expected exactly two canceled polls and backoffs, got %d polls and %d backoffs", len(fetcher.pollCh), retries)
+	}
 
 	var rm metricdata.ResourceMetrics
 	if err := reader.Collect(context.Background(), &rm); err != nil {
 		t.Fatalf("collect metrics: %v", err)
 	}
-	if got, ok := findCounterValueWithAttributes(rm, metricNameCommandsPollErrors, attribute.String(attributeKeyErrorKind, errorKindContextCanceled)); !ok || got == 0 {
+	if got, ok := findCounterValueWithAttributes(rm, metricNameCommandsPollErrors, attribute.String(attributeKeyErrorKind, errorKindContextCanceled)); !ok || got != 2 {
 		t.Fatalf("expected context_canceled poll error metric, got %d (ok=%v)", got, ok)
 	}
 }
