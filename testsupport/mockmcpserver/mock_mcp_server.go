@@ -68,7 +68,7 @@ type IncomingHTTPRequest struct {
 	Body     []byte
 }
 
-// MockMCPServer hosts a Streamable HTTP MCP server backed by scripted tool handlers.
+// Option configures a MockMCPServer.
 type Option func(*MockMCPServer)
 
 // WithHostHandler serves requests for host with handler before the default MCP routes.
@@ -177,6 +177,7 @@ func WithUnixSocketPath(path string) Option {
 	}
 }
 
+// MockMCPServer hosts a Streamable HTTP MCP server backed by scripted tool handlers.
 type MockMCPServer struct {
 	mu       sync.Mutex
 	calls    []*Call

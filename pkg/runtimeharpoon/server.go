@@ -147,6 +147,8 @@ type targetInfo struct {
 	AllowedMethods   []string          `json:"allowed_methods" jsonschema:"description=HTTP methods permitted for this target,enum=GET,enum=POST,enum=PUT"`
 }
 
+// CallTargetRequest contains the arguments for calling a registered target.
+//
 // Exported aliases keep the shared core reusable by thin adapters while the
 // runtime entrypoint continues to expose only its approved command surface.
 type CallTargetRequest = callTargetRequest

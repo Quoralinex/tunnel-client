@@ -10,6 +10,8 @@ import (
 	"github.com/openai/tunnel-client/pkg/controlplane"
 )
 
+// Manifest describes the bundled Cloudflared runtime.
+//
 // Manifest, State, and Supervisor remain available from the historical
 // full-client package while the implementation lives in the runtime-safe
 // package used by both binaries.

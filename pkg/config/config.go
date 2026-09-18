@@ -17,6 +17,8 @@ import (
 	"github.com/openai/tunnel-client/pkg/version"
 )
 
+// LogFormat selects the format used for log output.
+//
 // Shared production types are owned by runtimeconfig. These aliases preserve
 // the historical pkg/config API for full-client callers.
 type LogFormat = runtimeconfig.LogFormat

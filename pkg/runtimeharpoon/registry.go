@@ -78,6 +78,8 @@ type redirectMismatchDetails struct {
 
 type redirectMismatchKind string
 
+// RedirectMismatchDetails describes why a redirect does not match an allowed target.
+//
 // Exported aliases let thin adapters preserve their existing package-local
 // names without copying registry behavior.
 type RedirectMismatchDetails = redirectMismatchDetails
