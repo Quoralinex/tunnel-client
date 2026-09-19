@@ -16,17 +16,15 @@ import (
 	"github.com/openai/tunnel-client/pkg/version"
 )
 
-func headerRuleLength(value int) *int { return &value }
-
 func richHeaderTestConfig() *runtimeconfig.HarpoonTargetTemplate {
 	cfg := templateTestConfig()
 	cfg.HeaderRules = []runtimeconfig.HarpoonHeaderRule{
 		{Name: "Authorization", Description: "Complete caller bearer value", Credential: true, Required: true,
-			Validation: &runtimeconfig.HarpoonHeaderValidation{Pattern: `^Bearer [A-Za-z0-9_-]+$`, MinLength: headerRuleLength(8), MaxLength: headerRuleLength(128)}},
+			Validation: &runtimeconfig.HarpoonHeaderValidation{Pattern: `^Bearer [A-Za-z0-9_-]+$`, MinLength: new(8), MaxLength: new(128)}},
 		{Name: "X-Trace", Description: "Request correlation identifier", ForwardAs: "X-Private-Correlation", Required: true,
-			Validation: &runtimeconfig.HarpoonHeaderValidation{Pattern: `^[a-z0-9-]+$`, MinLength: headerRuleLength(3), MaxLength: headerRuleLength(12)}},
+			Validation: &runtimeconfig.HarpoonHeaderValidation{Pattern: `^[a-z0-9-]+$`, MinLength: new(3), MaxLength: new(12)}},
 		{Name: "X-Mode", Description: "Requested representation",
-			Validation: &runtimeconfig.HarpoonHeaderValidation{Enum: []string{"summary", "full"}, MinLength: headerRuleLength(4), MaxLength: headerRuleLength(7)}},
+			Validation: &runtimeconfig.HarpoonHeaderValidation{Enum: []string{"summary", "full"}, MinLength: new(4), MaxLength: new(7)}},
 	}
 	return cfg
 }
@@ -61,7 +59,7 @@ func TestHeaderRulesCompileRejectsUnsafePolicies(t *testing.T) {
 		"credential lower bound required": func(c *runtimeconfig.HarpoonTargetTemplate) { c.HeaderRules[0].Validation.MinLength = nil },
 		"credential upper bound required": func(c *runtimeconfig.HarpoonTargetTemplate) { c.HeaderRules[0].Validation.MaxLength = nil },
 		"credential positive lower bound": func(c *runtimeconfig.HarpoonTargetTemplate) {
-			c.HeaderRules[0].Validation.MinLength = headerRuleLength(0)
+			c.HeaderRules[0].Validation.MinLength = new(0)
 		},
 		"credential recognized name required": func(c *runtimeconfig.HarpoonTargetTemplate) { c.HeaderRules[0].Name = "X-Unrecognized" },
 		"other credential blocked":            func(c *runtimeconfig.HarpoonTargetTemplate) { c.HeaderRules[0].Name = "X-AuthToken" },
@@ -76,13 +74,13 @@ func TestHeaderRulesCompileRejectsUnsafePolicies(t *testing.T) {
 			c.HeaderRules[1].Validation.Pattern = strings.Repeat("a", 513)
 		},
 		"length inverted": func(c *runtimeconfig.HarpoonTargetTemplate) {
-			c.HeaderRules[1].Validation.MinLength = headerRuleLength(13)
+			c.HeaderRules[1].Validation.MinLength = new(13)
 		},
 		"negative length": func(c *runtimeconfig.HarpoonTargetTemplate) {
-			c.HeaderRules[1].Validation.MinLength = headerRuleLength(-1)
+			c.HeaderRules[1].Validation.MinLength = new(-1)
 		},
 		"length too large": func(c *runtimeconfig.HarpoonTargetTemplate) {
-			c.HeaderRules[1].Validation.MaxLength = headerRuleLength(8193)
+			c.HeaderRules[1].Validation.MaxLength = new(8193)
 		},
 		"enum control": func(c *runtimeconfig.HarpoonTargetTemplate) { c.HeaderRules[2].Validation.Enum = []string{"full\n"} },
 		"enum empty":   func(c *runtimeconfig.HarpoonTargetTemplate) { c.HeaderRules[2].Validation.Enum = []string{} },
@@ -164,7 +162,7 @@ func TestHeaderRulesLegacyAndUnicodeSemantics(t *testing.T) {
 		require.NoError(t, err)
 	}
 	cfg := templateTestConfig()
-	cfg.HeaderRules = []runtimeconfig.HarpoonHeaderRule{{Name: "X-Tag", Description: "Unicode character pair", Validation: &runtimeconfig.HarpoonHeaderValidation{MinLength: headerRuleLength(2), MaxLength: headerRuleLength(2)}}}
+	cfg.HeaderRules = []runtimeconfig.HarpoonHeaderRule{{Name: "X-Tag", Description: "Unicode character pair", Validation: &runtimeconfig.HarpoonHeaderValidation{MinLength: new(2), MaxLength: new(2)}}}
 	policy, err := CompileTargetTemplate(cfg)
 	require.NoError(t, err)
 	_, err = policy.ValidateCallerHeaders(map[string]string{"X-Tag": "🙂é"})
@@ -182,7 +180,7 @@ func TestHeaderRulesSupportedCredentialDestination(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			cfg := templateTestConfig()
-			cfg.HeaderRules = []runtimeconfig.HarpoonHeaderRule{{Name: "X-Provided", ForwardAs: name, Description: "Per-call credential", Credential: true, Required: true, Validation: &runtimeconfig.HarpoonHeaderValidation{Pattern: `[a-z-]+`, MinLength: headerRuleLength(1), MaxLength: headerRuleLength(32)}}}
+			cfg.HeaderRules = []runtimeconfig.HarpoonHeaderRule{{Name: "X-Provided", ForwardAs: name, Description: "Per-call credential", Credential: true, Required: true, Validation: &runtimeconfig.HarpoonHeaderValidation{Pattern: `[a-z-]+`, MinLength: new(1), MaxLength: new(32)}}}
 			policy, err := CompileTargetTemplate(cfg)
 			require.NoError(t, err)
 			headers, err := policy.ValidateCallerHeaders(map[string]string{"X-Provided": "caller-secret"})
@@ -243,10 +241,10 @@ func TestHeaderRulesPolicyDigestAndDefensiveCopy(t *testing.T) {
 		"required":    func(c *runtimeconfig.HarpoonTargetTemplate) { c.HeaderRules[1].Required = false },
 		"pattern":     func(c *runtimeconfig.HarpoonTargetTemplate) { c.HeaderRules[1].Validation.Pattern = `[a-z]+` },
 		"minimum": func(c *runtimeconfig.HarpoonTargetTemplate) {
-			c.HeaderRules[1].Validation.MinLength = headerRuleLength(4)
+			c.HeaderRules[1].Validation.MinLength = new(4)
 		},
 		"maximum": func(c *runtimeconfig.HarpoonTargetTemplate) {
-			c.HeaderRules[1].Validation.MaxLength = headerRuleLength(11)
+			c.HeaderRules[1].Validation.MaxLength = new(11)
 		},
 		"enum": func(c *runtimeconfig.HarpoonTargetTemplate) { c.HeaderRules[2].Validation.Enum = []string{"full"} },
 	} {

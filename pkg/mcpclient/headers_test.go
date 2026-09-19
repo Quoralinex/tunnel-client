@@ -30,7 +30,7 @@ func TestFindHeaderValue(t *testing.T) {
 			name:    "returns first value when header present",
 			headers: http.Header{"X-Test": {"value-1", "value-2"}},
 			target:  "X-Test",
-			want:    ptr("value-1"),
+			want:    new("value-1"),
 		},
 		{
 			name: "handles case insensitive lookup",
@@ -40,13 +40,13 @@ func TestFindHeaderValue(t *testing.T) {
 				return h
 			}(),
 			target: HeaderSessionID,
-			want:   ptr("session-123"),
+			want:   new("session-123"),
 		},
 		{
 			name:    "handles directly stored lowercase keys",
 			headers: http.Header{"mcp-session-id": {"session-direct"}},
 			target:  HeaderSessionID,
-			want:    ptr("session-direct"),
+			want:    new("session-direct"),
 		},
 		{
 			name:    "returns nil for empty header value",
@@ -88,7 +88,7 @@ func TestSessionIDFromHeaders(t *testing.T) {
 		{
 			name:    "returns session id when present",
 			headers: http.Header{HeaderSessionID: {"session-123"}},
-			want:    ptr("session-123"),
+			want:    new("session-123"),
 		},
 	}
 
@@ -107,5 +107,3 @@ func TestSessionIDFromHeaders(t *testing.T) {
 		})
 	}
 }
-
-func ptr(v string) *string { return &v }

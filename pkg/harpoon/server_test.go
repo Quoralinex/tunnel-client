@@ -508,7 +508,7 @@ func TestCallTargetSelectsTransportPerRedirectedTarget(t *testing.T) {
 			resp, err := client.callTarget(context.Background(), callTargetRequest{
 				Label:           "http",
 				Method:          http.MethodGet,
-				FollowRedirects: boolPtr(true),
+				FollowRedirects: new(true),
 			})
 			require.NoError(t, err)
 			require.Equal(t, "unix", decodeBody(t, resp.BodyBase64))
@@ -543,7 +543,7 @@ func TestCallTargetSelectsTransportPerRedirectedTarget(t *testing.T) {
 			resp, err := client.callTarget(context.Background(), callTargetRequest{
 				Label:           "unix",
 				Method:          http.MethodGet,
-				FollowRedirects: boolPtr(true),
+				FollowRedirects: new(true),
 			})
 			require.NoError(t, err)
 			require.Equal(t, "http", decodeBody(t, resp.BodyBase64))
@@ -1263,10 +1263,6 @@ func assertCallTargetTransport(t *testing.T, baseURL, unixSocketPath string) {
 	})
 	require.NoError(t, err)
 	require.Equal(t, "GET /callout", decodeBody(t, resp.BodyBase64))
-}
-
-func boolPtr(value bool) *bool {
-	return &value
 }
 
 func harpoonCalloutHandler(t *testing.T) http.Handler {
