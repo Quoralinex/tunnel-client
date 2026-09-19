@@ -51,7 +51,7 @@ func Parse(values []string) Set {
 	names := make(map[string]struct{})
 	members := 0
 	for _, value := range values {
-		for _, member := range strings.Split(value, ",") {
+		for member := range strings.SplitSeq(value, ",") {
 			name := strings.Trim(member, " \t")
 			if name == "" {
 				continue
