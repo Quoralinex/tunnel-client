@@ -248,10 +248,10 @@ func newTunnelUpdateCmd(lookupEnv func(string) (string, bool)) *cobra.Command {
 
 			updateReq := admin.TunnelUpdateRequest{}
 			if cmd.Flags().Changed("name") {
-				updateReq.Name = strPtr(strings.TrimSpace(name))
+				updateReq.Name = new(strings.TrimSpace(name))
 			}
 			if cmd.Flags().Changed("description") {
-				updateReq.Description = strPtr(description)
+				updateReq.Description = new(description)
 			}
 			if cmd.Flags().Changed("organization-id") {
 				orgs := make([]string, 0, len(cfg.OrganizationIDs))
@@ -475,10 +475,6 @@ func first(items []string) string {
 		return ""
 	}
 	return items[0]
-}
-
-func strPtr(s string) *string {
-	return &s
 }
 
 func requireOrgsOrWorkspaces(cmd *cobra.Command) {

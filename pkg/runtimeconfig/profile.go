@@ -385,7 +385,7 @@ func validateFileConfigSyntax(c fileConfig) error {
 		return err
 	}
 	for _, entry := range c.MCP.ServerURLs {
-		if err := validateConfigValueReferenceSyntax("mcp.server_urls.url", stringPtr(entry.URL)); err != nil {
+		if err := validateConfigValueReferenceSyntax("mcp.server_urls.url", new(entry.URL)); err != nil {
 			return err
 		}
 		if err := validateConfigValueReferenceSyntax("mcp.server_urls.unix_socket", entry.UnixSocket); err != nil {
@@ -396,7 +396,7 @@ func validateFileConfigSyntax(c fileConfig) error {
 		return err
 	}
 	for _, entry := range c.MCP.Commands {
-		if err := validateConfigValueReferenceSyntax("mcp.commands.command", stringPtr(entry.Command)); err != nil {
+		if err := validateConfigValueReferenceSyntax("mcp.commands.command", new(entry.Command)); err != nil {
 			return err
 		}
 	}
@@ -436,10 +436,6 @@ func validateConfigValueReferenceSyntax(source string, value *string) error {
 		return validateSecretReferenceSyntax(source, raw)
 	}
 	return nil
-}
-
-func stringPtr(value string) *string {
-	return &value
 }
 
 func validateHeaderReferenceSyntax(source string, headers map[string]string) error {
