@@ -73,8 +73,8 @@ func TestResponseDeadlineFromTimeout(t *testing.T) {
 	}{
 		{name: "missing"},
 		{name: "invalid", timeout: &invalid},
-		{name: "zero", timeout: &zero, want: timePointer(receivedAt)},
-		{name: "valid", timeout: &valid, want: timePointer(receivedAt.Add(4500 * time.Millisecond))},
+		{name: "zero", timeout: &zero, want: new(receivedAt)},
+		{name: "valid", timeout: &valid, want: new(receivedAt.Add(4500 * time.Millisecond))},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -91,8 +91,6 @@ func TestResponseDeadlineFromTimeout(t *testing.T) {
 		})
 	}
 }
-
-func timePointer(value time.Time) *time.Time { return &value }
 
 func TestConvertRawCommand_SuccessAndErrors(t *testing.T) {
 	t.Parallel()

@@ -167,8 +167,6 @@ func assertRoutingState(t *testing.T, client *TunnelServiceClient, token string,
 	}
 }
 
-func routingRevision(revision uint64) *uint64 { return &revision }
-
 func TestPollRoutingAcceptsBoundaryValues(t *testing.T) {
 	t.Parallel()
 	const revision = 9007199254740991
@@ -186,7 +184,7 @@ func TestPollRoutingAcceptsBoundaryValues(t *testing.T) {
 	require.Error(t, err)
 	_, _, err = client.Poll(context.Background(), 1)
 	require.NoError(t, err)
-	assertRoutingState(t, client, token, routingRevision(revision))
+	assertRoutingState(t, client, token, new(uint64(revision)))
 	assert.Equal(t, 2, attempts)
 }
 
@@ -214,7 +212,7 @@ func TestPollRoutingLateCorrectionCannotReplaceNewerRoute(t *testing.T) {
 	assert.Error(t, err)
 	close(release)
 	assert.Error(t, <-done)
-	assertRoutingState(t, client, "newer-route", routingRevision(2))
+	assertRoutingState(t, client, "newer-route", new(uint64(2)))
 	_, _, err = client.Poll(context.Background(), 1)
 	require.NoError(t, err)
 	assert.EqualValues(t, 3, attempts.Load())
@@ -257,11 +255,11 @@ func TestPollRoutingLateFailureCannotCountAgainstNewerRoute(t *testing.T) {
 			for range 2 {
 				_, _, err = client.Poll(context.Background(), 1)
 				require.Error(t, err)
-				assertRoutingState(t, client, "route-b", routingRevision(2))
+				assertRoutingState(t, client, "route-b", new(uint64(2)))
 			}
 			_, _, err = client.Poll(context.Background(), 1)
 			require.Error(t, err)
-			assertRoutingState(t, client, "", routingRevision(2))
+			assertRoutingState(t, client, "", new(uint64(2)))
 			assert.EqualValues(t, 6, attempts.Load())
 		})
 	}
@@ -297,7 +295,7 @@ func TestPollRoutingLateSuccessCannotResetNewerFailureStreak(t *testing.T) {
 	assert.NoError(t, <-done)
 	_, _, err = client.Poll(context.Background(), 1)
 	require.Error(t, err)
-	assertRoutingState(t, client, "", routingRevision(1))
+	assertRoutingState(t, client, "", new(uint64(1)))
 }
 
 func TestPollRoutingCancellationDoesNotEvictCachedRoute(t *testing.T) {
@@ -328,10 +326,10 @@ func TestPollRoutingCancellationDoesNotEvictCachedRoute(t *testing.T) {
 	<-entered
 	cancel()
 	require.ErrorIs(t, <-done, context.Canceled)
-	assertRoutingState(t, client, "route-a", routingRevision(1))
+	assertRoutingState(t, client, "route-a", new(uint64(1)))
 	_, _, err := client.Poll(context.Background(), 1)
 	require.Error(t, err)
-	assertRoutingState(t, client, "", routingRevision(1))
+	assertRoutingState(t, client, "", new(uint64(1)))
 	assert.EqualValues(t, 5, attempts.Load())
 }
 
@@ -351,7 +349,7 @@ func TestPollRoutingStateIsProcessLocalAndScopedToClient(t *testing.T) {
 			})
 			_, _, err := first.Poll(context.Background(), 1)
 			require.Error(t, err)
-			assertRoutingState(t, first, "private-route", routingRevision(17))
+			assertRoutingState(t, first, "private-route", new(uint64(17)))
 			second := newRoutingTestClient(t, tc.endpoint, tc.tunnel, func(req *http.Request) (*http.Response, error) {
 				assert.Empty(t, req.Header.Values(routingTestTokenHeader))
 				assert.Equal(t, tc.endpoint, req.URL.Scheme+"://"+req.URL.Host)
@@ -361,7 +359,7 @@ func TestPollRoutingStateIsProcessLocalAndScopedToClient(t *testing.T) {
 			_, _, err = second.Poll(context.Background(), 1)
 			require.NoError(t, err)
 			assertRoutingState(t, second, "", nil)
-			assertRoutingState(t, first, "private-route", routingRevision(17))
+			assertRoutingState(t, first, "private-route", new(uint64(17)))
 		})
 	}
 }
@@ -529,11 +527,11 @@ func TestRoutingCorrectionsDoNotRetryOrChangeNonPollRequests(t *testing.T) {
 	_, err = client.PostResponse(ctx, "old-request", types.NewNotificationAck(types.DefaultChannel, http.StatusOK, http.Header{}))
 	require.Error(t, err)
 	assert.Equal(t, 2, attempts, "wrong_cluster must not add response replay")
-	assertRoutingState(t, client, "poll-route", routingRevision(1))
+	assertRoutingState(t, client, "poll-route", new(uint64(1)))
 	_, err = client.FetchTunnelMetadata(context.Background())
 	require.Error(t, err)
 	assert.Equal(t, 3, attempts)
-	assertRoutingState(t, client, "poll-route", routingRevision(1))
+	assertRoutingState(t, client, "poll-route", new(uint64(1)))
 }
 
 func TestPollRoutingDisablesUnsafeRawDumpsForBothDirections(t *testing.T) {
@@ -615,11 +613,11 @@ func TestPollRoutingBodyFailureCountsTowardDestinationRecovery(t *testing.T) {
 			for range 3 {
 				_, _, err := client.Poll(context.Background(), 1)
 				require.Error(t, err)
-				assertRoutingState(t, client, "route-a", routingRevision(1))
+				assertRoutingState(t, client, "route-a", new(uint64(1)))
 			}
 			_, _, err := client.Poll(context.Background(), 1)
 			require.ErrorIs(t, err, bodyErr)
-			assertRoutingState(t, client, "", routingRevision(1))
+			assertRoutingState(t, client, "", new(uint64(1)))
 		})
 	}
 }
@@ -683,10 +681,10 @@ func TestPollRoutingCancellationDuringErrorBodyDoesNotEvictRoute(t *testing.T) {
 	<-entered
 	cancel()
 	require.Error(t, <-done)
-	assertRoutingState(t, client, "route-a", routingRevision(1))
+	assertRoutingState(t, client, "route-a", new(uint64(1)))
 	_, _, err := client.Poll(context.Background(), 1)
 	require.Error(t, err)
-	assertRoutingState(t, client, "", routingRevision(1))
+	assertRoutingState(t, client, "", new(uint64(1)))
 	assert.EqualValues(t, 5, attempts.Load())
 }
 
@@ -793,7 +791,7 @@ func TestPollRoutingErrorBodyFailuresTriggerBoundedBootstrap(t *testing.T) {
 					if failure == 2 && tc.evicts {
 						wantToken = ""
 					}
-					assertRoutingState(t, client, wantToken, routingRevision(1))
+					assertRoutingState(t, client, wantToken, new(uint64(1)))
 				}
 				_, _, err = client.Poll(context.Background(), 1)
 				require.NoError(t, err)
@@ -845,7 +843,7 @@ func TestPollRoutingRejectsAmbiguousKnownJSONFields(t *testing.T) {
 				_, _, err := client.Poll(context.Background(), 1)
 				require.Error(t, err)
 			}
-			assertRoutingState(t, client, wantToken, routingRevision(wantRevision))
+			assertRoutingState(t, client, wantToken, new(wantRevision))
 			_, _, err := client.Poll(context.Background(), 1)
 			require.NoError(t, err)
 			assert.Equal(t, 3, attempts)
