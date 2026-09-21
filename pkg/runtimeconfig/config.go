@@ -1063,7 +1063,7 @@ func getControlPlaneAPIKey(flagValue string, lookupEnv func(string) (string, boo
 		case strings.HasPrefix(flagValue, envPrefix):
 			envVar := strings.TrimPrefix(flagValue, envPrefix)
 			if envVar == "" {
-				return "", errors.New("invalid control-plane.api-key: environment variable name is required after env:")
+				return "", errors.New("invalid control-plane.api-key: environment variable name is required after the env: prefix")
 			}
 			if val, ok := lookupEnv(envVar); ok {
 				if val == "" {
@@ -1075,7 +1075,7 @@ func getControlPlaneAPIKey(flagValue string, lookupEnv func(string) (string, boo
 		case strings.HasPrefix(flagValue, filePrefix):
 			path := strings.TrimPrefix(flagValue, filePrefix)
 			if path == "" {
-				return "", errors.New("invalid control-plane.api-key: file path is required after file:")
+				return "", errors.New("invalid control-plane.api-key: file path is required after the file: prefix")
 			}
 			data, err := os.ReadFile(path)
 			if err != nil {

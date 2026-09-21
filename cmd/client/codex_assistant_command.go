@@ -148,7 +148,7 @@ func ensureCodexAssistantLogin(
 		return nil
 	}
 	if !interactive {
-		return errors.New("Codex is logged out; rerun `tunnel-client codex assistant` in a terminal to complete device-code login")
+		return errors.New("the Codex session is logged out; rerun `tunnel-client codex assistant` in a terminal to complete device-code login")
 	}
 
 	login, err := bridge.StartDeviceCodeLogin(ctx)
@@ -176,7 +176,7 @@ func ensureCodexAssistantLogin(
 			return nil
 		}
 		if current.Login != nil && !current.Login.Pending && strings.TrimSpace(current.Login.LastError) != "" {
-			return fmt.Errorf("Codex login failed: %s", current.Login.LastError)
+			return fmt.Errorf("the Codex login failed: %s", current.Login.LastError)
 		}
 		select {
 		case <-waitCtx.Done():

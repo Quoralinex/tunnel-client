@@ -129,7 +129,7 @@ func dereferenceKey(raw string, lookupEnv func(string) (string, bool)) (string, 
 	case strings.HasPrefix(raw, envPrefix):
 		envVar := strings.TrimPrefix(raw, envPrefix)
 		if envVar == "" {
-			return "", fmt.Errorf("invalid admin-key: environment variable name is required after env:")
+			return "", fmt.Errorf("invalid admin-key: environment variable name is required after the env: prefix")
 		}
 		if val, ok := lookupEnv(envVar); ok {
 			if strings.TrimSpace(val) == "" {
@@ -141,7 +141,7 @@ func dereferenceKey(raw string, lookupEnv func(string) (string, bool)) (string, 
 	case strings.HasPrefix(raw, filePrefix):
 		path := strings.TrimPrefix(raw, filePrefix)
 		if path == "" {
-			return "", fmt.Errorf("invalid admin-key: file path is required after file:")
+			return "", fmt.Errorf("invalid admin-key: file path is required after the file: prefix")
 		}
 		data, err := os.ReadFile(path)
 		if err != nil {
