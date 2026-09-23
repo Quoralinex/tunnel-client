@@ -65,6 +65,17 @@
             "example": "2026-08-25"
           },
           {
+            "name": "X-Tunnel-Client-Capabilities",
+            "in": "header",
+            "required": false,
+            "description": "Optional comma-separated set of case-sensitive client capability names on control-plane requests. Names use ASCII HTTP token characters, with at most 128 bytes per name and 64 nonempty members before deduplication. Combine repeated fields with one comma; the aggregate limit is 4096 bytes including those separators. Trim only space/tab around members, ignore empty members, and deduplicate names. Unknown valid names may coexist. Missing, empty, malformed, or over-limit declarations grant no capabilities. wrong-cluster-v1 advertises support for poll routing corrections; emission requires separate service activation and remains disabled. This is not authorization.",
+            "schema": {
+              "type": "string",
+              "maxLength": 4096
+            },
+            "example": "wrong-cluster-v1"
+          },
+          {
             "name": "X-Tunnel-Client-Name",
             "in": "header",
             "required": false,
@@ -180,6 +191,17 @@
               "type": "string"
             },
             "example": "2026-08-25"
+          },
+          {
+            "name": "X-Tunnel-Client-Capabilities",
+            "in": "header",
+            "required": false,
+            "description": "Optional comma-separated set of case-sensitive client capability names on control-plane requests. Names use ASCII HTTP token characters, with at most 128 bytes per name and 64 nonempty members before deduplication. Combine repeated fields with one comma; the aggregate limit is 4096 bytes including those separators. Trim only space/tab around members, ignore empty members, and deduplicate names. Unknown valid names may coexist. Missing, empty, malformed, or over-limit declarations grant no capabilities. wrong-cluster-v1 advertises support for poll routing corrections; emission requires separate service activation and remains disabled. This is not authorization.",
+            "schema": {
+              "type": "string",
+              "maxLength": 4096
+            },
+            "example": "wrong-cluster-v1"
           },
           {
             "name": "X-Tunnel-Client-Name",
@@ -425,6 +447,29 @@
             "example": "2026-08-25"
           },
           {
+            "name": "X-Tunnel-Client-Capabilities",
+            "in": "header",
+            "required": false,
+            "description": "Optional comma-separated set of case-sensitive client capability names on control-plane requests. Names use ASCII HTTP token characters, with at most 128 bytes per name and 64 nonempty members before deduplication. Combine repeated fields with one comma; the aggregate limit is 4096 bytes including those separators. Trim only space/tab around members, ignore empty members, and deduplicate names. Unknown valid names may coexist. Missing, empty, malformed, or over-limit declarations grant no capabilities. wrong-cluster-v1 advertises support for poll routing corrections; emission requires separate service activation and remains disabled. This is not authorization.",
+            "schema": {
+              "type": "string",
+              "maxLength": 4096
+            },
+            "example": "wrong-cluster-v1"
+          },
+          {
+            "name": "X-Tunnel-Shard-Token",
+            "in": "header",
+            "required": false,
+            "description": "Opaque cached polling token learned from a validated wrong_cluster response. Omit for tokenless bootstrap through the same endpoint and residency. This cache is independent of original command tokens echoed on response and notification delivery. Older services ignore this optional header.",
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 4096,
+              "pattern": "^[\\x21-\\x2b\\x2d-\\x7e]+$"
+            }
+          },
+          {
             "name": "X-Tunnel-Client-Name",
             "in": "header",
             "required": false,
@@ -521,6 +566,42 @@
               }
             }
           },
+          "409": {
+            "description": "Optional poll routing correction, only after separate activation and wrong-cluster-v1 membership in a valid X-Tunnel-Client-Capabilities declaration. No production emission is enabled. Only error.code=wrong_cluster is a correction; other 409s retain ordinary error behavior. Validate the bounded body and token, then retry the same configured endpoint/residency after backoff.",
+            "x-tunnel-error-codes": [
+              "wrong_cluster"
+            ],
+            "headers": {
+              "X-Tunnel-Shard-Token": {
+                "required": true,
+                "description": "Required exactly once; 1–4096 visible ASCII bytes excluding comma. This header is the canonical token location; the JSON body declares only code and policy_revision.",
+                "schema": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 4096,
+                  "pattern": "^[\\x21-\\x2b\\x2d-\\x7e]+$"
+                }
+              },
+              "Retry-After": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "wrong_cluster",
+                    "policy_revision": 42
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/WrongClusterErrorResponse"
+                }
+              }
+            }
+          },
           "429": {
             "description": "Tunnel-service error response (429). Stable codes: `rate_limit_exceeded`. Code details and mitigations are documented in the APIErrorBody.code schema.",
             "x-tunnel-error-codes": [
@@ -567,7 +648,7 @@
             "BearerAuth": []
           }
         ],
-        "description": "Long-poll for pending commands. A 204 response means the poll completed without commands; issue another poll. A 200 response contains every command the client must process. When present, response_timeout is a relative duration for the complete command lifecycle, anchored when the poll response is received."
+        "description": "Long-poll for pending commands. A 204 response means the poll completed without commands; issue another poll. A 200 response contains every command the client must process. When present, response_timeout is a relative duration for the complete command lifecycle, anchored when the poll response is received. Supporting clients include wrong-cluster-v1 in the common X-Tunnel-Client-Capabilities set. Only a validated 409 error.code=wrong_cluster may update the polling token; the configured endpoint and residency remain fixed. Empty successful polls retain the polling token. Routing corrections require separate server activation."
       }
     },
     "/v1/tunnels/{tunnel_id}/response": {
@@ -615,6 +696,17 @@
               "type": "string"
             },
             "example": "2026-08-25"
+          },
+          {
+            "name": "X-Tunnel-Client-Capabilities",
+            "in": "header",
+            "required": false,
+            "description": "Optional comma-separated set of case-sensitive client capability names on control-plane requests. Names use ASCII HTTP token characters, with at most 128 bytes per name and 64 nonempty members before deduplication. Combine repeated fields with one comma; the aggregate limit is 4096 bytes including those separators. Trim only space/tab around members, ignore empty members, and deduplicate names. Unknown valid names may coexist. Missing, empty, malformed, or over-limit declarations grant no capabilities. wrong-cluster-v1 advertises support for poll routing corrections; emission requires separate service activation and remains disabled. This is not authorization.",
+            "schema": {
+              "type": "string",
+              "maxLength": 4096
+            },
+            "example": "wrong-cluster-v1"
           },
           {
             "name": "X-Tunnel-Client-Name",
@@ -693,9 +785,10 @@
             }
           },
           "400": {
-            "description": "Tunnel-service error response (400). Stable codes: `invalid_channel_format`, `invalid_tunnel_id_format`. Code details and mitigations are documented in the APIErrorBody.code schema.",
+            "description": "Tunnel-service error response (400). Stable codes: `invalid_channel_format`, `invalid_json_payload`, `invalid_tunnel_id_format`. Code details and mitigations are documented in the APIErrorBody.code schema.",
             "x-tunnel-error-codes": [
               "invalid_channel_format",
+              "invalid_json_payload",
               "invalid_tunnel_id_format"
             ],
             "content": {
@@ -791,7 +884,7 @@
             "BearerAuth": []
           }
         ],
-        "description": "Post the result for one polled command. Echo the command request_id in the JSON body and its shard_token in the X-Tunnel-Shard-Token header. Preserve recognized target JSON-RPC errors, including -32003 and -32004, exactly in resp_json. Only non-protocol failures may synthesize -32603 with optional error.data.tunnel_failure provenance."
+        "description": "Post the result for one polled command. Echo the command request_id in the JSON body and its original shard_token in the X-Tunnel-Shard-Token header, including notifications delivered after polling changes placement. Never substitute the cached polling token or replay tool execution. Preserve recognized target JSON-RPC errors, including -32003 and -32004, exactly in resp_json. Only non-protocol failures may synthesize -32603 with optional error.data.tunnel_failure provenance."
       }
     }
   },
@@ -1128,6 +1221,18 @@
         ],
         "title": "TunnelResponsePayload"
       },
+      "WrongClusterErrorResponse": {
+        "properties": {
+          "error": {
+            "$ref": "#/components/schemas/WrongClusterErrorBody"
+          }
+        },
+        "type": "object",
+        "required": [
+          "error"
+        ],
+        "title": "WrongClusterErrorResponse"
+      },
       "APIErrorBody": {
         "properties": {
           "message": {
@@ -1162,7 +1267,7 @@
               }
             ],
             "title": "Code",
-            "description": "Stable tunnel-service error code when one is available. Generic platform or validation errors can return null or a non-tunnel code.\n\nKnown tunnel-service codes:\n- `invalid_channel_format`: The MCP channel name contains unsupported characters. Mitigation: Use lowercase letters, digits, hyphens, or underscores in channel names.\n- `invalid_json_payload`: The MCP request body could not be decoded as a JSON object. Mitigation: Fix the MCP caller/server to send a valid JSON object payload.\n- `invalid_tunnel_id_format`: The tunnel ID path segment is not a tunnel_<32 lowercase alphanumeric> value. Mitigation: Use the exact tunnel ID from Platform tunnel settings in control_plane.tunnel_id, CONTROL_PLANE_TUNNEL_ID, or --control-plane.tunnel-id.\n- `missing_mcp_session_id`: An MCP session termination request did not include Mcp-Session-Id. Mitigation: Send DELETE session termination requests with the Mcp-Session-Id header from the active MCP session.\n- `oauth_shim_audience_unavailable`: The connected tunnel-client does not advertise OAuth token audience lookup. Mitigation: Upgrade tunnel-client before using the opt-in private_key_jwt audience lookup.\n- `oauth_shim_harpoon_call_failed`: The OAuth shim Harpoon call failed or returned an invalid upstream response. Mitigation: Check the Harpoon target URL, upstream MCP server health, and tunnel-client logs.\n- `oauth_shim_invalid_target_uri`: An OAuth shim metadata URI was malformed or used an invalid harpoon target label. Mitigation: Use an absolute http(s) URI or harpoon://<label> that matches harpoon.targets[].label.\n- `oauth_shim_target_not_found`: The requested OAuth shim target label was not found. Mitigation: Add or correct the matching harpoon.targets[].label entry and restart tunnel-client.\n- `oauth_shim_unshimmable_endpoint`: The OAuth shim could not map the upstream metadata endpoint to a supported tunnel route. Mitigation: Configure supported OAuth metadata endpoints and grouped harpoon targets for auth-server metadata.\n- `oauth_shim_upstream_timeout`: The OAuth shim timed out waiting for a Harpoon response. Mitigation: Ensure the Harpoon target and upstream MCP server respond before the tunnel timeout.\n- `pending_request_not_found`: The pending request was already processed, expired, or never existed for this tunnel. Mitigation: No manual action is needed for isolated races; if repeated, ensure only healthy clients acknowledge requests for this tunnel.\n- `rate_limit_exceeded`: The caller exceeded the tunnel-service rate limit for this route or tunnel. Mitigation: Reduce request concurrency or volume and let tunnel-client retry after backoff.\n- `request_body_too_large`: The MCP request body or queued tunnel response exceeded the service byte limit. Mitigation: Send a smaller MCP request or response body; avoid large inline payloads.\n- `rfc9728_www_authenticate_unsupported`: The request attempted an RFC9728 WWW-Authenticate probe flow that tunnels do not support. Mitigation: Use the well-known OAuth discovery endpoints instead of WWW-Authenticate probing.\n- `tunnel_active_organization_context_required`: The route requires an active organization context but none was available. Mitigation: Select or pass the intended organization ID before listing principals or managing principal-validation overrides.\n- `tunnel_active_organization_required`: The tunnel is organization-backed and the request did not include an explicit organization context. Mitigation: Set --control-plane.organization-id, CONTROL_PLANE_ORGANIZATION_ID, or control_plane.organization_id for tunnel-client.\n- `tunnel_client_network_access_denied`: The tunnel has client-network enforcement enabled and the request network is unknown or outside its allowed CIDRs. Mitigation: Retry from an allowed client network, or clear/update the tunnel client-network access policy if the restriction is no longer intended.\n- `tunnel_client_not_connected`: The tunnel-client is not currently connected to drain requests for this tunnel. Mitigation: Start or restart tunnel-client, then check its /readyz endpoint and logs.\n- `tunnel_client_not_seen`: No tunnel-client has polled recently for this tunnel. Mitigation: Start or restart tunnel-client with the matching control_plane.tunnel_id and control_plane.api_key.\n- `tunnel_management_permission_required`: The caller lacks tunnel management permission for the active org or workspace. Mitigation: Use an admin key or account with Tunnels Read and Manage for the target org/workspace.\n- `tunnel_missing_principals`: The authenticated request did not contain org/workspace principals that can be checked for tunnel use. Mitigation: Use a runtime API key associated with the intended organization or workspace.\n- `tunnel_principal_association_unverified`: Tunnel creation or update requested principals whose association could not be automatically verified. Mitigation: Use an automatically verifiable org/workspace/tenant combination or request a reviewed association override.\n- `tunnel_principal_limit_exceeded`: A tunnel principal list exceeded the per-kind limit. Mitigation: Reduce each of tenant_ids, workspace_ids, and organization_ids to the documented maximum.\n- `tunnel_principal_validation_override_automatically_derivable`: A reviewed principal-validation override was rejected because the association is already automatically derivable. Mitigation: Create or update the tunnel directly; no reviewed override is needed for that principal set.\n- `tunnel_principal_validation_override_management_permission_required`: The caller lacks permission to manage tunnel principal-validation overrides. Mitigation: Use a credential authorized for tunnel principal-validation override management.\n- `tunnel_queue_full`: The per-tunnel pending request queue is full. Mitigation: Reduce MCP request concurrency or add enough healthy tunnel-client capacity to drain the tunnel.\n- `tunnel_request_mismatch`: The response request_id does not belong to the tunnel being acknowledged. Mitigation: Verify the client uses the same control_plane.tunnel_id that received the command.\n- `tunnel_transport_unavailable`: Redis master changed during queue-v1 work. Mitigation: Retry if safe; promotion may lose or duplicate work.\n- `tunnel_use_forbidden`: The caller does not have tunnel use permission for any default principal. Mitigation: Use credentials for a principal that has access to this tunnel or recreate/connect the runtime in the owning org/workspace.",
+            "description": "Stable tunnel-service error code when one is available. Generic platform or validation errors can return null or a non-tunnel code.\n\nKnown tunnel-service codes:\n- `invalid_channel_format`: The MCP channel name contains unsupported characters. Mitigation: Use lowercase letters, digits, hyphens, or underscores in channel names.\n- `invalid_json_payload`: The MCP request body could not be decoded as a JSON object, or a tunnel response payload, forwarded header, or request ID contains an unpaired Unicode surrogate. Mitigation: Fix the MCP caller/server to send valid JSON objects and Unicode without unpaired surrogates. Valid non-ASCII text is supported.\n- `invalid_tunnel_id_format`: The tunnel ID path segment is not a tunnel_<32 lowercase alphanumeric> value. Mitigation: Use the exact tunnel ID from Platform tunnel settings in control_plane.tunnel_id, CONTROL_PLANE_TUNNEL_ID, or --control-plane.tunnel-id.\n- `missing_mcp_session_id`: An MCP session termination request did not include Mcp-Session-Id. Mitigation: Send DELETE session termination requests with the Mcp-Session-Id header from the active MCP session.\n- `oauth_shim_audience_unavailable`: The connected tunnel-client does not advertise OAuth token audience lookup. Mitigation: Upgrade tunnel-client before using the opt-in private_key_jwt audience lookup.\n- `oauth_shim_harpoon_call_failed`: The OAuth shim Harpoon call failed or returned an invalid upstream response. Mitigation: Check the Harpoon target URL, upstream MCP server health, and tunnel-client logs.\n- `oauth_shim_invalid_target_uri`: An OAuth shim metadata URI was malformed or used an invalid harpoon target label. Mitigation: Use an absolute http(s) URI or harpoon://<label> that matches harpoon.targets[].label.\n- `oauth_shim_target_not_found`: The requested OAuth shim target label was not found. Mitigation: Add or correct the matching harpoon.targets[].label entry and restart tunnel-client.\n- `oauth_shim_unshimmable_endpoint`: The OAuth shim could not map the upstream metadata endpoint to a supported tunnel route. Mitigation: Configure supported OAuth metadata endpoints and grouped harpoon targets for auth-server metadata.\n- `oauth_shim_upstream_timeout`: The OAuth shim timed out waiting for a Harpoon response. Mitigation: Ensure the Harpoon target and upstream MCP server respond before the tunnel timeout.\n- `pending_request_not_found`: The pending request was already processed, expired, or never existed for this tunnel. Mitigation: No manual action is needed for isolated races; if repeated, ensure only healthy clients acknowledge requests for this tunnel.\n- `rate_limit_exceeded`: The caller exceeded the tunnel-service rate limit for this route or tunnel. Mitigation: Reduce request concurrency or volume and let tunnel-client retry after backoff.\n- `request_body_too_large`: The MCP request body or queued tunnel response exceeded the service byte limit. Mitigation: Send a smaller MCP request or response body; avoid large inline payloads.\n- `rfc9728_www_authenticate_unsupported`: The request attempted an RFC9728 WWW-Authenticate probe flow that tunnels do not support. Mitigation: Use the well-known OAuth discovery endpoints instead of WWW-Authenticate probing.\n- `tunnel_active_organization_context_required`: The route requires an active organization context but none was available. Mitigation: Select or pass the intended organization ID before listing principals or managing principal-validation overrides.\n- `tunnel_active_organization_required`: The tunnel is organization-backed and the request did not include an explicit organization context. Mitigation: Set --control-plane.organization-id, CONTROL_PLANE_ORGANIZATION_ID, or control_plane.organization_id for tunnel-client.\n- `tunnel_client_network_access_denied`: The tunnel has client-network enforcement enabled and the request network is unknown or outside its allowed CIDRs. Mitigation: Retry from an allowed client network, or clear/update the tunnel client-network access policy if the restriction is no longer intended.\n- `tunnel_client_not_connected`: The tunnel-client is not currently connected to drain requests for this tunnel. Mitigation: Start or restart tunnel-client, then check its /readyz endpoint and logs.\n- `tunnel_client_not_seen`: No tunnel-client has polled recently for this tunnel. Mitigation: Start or restart tunnel-client with the matching control_plane.tunnel_id and control_plane.api_key.\n- `tunnel_management_permission_required`: The caller lacks tunnel management permission for the active org or workspace. Mitigation: Use an admin key or account with Tunnels Read and Manage for the target org/workspace.\n- `tunnel_missing_principals`: The authenticated request did not contain org/workspace principals that can be checked for tunnel use. Mitigation: Use a runtime API key associated with the intended organization or workspace.\n- `tunnel_principal_association_unverified`: Tunnel creation or update requested principals whose association could not be automatically verified. Mitigation: Use an automatically verifiable org/workspace/tenant combination or request a reviewed association override.\n- `tunnel_principal_limit_exceeded`: A tunnel principal list exceeded the per-kind limit. Mitigation: Reduce each of tenant_ids, workspace_ids, and organization_ids to the documented maximum.\n- `tunnel_principal_validation_override_automatically_derivable`: A reviewed principal-validation override was rejected because the association is already automatically derivable. Mitigation: Create or update the tunnel directly; no reviewed override is needed for that principal set.\n- `tunnel_principal_validation_override_management_permission_required`: The caller lacks permission to manage tunnel principal-validation overrides. Mitigation: Use a credential authorized for tunnel principal-validation override management.\n- `tunnel_queue_full`: The per-tunnel pending request queue is full. Mitigation: Reduce MCP request concurrency or add enough healthy tunnel-client capacity to drain the tunnel.\n- `tunnel_request_mismatch`: The response request_id does not belong to the tunnel being acknowledged. Mitigation: Verify the client uses the same control_plane.tunnel_id that received the command.\n- `tunnel_transport_unavailable`: Redis master changed during queue-v1 work. Mitigation: Retry if safe; promotion may lose or duplicate work.\n- `tunnel_use_forbidden`: The caller does not have tunnel use permission for any default principal. Mitigation: Use credentials for a principal that has access to this tunnel or recreate/connect the runtime in the owning org/workspace.\n- `wrong_cluster`: A capable poller reached a placement that is no longer current. Mitigation: Validate the replacement X-Tunnel-Shard-Token and policy_revision, then poll the same configured endpoint after backoff. Production emission requires separate activation.",
             "x-tunnel-error-codes": [
               "invalid_channel_format",
               "invalid_json_payload",
@@ -1192,7 +1297,8 @@
               "tunnel_queue_full",
               "tunnel_request_mismatch",
               "tunnel_transport_unavailable",
-              "tunnel_use_forbidden"
+              "tunnel_use_forbidden",
+              "wrong_cluster"
             ]
           }
         },
@@ -1393,6 +1499,28 @@
           "session_termination_response"
         ],
         "title": "ResponsePayloadType"
+      },
+      "WrongClusterErrorBody": {
+        "properties": {
+          "code": {
+            "type": "string",
+            "const": "wrong_cluster",
+            "title": "Code"
+          },
+          "policy_revision": {
+            "type": "integer",
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "title": "Policy Revision",
+            "description": "Required JSON integer (no fractional or exponent notation). Monotonically ordered within a tunnel's configured endpoint/environment/residency. A revision must never be reused for a different placement."
+          }
+        },
+        "type": "object",
+        "required": [
+          "code",
+          "policy_revision"
+        ],
+        "title": "WrongClusterErrorBody"
       }
     }
   }

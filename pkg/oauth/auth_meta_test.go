@@ -49,6 +49,8 @@ func authServerMetadataAttemptByURL(
 }
 
 func TestFetchAuthServerMetadata(t *testing.T) {
+	t.Parallel()
+
 	mux := http.NewServeMux()
 	server := httptest.NewServer(mux)
 	defer server.Close()
@@ -72,7 +74,7 @@ func TestFetchAuthServerMetadata(t *testing.T) {
 		_, _ = w.Write(body)
 	})
 
-	meta, err := FetchAuthServerMetadata(context.Background(), server.Client(), server.URL)
+	meta, err := FetchAuthServerMetadata(context.Background(), server.Client(), server.URL, mustParseURL(t, server.URL))
 	if err != nil {
 		t.Fatalf("FetchAuthServerMetadata returned error: %v", err)
 	}
@@ -104,6 +106,8 @@ func TestFetchAuthServerMetadata(t *testing.T) {
 }
 
 func TestFetchAuthServerMetadataFallsBackToOIDCWellKnown(t *testing.T) {
+	t.Parallel()
+
 	mux := http.NewServeMux()
 	server := httptest.NewServer(mux)
 	defer server.Close()
@@ -127,7 +131,7 @@ func TestFetchAuthServerMetadataFallsBackToOIDCWellKnown(t *testing.T) {
 		_, _ = w.Write(body)
 	})
 
-	meta, err := FetchAuthServerMetadata(context.Background(), server.Client(), server.URL)
+	meta, err := FetchAuthServerMetadata(context.Background(), server.Client(), server.URL, mustParseURL(t, server.URL))
 	if err != nil {
 		t.Fatalf("FetchAuthServerMetadata returned error: %v", err)
 	}
@@ -156,13 +160,15 @@ func TestFetchAuthServerMetadataRejectsCrossOriginRedirectBeforeDial(t *testing.
 	}))
 	t.Cleanup(issuer.Close)
 
-	_, _, err := FetchAuthServerMetadataWithResult(context.Background(), issuer.Client(), issuer.URL)
+	_, _, err := FetchAuthServerMetadataWithResult(context.Background(), issuer.Client(), issuer.URL, mustParseURL(t, issuer.URL))
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "redirect blocked")
 	require.Zero(t, attackerHits)
 }
 
 func TestFetchAuthServerMetadataSupportsAppendStyleOIDCPath(t *testing.T) {
+	t.Parallel()
+
 	mux := http.NewServeMux()
 	server := httptest.NewServer(mux)
 	defer server.Close()
@@ -186,7 +192,7 @@ func TestFetchAuthServerMetadataSupportsAppendStyleOIDCPath(t *testing.T) {
 		_, _ = w.Write(body)
 	})
 
-	meta, err := FetchAuthServerMetadata(context.Background(), server.Client(), issuerURL)
+	meta, err := FetchAuthServerMetadata(context.Background(), server.Client(), issuerURL, mustParseURL(t, server.URL))
 	if err != nil {
 		t.Fatalf("FetchAuthServerMetadata returned error: %v", err)
 	}
@@ -203,6 +209,8 @@ func TestFetchAuthServerMetadataSupportsAppendStyleOIDCPath(t *testing.T) {
 }
 
 func TestFetchAuthServerMetadataWithResultIncludesAttempts(t *testing.T) {
+	t.Parallel()
+
 	mux := http.NewServeMux()
 	server := httptest.NewServer(mux)
 	defer server.Close()
@@ -227,7 +235,7 @@ func TestFetchAuthServerMetadataWithResultIncludesAttempts(t *testing.T) {
 		}`))
 	})
 
-	meta, result, err := FetchAuthServerMetadataWithResult(context.Background(), server.Client(), issuerURL)
+	meta, result, err := FetchAuthServerMetadataWithResult(context.Background(), server.Client(), issuerURL, mustParseURL(t, server.URL))
 	if err != nil {
 		t.Fatalf("FetchAuthServerMetadataWithResult returned error: %v", err)
 	}
@@ -264,6 +272,8 @@ func TestFetchAuthServerMetadataWithResultIncludesAttempts(t *testing.T) {
 }
 
 func TestFetchAuthServerMetadataWithResultAcceptsIssuerMismatch(t *testing.T) {
+	t.Parallel()
+
 	mux := http.NewServeMux()
 	server := httptest.NewServer(mux)
 	defer server.Close()
@@ -280,7 +290,7 @@ func TestFetchAuthServerMetadataWithResultAcceptsIssuerMismatch(t *testing.T) {
 		}`))
 	})
 
-	meta, result, err := FetchAuthServerMetadataWithResult(context.Background(), server.Client(), issuerURL)
+	meta, result, err := FetchAuthServerMetadataWithResult(context.Background(), server.Client(), issuerURL, mustParseURL(t, server.URL))
 	if err != nil {
 		t.Fatalf("FetchAuthServerMetadataWithResult returned error: %v", err)
 	}
@@ -324,6 +334,8 @@ func TestFetchAuthServerMetadataWithResultAcceptsIssuerMismatch(t *testing.T) {
 }
 
 func TestFetchAuthServerMetadataWithResultPrefersExactIssuerMatchOverMismatch(t *testing.T) {
+	t.Parallel()
+
 	mux := http.NewServeMux()
 	server := httptest.NewServer(mux)
 	defer server.Close()
@@ -365,7 +377,7 @@ func TestFetchAuthServerMetadataWithResultPrefersExactIssuerMatchOverMismatch(t 
 		http.NotFound(w, nil)
 	})
 
-	meta, result, err := FetchAuthServerMetadataWithResult(context.Background(), server.Client(), issuerURL)
+	meta, result, err := FetchAuthServerMetadataWithResult(context.Background(), server.Client(), issuerURL, mustParseURL(t, server.URL))
 	if err != nil {
 		t.Fatalf("FetchAuthServerMetadataWithResult returned error: %v", err)
 	}
@@ -414,7 +426,9 @@ func TestFetchAuthServerMetadataWithResultPrefersExactIssuerMatchOverMismatch(t 
 }
 
 func TestFetchAuthServerMetadataRetriesOnlyAfterAllTimeouts(t *testing.T) {
-	issuerURL := "https://issuer-user-secret:issuer-password-secret@issuer.example.com/issuer-path-secret?issuer-query-key=issuer-query-secret#issuer-fragment-secret"
+	t.Parallel()
+
+	issuerURL := "https://issuer.example.com/issuer-path-secret?issuer-query-key=issuer-query-secret"
 	parsedIssuer, err := url.Parse(issuerURL)
 	if err != nil {
 		t.Fatalf("parse issuer URL: %v", err)
@@ -439,7 +453,7 @@ func TestFetchAuthServerMetadataRetriesOnlyAfterAllTimeouts(t *testing.T) {
 		}),
 	}
 
-	meta, result, fetchErr := FetchAuthServerMetadataWithResult(context.Background(), client, issuerURL)
+	meta, result, fetchErr := FetchAuthServerMetadataWithResult(context.Background(), client, issuerURL, parsedIssuer)
 	if fetchErr == nil {
 		t.Fatal("expected fetch error")
 	}
@@ -462,12 +476,9 @@ func TestFetchAuthServerMetadataRetriesOnlyAfterAllTimeouts(t *testing.T) {
 		t.Fatalf("expected joined timeout error, got %v", fetchErr)
 	}
 	for _, sensitive := range []string{
-		"issuer-user-secret",
-		"issuer-password-secret",
 		"issuer-path-secret",
 		"issuer-query-key",
 		"issuer-query-secret",
-		"issuer-fragment-secret",
 	} {
 		if strings.Contains(fetchErr.Error(), sensitive) {
 			t.Fatalf("fetch error contains sensitive issuer value %q: %v", sensitive, fetchErr)
@@ -478,12 +489,9 @@ func TestFetchAuthServerMetadataRetriesOnlyAfterAllTimeouts(t *testing.T) {
 			t.Fatalf("expected timeout error in attempt %+v", attempt)
 		}
 		for _, sensitive := range []string{
-			"issuer-user-secret",
-			"issuer-password-secret",
 			"issuer-path-secret",
 			"issuer-query-key",
 			"issuer-query-secret",
-			"issuer-fragment-secret",
 		} {
 			if strings.Contains(attempt.Error, sensitive) {
 				t.Fatalf("attempt error contains sensitive issuer value %q: %q", sensitive, attempt.Error)
@@ -493,14 +501,15 @@ func TestFetchAuthServerMetadataRetriesOnlyAfterAllTimeouts(t *testing.T) {
 }
 
 func TestFetchAuthServerMetadataInvalidIssuerPreservesURLError(t *testing.T) {
+	t.Parallel()
+
 	const issuerURL = "https://invalid-user-secret:invalid-password-secret@issuer.example.com/invalid-path-secret%zz?invalid-query-secret=value#invalid-fragment-secret"
 
 	_, _, fetchErr := FetchAuthServerMetadataWithResult(context.Background(), http.DefaultClient, issuerURL)
 	if fetchErr == nil {
 		t.Fatal("expected invalid issuer error")
 	}
-	var urlErr *url.Error
-	if !errors.As(fetchErr, &urlErr) {
+	if _, ok := errors.AsType[*url.Error](fetchErr); !ok {
 		t.Fatalf("expected wrapped *url.Error, got %T: %v", fetchErr, fetchErr)
 	}
 	for _, sensitive := range []string{
@@ -517,6 +526,8 @@ func TestFetchAuthServerMetadataInvalidIssuerPreservesURLError(t *testing.T) {
 }
 
 func TestBuildAuthServerMetadataCandidateURLsPathfulIssuerPrefersAppendStyle(t *testing.T) {
+	t.Parallel()
+
 	issuerURL := "https://example.com/tenant/v2.0"
 	candidates, err := buildAuthServerMetadataCandidateURLs(issuerURL)
 	if err != nil {

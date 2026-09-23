@@ -52,6 +52,7 @@ const (
 	defaultControlPlaneMaxInFlight                     = 20
 	maxControlPlaneMaxInFlight                         = 10000
 	defaultControlPlanePollTimeout                     = 30 * time.Second
+	defaultControlPlaneInitialPollTimeout              = defaultControlPlanePollTimeout
 	defaultControlPlanePollDeadlineGuardrail           = 5000 * time.Millisecond
 	maxControlPlanePollDeadlineGuardrail               = time.Minute
 	maxControlPlanePollDeadline                        = 10 * time.Minute
@@ -79,6 +80,7 @@ const DefaultControlPlaneBaseURL = defaultControlPlaneBaseURL
 
 const _ = uint(maxControlPlaneMaxInFlight - defaultControlPlaneMaxInFlight)
 const _ = uint(defaultControlPlanePollTimeout - 1)
+const _ = uint(defaultControlPlaneInitialPollTimeout - 1)
 const _ = uint(maxControlPlanePollDeadline - defaultControlPlanePollTimeout - defaultControlPlanePollDeadlineGuardrail)
 const _ = uint(defaultControlPlanePollDeadlineGuardrail - 1)
 const _ = uint(maxControlPlanePollDeadlineGuardrail - defaultControlPlanePollDeadlineGuardrail - 1)
@@ -158,6 +160,7 @@ var commonFlagAliases = []flagAlias{
 	{Canonical: "health.listen-addr", Alias: "health-listen-addr", Kind: "string"},
 	{Canonical: "health.unix-socket", Alias: "health-unix-socket", Kind: "string"},
 	{Canonical: "health.url-file", Alias: "health-url-file", Kind: "string"},
+	{Canonical: "health.show-details", Alias: "health-show-details", Kind: "bool"},
 }
 
 // Config captures the runtime values required to start the tunnel client.
@@ -193,6 +196,7 @@ type ControlPlaneConfig struct {
 	APIKey                string
 	MaxInFlightRequests   int
 	PollTimeout           time.Duration
+	InitialPollTimeout    time.Duration
 	PollDeadlineGuardrail time.Duration
 	// PollChannels is an explicit, sorted allowlist of channels to drain. When
 	// PollChannelsConfigured is false, polling remains wire-compatible with
@@ -211,6 +215,11 @@ type ControlPlaneConfig struct {
 	MCPServerInfoHeader func() (string, error)
 	HTTPProxy           *url.URL
 	HTTPProxySource     ProxySource
+	// SuppressRawHTTPLogging is derived from effective structured Harpoon
+	// policies. Poll requests and responses can contain caller credentials even
+	// when they are nested in JSON rather than HTTP headers. It is not an
+	// operator-configurable override and cannot be disabled by unsafe logging.
+	SuppressRawHTTPLogging bool `json:"-" yaml:"-"`
 }
 
 // LoggingConfig defines logging behavior for the client.
@@ -223,9 +232,10 @@ type LoggingConfig struct {
 
 // HealthConfig defines the health server behavior.
 type HealthConfig struct {
-	ListenAddr string
-	UnixSocket string
-	URLFile    string
+	ListenAddr  string
+	UnixSocket  string
+	URLFile     string
+	ShowDetails bool
 }
 
 // ProcessConfig defines process-level runtime settings.
@@ -292,6 +302,7 @@ type MCPConfig struct {
 	MaxConcurrentRequests            int
 	ExtraHeaders                     map[string]string
 	DiscoveryExtraHeaders            map[string]string
+	OAuthTrustedOrigins              []*url.URL
 	HTTPProxy                        *url.URL
 	HTTPProxySource                  ProxySource
 }
@@ -302,6 +313,14 @@ func (c ControlPlaneConfig) PollTimeoutOrDefault() time.Duration {
 		return defaultControlPlanePollTimeout
 	}
 	return c.PollTimeout
+}
+
+// InitialPollTimeoutOrDefault returns the first requested poll wait cap or its runtime default.
+func (c ControlPlaneConfig) InitialPollTimeoutOrDefault() time.Duration {
+	if c.InitialPollTimeout <= 0 {
+		return defaultControlPlaneInitialPollTimeout
+	}
+	return c.InitialPollTimeout
 }
 
 // PollDeadlineGuardrailOrDefault returns the configured client deadline guardrail or its runtime default.
@@ -330,6 +349,9 @@ func (c ControlPlaneConfig) PollDeadlineTimeoutOrDefault() time.Duration {
 // ignore HTTP-only settings because they communicate over child-process
 // stdin/stdout rather than a network socket.
 type MCPChannelBinding struct {
+	// Stateless identifies a process-owned endpoint that accepts self-contained
+	// MCP requests. Ordinary configured endpoints retain the false default.
+	Stateless         bool
 	Channel           types.Channel
 	TransportKind     MCPTransportKind
 	ServerURL         *url.URL
@@ -386,16 +408,65 @@ type HarpoonTarget struct {
 	Description    string
 	BaseURL        *url.URL
 	UnixSocketPath string
+	Template       *HarpoonTargetTemplate
+}
+
+// HarpoonTargetTemplate defines an opt-in operation with an operator-fixed
+// destination and bounded caller-supplied identifiers. Version 1 permits GET,
+// POST, and PUT over HTTPS and never follows redirects. Writes require a body policy.
+type HarpoonTargetTemplate struct {
+	Version      int                                 `yaml:"version" json:"version"`
+	Origin       string                              `yaml:"origin" json:"origin"`
+	Method       string                              `yaml:"method" json:"method"`
+	BodyPolicy   *HarpoonTemplateBodyPolicy          `yaml:"body_policy,omitempty" json:"body_policy,omitempty"`
+	PathTemplate string                              `yaml:"path_template" json:"path_template"`
+	Query        map[string]string                   `yaml:"query" json:"query,omitempty"`
+	Parameters   map[string]HarpoonTemplateParameter `yaml:"parameters" json:"parameters"`
+	Headers      map[string]string                   `yaml:"headers" json:"headers,omitempty"`
+	// AllowedHeaders preserves the original Go API for name-only entries.
+	// HeaderRules supports both name-only and structured entries; decoding and
+	// encoding retain the operator's header_rules or allowed_headers spelling.
+	AllowedHeaders  []string            `yaml:"-" json:"-"`
+	HeaderRules     []HarpoonHeaderRule `yaml:"-" json:"-"`
+	FollowRedirects bool                `yaml:"follow_redirects" json:"follow_redirects"`
+	headerRulesKey  string
+}
+
+// HarpoonTemplateBodyPolicy constrains raw UTF-8 write payloads independently
+// of response limits. Content types and validators are fixed by the operator.
+type HarpoonTemplateBodyPolicy struct {
+	ContentTypes []string                       `yaml:"content_types" json:"content_types"`
+	MaxBytes     int                            `yaml:"max_bytes" json:"max_bytes"`
+	Required     *bool                          `yaml:"required" json:"required"`
+	Validation   *HarpoonTemplateBodyValidation `yaml:"validation" json:"validation"`
+}
+
+// HarpoonTemplateBodyValidation applies every configured check to the raw body.
+// JSON checks syntax; pattern and enum can impose application-specific limits.
+type HarpoonTemplateBodyValidation struct {
+	JSON    bool     `yaml:"json,omitempty" json:"json,omitempty"`
+	Pattern string   `yaml:"pattern,omitempty" json:"pattern,omitempty"`
+	Enum    []string `yaml:"enum,omitempty" json:"enum,omitempty"`
+}
+
+// HarpoonTemplateParameter describes one bounded identifier. The runtime
+// compiler validates its pattern, enumeration, and length constraints before
+// the client starts accepting calls.
+type HarpoonTemplateParameter struct {
+	Type           string   `yaml:"type" json:"type"`
+	Required       bool     `yaml:"required" json:"required"`
+	Description    string   `yaml:"description,omitempty" json:"description,omitempty"`
+	Examples       []string `yaml:"examples,omitempty" json:"examples,omitempty"`
+	Pattern        string   `yaml:"pattern" json:"pattern,omitempty"`
+	Enum           []string `yaml:"enum" json:"enum,omitempty"`
+	MinLength      int      `yaml:"min_length" json:"min_length,omitempty"`
+	MaxLength      int      `yaml:"max_length" json:"max_length"`
+	ReservedValues []string `yaml:"reserved_values" json:"reserved_values,omitempty"`
 }
 
 // AdditionalTransportEnabled reports whether a transport is enabled.
 func (h HarpoonConfig) AdditionalTransportEnabled(kind HarpoonTransportKind) bool {
-	for _, transport := range h.AdditionalTransports {
-		if transport == kind {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(h.AdditionalTransports, kind)
 }
 
 // Load builds a runtime configuration by combining CLI flag arguments with
@@ -471,6 +542,7 @@ func RegisterFlags(fs *pflag.FlagSet, flavor Flavor) {
 	fs.String("control-plane.http-proxy", "", "Outbound HTTP proxy for the control plane (format <url|env:VAR>)")
 	fs.Int("control-plane.max-inflight", defaultControlPlaneMaxInFlight, "Capacity of the local polled-command buffer; polling pauses while the buffer is full (env.CONTROL_PLANE_MAX_INFLIGHT_REQUESTS, max 10000)")
 	fs.Duration("control-plane.poll-timeout", defaultControlPlanePollTimeout, "Long-poll timeout when fetching commands from the control plane (env.CONTROL_PLANE_POLL_TIMEOUT)")
+	fs.Duration("control-plane.initial-poll-timeout", defaultControlPlaneInitialPollTimeout, "Maximum requested wait for the first poll, capped by poll-timeout; does not shorten the client deadline (env.CONTROL_PLANE_INITIAL_POLL_TIMEOUT)")
 	fs.Duration("control-plane.poll-deadline-guardrail", defaultControlPlanePollDeadlineGuardrail, "Extra time after the requested long-poll wait before the control-plane HTTP/context deadline (env.CONTROL_PLANE_POLL_DEADLINE_GUARDRAIL)")
 	fs.StringArray("control-plane.poll-channel", nil, "Channel to drain from the control plane (repeatable; env.CONTROL_PLANE_POLL_CHANNELS)")
 	fs.StringArray("control-plane.extra-headers", nil, "Additional HTTP headers to send to the tunnel control-plane (format 'Key: Value', repeatable; values accept env:VAR or file:/path) (env.CONTROL_PLANE_EXTRA_HEADERS)")
@@ -481,6 +553,7 @@ func RegisterFlags(fs *pflag.FlagSet, flavor Flavor) {
 	fs.String("health.listen-addr", defaultHealthListenAddr, "Address the health HTTP server listens on (ip:port). Use :8080 to listen on all interfaces, or 127.0.0.1:0 to request a loopback ephemeral port from the OS. Ignored when health.unix-socket is set. (env.HEALTH_LISTEN_ADDR)")
 	fs.String("health.unix-socket", "", "Unix socket path for the health HTTP server. When set, tunnel-client serves health over the socket instead of binding TCP. (env.HEALTH_UNIX_SOCKET)")
 	fs.String("health.url-file", "", "File to write the health base URL to after startup (env.HEALTH_URL_FILE)")
+	fs.Bool("health.show-details", false, "Include component details in GET /health by default; details=true or details=false overrides each request (env.HEALTH_SHOW_DETAILS)")
 	fs.String("pid.file", "", "File to write the tunnel-client process ID to (env.PID_FILE)")
 	fs.String("http-proxy", "", "Global outbound HTTP proxy (applies to control-plane, MCP, and Harpoon) (format <url|env:VAR>)")
 	fs.StringArray("mcp.server-url", nil, "Target MCP server URL (repeatable; format url=...,channel=...,unix-socket=...,http-proxy=...,client-cert=...,client-key=...) (env.MCP_SERVER_URL)")
@@ -491,6 +564,7 @@ func RegisterFlags(fs *pflag.FlagSet, flavor Flavor) {
 	fs.String("mcp.client-key", "", "Path to PEM client private key for MCP mTLS (format <path|env:VAR>) (env.MCP_CLIENT_KEY)")
 	fs.StringArray("mcp.extra-headers", nil, "Static HTTP headers to send to the configured MCP server origin (format 'Key: Value', repeatable; values accept env:VAR or file:/path) (env.MCP_EXTRA_HEADERS)")
 	fs.StringArray("mcp.discovery-extra-headers", nil, "Static HTTP headers to send to MCP discovery/probe requests for the configured MCP server origin (format 'Key: Value', repeatable; values accept env:VAR or file:/path) (env.MCP_DISCOVERY_EXTRA_HEADERS)")
+	fs.StringArray("mcp.oauth-trusted-origin", nil, "Additional HTTP(S) origin trusted for OAuth discovery (repeatable; origin only, without a path) (env.MCP_OAUTH_TRUSTED_ORIGINS)")
 	fs.Duration("mcp.startup-wait-timeout", 0, "Maximum opt-in startup wait for the main MCP HTTP listener before first poll (env.MCP_STARTUP_WAIT_TIMEOUT)")
 	fs.Duration("mcp.connection-max-ttl", defaultMCPConnectionMaxTTL, "Maximum lifetime of MCP transport connections (env.MCP_CONNECTION_MAX_TTL)")
 	fs.Int("mcp.max-concurrent-requests", defaultMCPMaxConcurrentRequests, "Maximum number of requests actively dispatched to the MCP server (env.MCP_MAX_CONCURRENT_REQUESTS)")
@@ -518,14 +592,14 @@ func RegisterFlags(fs *pflag.FlagSet, flavor Flavor) {
 
 // LoadFromFlagSet builds normal runtime configuration from parsed flags.
 func LoadFromFlagSet(fs *pflag.FlagSet, lookupEnv func(string) (string, bool)) (*Config, error) {
-	cfg, _, _, err := loadRuntimeFromFlagSet(fs, lookupEnv, FlavorRuntime)
+	cfg, _, _, err := loadRuntimeFromFlagSet(fs, lookupEnv, FlavorRuntime, "")
 	return cfg, err
 }
 
 // LoadCloudflaredFromFlagSet builds runtime-cloudflared configuration from
 // parsed flags, adding only the approved companion settings.
 func LoadCloudflaredFromFlagSet(fs *pflag.FlagSet, lookupEnv func(string) (string, bool)) (*CloudflaredConfig, error) {
-	runtimeCfg, fileValues, effectiveLookup, err := loadRuntimeFromFlagSet(fs, lookupEnv, FlavorRuntimeCloudflared)
+	runtimeCfg, fileValues, effectiveLookup, err := loadRuntimeFromFlagSet(fs, lookupEnv, FlavorRuntimeCloudflared, "")
 	if err != nil {
 		return nil, err
 	}
@@ -544,7 +618,15 @@ func LoadCloudflaredFromFlagSet(fs *pflag.FlagSet, lookupEnv func(string) (strin
 // returns the approved companion settings plus the effective lookup used for
 // full-only adapters. The returned Config never grows full-client-only fields.
 func LoadFullFromFlagSet(fs *pflag.FlagSet, lookupEnv func(string) (string, bool)) (*Config, CloudflaredSettings, LoadContext, error) {
-	runtimeCfg, fileValues, effectiveLookup, err := loadRuntimeFromFlagSet(fs, lookupEnv, FlavorFull)
+	return LoadFullFromFlagSetWithMainMCPServerURL(fs, lookupEnv, "")
+}
+
+// LoadFullFromFlagSetWithMainMCPServerURL replaces only the parsed main MCP
+// binding before applying transport defaults and validating poll channels.
+// Configured targets still undergo normal parsing and duplicate validation.
+// An empty URL preserves ordinary full-client configuration loading.
+func LoadFullFromFlagSetWithMainMCPServerURL(fs *pflag.FlagSet, lookupEnv func(string) (string, bool), mainServerURL string) (*Config, CloudflaredSettings, LoadContext, error) {
+	runtimeCfg, fileValues, effectiveLookup, err := loadRuntimeFromFlagSet(fs, lookupEnv, FlavorFull, mainServerURL)
 	if err != nil {
 		return nil, CloudflaredSettings{}, LoadContext{}, err
 	}
@@ -568,7 +650,7 @@ func LoadFullFromFlagSet(fs *pflag.FlagSet, lookupEnv func(string) (string, bool
 	return runtimeCfg, cloudflared, context, nil
 }
 
-func loadRuntimeFromFlagSet(fs *pflag.FlagSet, lookupEnv func(string) (string, bool), flavor Flavor) (*Config, *fileConfigValues, func(string) (string, bool), error) {
+func loadRuntimeFromFlagSet(fs *pflag.FlagSet, lookupEnv func(string) (string, bool), flavor Flavor, mainServerURL string) (*Config, *fileConfigValues, func(string) (string, bool), error) {
 	if lookupEnv == nil {
 		lookupEnv = os.LookupEnv
 	}
@@ -599,7 +681,7 @@ func loadRuntimeFromFlagSet(fs *pflag.FlagSet, lookupEnv func(string) (string, b
 	if err != nil {
 		return nil, nil, lookupEnv, err
 	}
-	mcp, err := buildMCPConfig(fs, lookupEnv, globalProxy, globalProxySource)
+	mcp, err := buildMCPConfig(fs, lookupEnv, globalProxy, globalProxySource, mainServerURL)
 	if err != nil {
 		return nil, nil, lookupEnv, err
 	}
@@ -607,16 +689,40 @@ func loadRuntimeFromFlagSet(fs *pflag.FlagSet, lookupEnv func(string) (string, b
 	if err != nil {
 		return nil, nil, lookupEnv, err
 	}
-	health := buildHealthConfig(fs, lookupEnv)
+	health, err := buildHealthConfig(fs, lookupEnv)
+	if err != nil {
+		return nil, nil, lookupEnv, err
+	}
 	process := buildProcessConfig(fs, lookupEnv)
 	harpoon, err := buildHarpoonConfig(fs, lookupEnv, globalProxy, globalProxySource)
 	if err != nil {
 		return nil, nil, lookupEnv, err
 	}
+	if fileValues != nil && fileValues.HarpoonTargets != nil {
+		harpoon.Targets, err = resolveFileHarpoonTargets(fileValues.HarpoonTargets, lookupEnv, harpoon.AllowPlaintextHTTP)
+		if err != nil {
+			return nil, nil, lookupEnv, fmt.Errorf("parse config file %s: %w", fileValues.Path, err)
+		}
+	}
+	for _, target := range harpoon.Targets {
+		if target.Template == nil {
+			continue
+		}
+		rules, err := target.Template.NormalizedHeaderRules()
+		if err != nil {
+			return nil, nil, lookupEnv, err
+		}
+		for _, rule := range rules {
+			if !rule.Legacy {
+				controlPlane.SuppressRawHTTPLogging = true
+				break
+			}
+		}
+	}
 	if err := validateConfiguredPollChannels(controlPlane, mcp, harpoon); err != nil {
 		return nil, nil, lookupEnv, err
 	}
-	mcp.AllowNoMain = controlPlane.PollChannelsConfigured && !containsPollChannel(controlPlane.PollChannels, types.DefaultChannel)
+	mcp.AllowNoMain = controlPlane.PollChannelsConfigured && !slices.Contains(controlPlane.PollChannels, types.DefaultChannel)
 
 	cfg := &Config{
 		ControlPlane: controlPlane,
@@ -957,7 +1063,7 @@ func getControlPlaneAPIKey(flagValue string, lookupEnv func(string) (string, boo
 		case strings.HasPrefix(flagValue, envPrefix):
 			envVar := strings.TrimPrefix(flagValue, envPrefix)
 			if envVar == "" {
-				return "", errors.New("invalid control-plane.api-key: environment variable name is required after env:")
+				return "", errors.New("invalid control-plane.api-key: environment variable name is required after the env: prefix")
 			}
 			if val, ok := lookupEnv(envVar); ok {
 				if val == "" {
@@ -969,7 +1075,7 @@ func getControlPlaneAPIKey(flagValue string, lookupEnv func(string) (string, boo
 		case strings.HasPrefix(flagValue, filePrefix):
 			path := strings.TrimPrefix(flagValue, filePrefix)
 			if path == "" {
-				return "", errors.New("invalid control-plane.api-key: file path is required after file:")
+				return "", errors.New("invalid control-plane.api-key: file path is required after the file: prefix")
 			}
 			data, err := os.ReadFile(path)
 			if err != nil {
@@ -1095,6 +1201,27 @@ func buildControlPlaneConfig(fs *pflag.FlagSet, lookupEnv func(string) (string, 
 		pollTimeout = val
 	}
 
+	initialPollTimeout := defaultControlPlaneInitialPollTimeout
+	if flag := fs.Lookup("control-plane.initial-poll-timeout"); flag != nil && flag.Changed {
+		val, err := fs.GetDuration("control-plane.initial-poll-timeout")
+		if err != nil {
+			return ControlPlaneConfig{}, fmt.Errorf("invalid value for --control-plane.initial-poll-timeout: %w", err)
+		}
+		if val <= 0 {
+			return ControlPlaneConfig{}, errors.New("control-plane.initial-poll-timeout must be greater than zero")
+		}
+		initialPollTimeout = val
+	} else if envVal, ok := lookupEnv("CONTROL_PLANE_INITIAL_POLL_TIMEOUT"); ok && envVal != "" {
+		val, err := time.ParseDuration(envVal)
+		if err != nil {
+			return ControlPlaneConfig{}, fmt.Errorf("invalid CONTROL_PLANE_INITIAL_POLL_TIMEOUT: %w", err)
+		}
+		if val <= 0 {
+			return ControlPlaneConfig{}, errors.New("CONTROL_PLANE_INITIAL_POLL_TIMEOUT must be greater than zero")
+		}
+		initialPollTimeout = val
+	}
+
 	pollDeadlineGuardrail := defaultControlPlanePollDeadlineGuardrail
 	if flag := fs.Lookup("control-plane.poll-deadline-guardrail"); flag != nil && flag.Changed {
 		val, err := fs.GetDuration("control-plane.poll-deadline-guardrail")
@@ -1154,6 +1281,7 @@ func buildControlPlaneConfig(fs *pflag.FlagSet, lookupEnv func(string) (string, 
 		APIKey:                 apiKey,
 		MaxInFlightRequests:    maxInFlight,
 		PollTimeout:            pollTimeout,
+		InitialPollTimeout:     initialPollTimeout,
 		PollDeadlineGuardrail:  pollDeadlineGuardrail,
 		PollChannels:           pollChannels,
 		PollChannelsConfigured: pollChannelsConfigured,
@@ -1223,7 +1351,7 @@ func validateConfiguredPollChannels(controlPlane ControlPlaneConfig, mcp MCPConf
 			// Main can discover and register Harpoon targets through OAuth after
 			// startup. A true Harpoon-only process has no such bootstrap path and
 			// must fail closed unless it starts with a routable target.
-			if len(harpoon.Targets) == 0 && !containsPollChannel(controlPlane.PollChannels, types.DefaultChannel) {
+			if len(harpoon.Targets) == 0 && !slices.Contains(controlPlane.PollChannels, types.DefaultChannel) {
 				return errors.New("control-plane.poll-channel harpoon has no routable target")
 			}
 		default:
@@ -1233,15 +1361,6 @@ func validateConfiguredPollChannels(controlPlane ControlPlaneConfig, mcp MCPConf
 		}
 	}
 	return nil
-}
-
-func containsPollChannel(channels []types.Channel, want types.Channel) bool {
-	for _, channel := range channels {
-		if channel == want {
-			return true
-		}
-	}
-	return false
 }
 
 func validateControlPlanePollTiming(pollTimeout, pollDeadlineGuardrail time.Duration) error {
@@ -1561,10 +1680,10 @@ func buildLoggingConfig(fs *pflag.FlagSet, lookupEnv func(string) (string, bool)
 		getValue(fs, "log.level"),
 		envOrDefault(lookupEnv, "LOG_LEVEL", defaultLogLevel),
 	)
-	logFile := firstSet(
-		getValue(fs, "log.file"),
-		envOrDefault(lookupEnv, "LOG_FILE", ""),
-	)
+	logFile, logFileSet := changedStringFlag(fs, "log.file")
+	if !logFileSet {
+		logFile = envOrDefault(lookupEnv, "LOG_FILE", "")
+	}
 	logFormatFlag := getValue(fs, "log.format")
 	logFormatEnv, logFormatEnvSet := lookupEnv("LOG_FORMAT")
 	logFormatExplicit := logFormatFlag != "" || (logFormatEnvSet && logFormatEnv != "")
@@ -1613,7 +1732,11 @@ func buildLoggingConfig(fs *pflag.FlagSet, lookupEnv func(string) (string, bool)
 	}, nil
 }
 
-func buildHealthConfig(fs *pflag.FlagSet, lookupEnv func(string) (string, bool)) HealthConfig {
+func buildHealthConfig(fs *pflag.FlagSet, lookupEnv func(string) (string, bool)) (HealthConfig, error) {
+	showDetails, err := getBool(fs, lookupEnv, "health.show-details", "HEALTH_SHOW_DETAILS")
+	if err != nil {
+		return HealthConfig{}, err
+	}
 	listenAddr := firstSet(
 		getValue(fs, "health.listen-addr"),
 		envOrDefault(lookupEnv, "HEALTH_LISTEN_ADDR", defaultHealthListenAddr),
@@ -1628,10 +1751,11 @@ func buildHealthConfig(fs *pflag.FlagSet, lookupEnv func(string) (string, bool))
 	)
 
 	return HealthConfig{
-		ListenAddr: listenAddr,
-		UnixSocket: unixSocket,
-		URLFile:    urlFile,
-	}
+		ListenAddr:  listenAddr,
+		UnixSocket:  unixSocket,
+		URLFile:     urlFile,
+		ShowDetails: showDetails,
+	}, nil
 }
 
 func buildProcessConfig(fs *pflag.FlagSet, lookupEnv func(string) (string, bool)) ProcessConfig {
@@ -1729,7 +1853,7 @@ func resolveRequiredSecretReference(source, raw string, lookupEnv func(string) (
 	return value, nil
 }
 
-func buildMCPConfig(fs *pflag.FlagSet, lookupEnv func(string) (string, bool), globalProxy *url.URL, globalProxySource ProxySource) (MCPConfig, error) {
+func buildMCPConfig(fs *pflag.FlagSet, lookupEnv func(string) (string, bool), globalProxy *url.URL, globalProxySource ProxySource, mainServerURL string) (MCPConfig, error) {
 	commandEntries, err := resolveMCPEntries(fs, lookupEnv, "mcp.command", "MCP_COMMAND")
 	if err != nil {
 		return MCPConfig{}, err
@@ -1742,6 +1866,23 @@ func buildMCPConfig(fs *pflag.FlagSet, lookupEnv func(string) (string, bool), gl
 	bindings, err := parseMCPChannelBindings(commandEntries, serverEntries, lookupEnv)
 	if err != nil {
 		return MCPConfig{}, err
+	}
+	if mainServerURL != "" {
+		mainBinding, err := buildMCPBinding(types.DefaultChannel, MCPTransportHTTPStreamable, mainServerURL)
+		if err != nil {
+			return MCPConfig{}, err
+		}
+		mainIndex := slices.IndexFunc(bindings, func(binding MCPChannelBinding) bool {
+			return binding.Channel.Canonical() == types.DefaultChannel
+		})
+		if mainIndex >= 0 {
+			if err := validateMCPBindingTransport(bindings[mainIndex]); err != nil {
+				return MCPConfig{}, err
+			}
+			bindings[mainIndex] = mainBinding
+		} else {
+			bindings = append(bindings, mainBinding)
+		}
 	}
 
 	defaultClientCertificate, err := buildMCPClientCertificate(fs, lookupEnv)
@@ -1815,28 +1956,23 @@ func buildMCPConfig(fs *pflag.FlagSet, lookupEnv func(string) (string, bool), gl
 	if err != nil {
 		return MCPConfig{}, err
 	}
+	oauthTrustedOrigins, err := buildOAuthTrustedOrigins(fs, lookupEnv)
+	if err != nil {
+		return MCPConfig{}, err
+	}
 
 	boundHTTPTransportCount := 0
 	for i := range bindings {
+		if err := validateMCPBindingTransport(bindings[i]); err != nil {
+			return MCPConfig{}, err
+		}
 		if bindings[i].TransportKind != MCPTransportHTTPStreamable {
-			if bindings[i].HTTPProxy != nil {
-				return MCPConfig{}, fmt.Errorf("mcp config: http-proxy not supported for %s channel %q", bindings[i].TransportKind, bindings[i].Channel.Canonical())
-			}
-			if bindings[i].UnixSocketPath != "" {
-				return MCPConfig{}, fmt.Errorf("mcp config: unix-socket not supported for %s channel %q", bindings[i].TransportKind, bindings[i].Channel.Canonical())
-			}
-			if bindings[i].ClientCertificate != nil {
-				return MCPConfig{}, fmt.Errorf("mcp config: client certificates are not supported for %s channel %q", bindings[i].TransportKind, bindings[i].Channel.Canonical())
-			}
 			bindings[i].HTTPProxySource = ProxySourceIgnored
 			continue
 		}
 		boundHTTPTransportCount++
 		if bindings[i].ClientCertificate == nil {
 			bindings[i].ClientCertificate = defaultClientCertificate
-		}
-		if bindings[i].UnixSocketPath != "" && bindings[i].HTTPProxy != nil {
-			return MCPConfig{}, fmt.Errorf("mcp config: unix-socket cannot be combined with http-proxy for channel %q", bindings[i].Channel.Canonical())
 		}
 		if bindings[i].UnixSocketPath != "" {
 			bindings[i].HTTPProxySource = ProxySourceIgnored
@@ -1873,6 +2009,7 @@ func buildMCPConfig(fs *pflag.FlagSet, lookupEnv func(string) (string, bool), gl
 		MaxConcurrentRequests:            maxConcurrent,
 		ExtraHeaders:                     extraHeaders,
 		DiscoveryExtraHeaders:            discoveryExtraHeaders,
+		OAuthTrustedOrigins:              oauthTrustedOrigins,
 		HTTPProxy:                        mcpProxy,
 		HTTPProxySource:                  mcpProxySource,
 	}
@@ -1885,6 +2022,25 @@ func buildMCPConfig(fs *pflag.FlagSet, lookupEnv func(string) (string, bool), gl
 		cfg.ClientCertificate = mainBinding.ClientCertificate
 	}
 	return cfg, nil
+}
+
+func validateMCPBindingTransport(binding MCPChannelBinding) error {
+	if binding.TransportKind == MCPTransportHTTPStreamable {
+		if binding.UnixSocketPath != "" && binding.HTTPProxy != nil {
+			return fmt.Errorf("mcp config: unix-socket cannot be combined with http-proxy for channel %q", binding.Channel.Canonical())
+		}
+		return nil
+	}
+	if binding.HTTPProxy != nil {
+		return fmt.Errorf("mcp config: http-proxy not supported for %s channel %q", binding.TransportKind, binding.Channel.Canonical())
+	}
+	if binding.UnixSocketPath != "" {
+		return fmt.Errorf("mcp config: unix-socket not supported for %s channel %q", binding.TransportKind, binding.Channel.Canonical())
+	}
+	if binding.ClientCertificate != nil {
+		return fmt.Errorf("mcp config: client certificates are not supported for %s channel %q", binding.TransportKind, binding.Channel.Canonical())
+	}
+	return nil
 }
 
 func resolveMCPEntries(fs *pflag.FlagSet, lookupEnv func(string) (string, bool), flagName, envKey string) ([]string, error) {

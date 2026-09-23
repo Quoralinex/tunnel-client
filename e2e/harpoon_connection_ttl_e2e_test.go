@@ -21,10 +21,14 @@ import (
 const harpoonConnectionTTLE2E = 250 * time.Millisecond
 
 func TestHarpoonChannelReconnectsAfterConnectionTTL(t *testing.T) {
+	t.Parallel()
+
 	runHarpoonChannelReconnectAfterTTLs(t, 1)
 }
 
 func TestHarpoonChannelReconnectsAfterRepeatedConnectionTTLs(t *testing.T) {
+	t.Parallel()
+
 	runHarpoonChannelReconnectAfterTTLs(t, 2)
 }
 
@@ -117,7 +121,7 @@ func runHarpoonChannelReconnectAfterTTLs(t *testing.T, ttlCycles int) {
 			release()
 			timer := time.NewTimer(5 * time.Second)
 			defer timer.Stop()
-			for i := 0; i < ttlCycles; i++ {
+			for i := range ttlCycles {
 				select {
 				case <-handlerDone:
 				case <-timer.C:

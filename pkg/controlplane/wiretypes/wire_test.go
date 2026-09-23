@@ -11,6 +11,8 @@ import (
 )
 
 func TestRawJSONRPCPolledCommandMarshalFieldNames(t *testing.T) {
+	t.Parallel()
+
 	createdAt := time.Date(2024, time.September, 4, 12, 30, 0, 0, time.UTC)
 	cmd := RawJSONRPCPolledCommand{
 		BaseRawPolledCommand: BaseRawPolledCommand{
@@ -66,6 +68,8 @@ func TestRawJSONRPCPolledCommandMarshalFieldNames(t *testing.T) {
 }
 
 func TestResponseTimeoutIsOptionalDurationString(t *testing.T) {
+	t.Parallel()
+
 	responseTimeout := ResponseTimeoutDuration("30s")
 	command := RawJSONRPCPolledCommand{
 		BaseRawPolledCommand: BaseRawPolledCommand{
@@ -96,6 +100,8 @@ func TestResponseTimeoutIsOptionalDurationString(t *testing.T) {
 }
 
 func TestResponseTimeoutParsesIntegerValueAndSingleUnit(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		wire string
 		want time.Duration
@@ -113,6 +119,7 @@ func TestResponseTimeoutParsesIntegerValueAndSingleUnit(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.wire, func(t *testing.T) {
+			t.Parallel()
 			var command RawJSONRPCPolledCommand
 			payload := `{
 				"request_id":"req-timeout",
@@ -136,6 +143,8 @@ func TestResponseTimeoutParsesIntegerValueAndSingleUnit(t *testing.T) {
 }
 
 func TestInvalidResponseTimeoutDoesNotRejectCommand(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name string
 		wire string
@@ -160,6 +169,7 @@ func TestInvalidResponseTimeoutDoesNotRejectCommand(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			var command RawJSONRPCPolledCommand
 			payload := `{
 				"request_id":"req-invalid-timeout",
@@ -182,6 +192,8 @@ func TestInvalidResponseTimeoutDoesNotRejectCommand(t *testing.T) {
 }
 
 func TestMissingOrNullResponseTimeoutAndUnknownFieldsAreCompatible(t *testing.T) {
+	t.Parallel()
+
 	fixture := []byte(`{"commands":[
 		{
 			"request_id":"req-compatible-rpc",
@@ -232,6 +244,8 @@ func TestMissingOrNullResponseTimeoutAndUnknownFieldsAreCompatible(t *testing.T)
 }
 
 func TestLegacyOfficialDecoderIgnoresResponseTimeout(t *testing.T) {
+	t.Parallel()
+
 	// These types freeze the wire shape used by legacy official Go tunnel-clients.
 	// Keep them independent of current wire types so the test continues to exercise
 	// the legacy decoder.
@@ -344,6 +358,8 @@ func TestLegacyOfficialDecoderIgnoresResponseTimeout(t *testing.T) {
 }
 
 func TestTunnelResponsePayloadOmitemptyAndHeaders(t *testing.T) {
+	t.Parallel()
+
 	payload := TunnelResponsePayload{RequestID: "req-omit"}
 	marshaled, err := json.Marshal(payload)
 	if err != nil {
@@ -386,6 +402,8 @@ func TestTunnelResponsePayloadOmitemptyAndHeaders(t *testing.T) {
 }
 
 func TestTunnelResponsePayloadJSONRPCNotifyType(t *testing.T) {
+	t.Parallel()
+
 	payload := TunnelResponsePayload{
 		RequestID:    "req-notify",
 		JSONResponse: json.RawMessage(`{"jsonrpc":"2.0","method":"notify","params":{"state":"ready"}}`),
@@ -415,6 +433,8 @@ func TestTunnelResponsePayloadJSONRPCNotifyType(t *testing.T) {
 }
 
 func TestTunnelResponsePayloadSessionTerminationType(t *testing.T) {
+	t.Parallel()
+
 	payload := TunnelResponsePayload{
 		RequestID:    "req-terminate",
 		ResponseCode: http.StatusNoContent,
@@ -436,6 +456,8 @@ func TestTunnelResponsePayloadSessionTerminationType(t *testing.T) {
 }
 
 func TestPolledCommandEnvelopeUnmarshalCommands(t *testing.T) {
+	t.Parallel()
+
 	fixture := []byte(`{"commands":[{"request_id":"req-777","shard_token":"shard-888","command_type":"jsonrpc","channel":"harpoon","created_at":"2024-10-11T12:13:14Z","headers":{"X-Test":["alpha"]},"jsonrpc":{"jsonrpc":"2.0","id":"rpc-1","method":"tools/list","params":{"needle":"hay"}}},{"request_id":"req-888","shard_token":"shard-999","command_type":"oauth_discovery","channel":"main","created_at":"2024-10-11T12:14:15Z","headers":{}}]}`)
 
 	var envelope PolledCommandEnvelope
@@ -471,6 +493,8 @@ func TestPolledCommandEnvelopeUnmarshalCommands(t *testing.T) {
 }
 
 func TestSharedPollCommandFixtureMatchesGoWireTypes(t *testing.T) {
+	t.Parallel()
+
 	fixture := readWireFixture(t, "poll_command_envelope.json")
 
 	var envelope PolledCommandEnvelope

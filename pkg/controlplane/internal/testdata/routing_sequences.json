@@ -1,0 +1,463 @@
+[
+  {
+    "name": "bootstrap_accept_and_empty_success_retain_token",
+    "endpoint": "https://eu.api.openai.com",
+    "tunnel_id": "fixture-tunnel",
+    "steps": [
+      {
+        "request": {"method": "GET", "path": "/v1/tunnels/fixture-tunnel/poll", "headers": {"X-Tunnel-Client-Capabilities": ["wrong-cluster-v1"], "Authorization": ["Bearer fixture-api-key"]}, "absent_headers": ["X-Tunnel-Shard-Token"]},
+        "response": {"status": 409, "headers": {"X-Tunnel-Shard-Token": ["route-a"]}, "body": {"error": {"code": "wrong_cluster", "policy_revision": 1}}},
+        "expect": {"error": true, "error_status": 409, "cached_token": "route-a", "policy_revision": 1, "command_tokens": []}
+      },
+      {
+        "request": {"method": "GET", "path": "/v1/tunnels/fixture-tunnel/poll", "headers": {"X-Tunnel-Client-Capabilities": ["wrong-cluster-v1"], "Authorization": ["Bearer fixture-api-key"], "X-Tunnel-Shard-Token": ["route-a"]}, "absent_headers": []},
+        "response": {"status": 204, "headers": {}},
+        "expect": {"error": false, "error_status": 0, "cached_token": "route-a", "policy_revision": 1, "command_tokens": []}
+      },
+      {
+        "request": {"method": "GET", "path": "/v1/tunnels/fixture-tunnel/poll", "headers": {"X-Tunnel-Client-Capabilities": ["wrong-cluster-v1"], "Authorization": ["Bearer fixture-api-key"], "X-Tunnel-Shard-Token": ["route-a"]}, "absent_headers": []},
+        "response": {"status": 200, "headers": {}, "body": {"commands": []}},
+        "expect": {"error": false, "error_status": 0, "cached_token": "route-a", "policy_revision": 1, "command_tokens": []}
+      },
+      {
+        "request": {"method": "GET", "path": "/v1/tunnels/fixture-tunnel/poll", "headers": {"X-Tunnel-Client-Capabilities": ["wrong-cluster-v1"], "Authorization": ["Bearer fixture-api-key"], "X-Tunnel-Shard-Token": ["route-a"]}, "absent_headers": []},
+        "response": {"status": 200, "headers": {}, "body": {"commands": [{"command_type": "jsonrpc", "request_id": "request-before-reassignment", "shard_token": "legacy-command:shard/with+punctuation=", "jsonrpc": {"jsonrpc": "2.0", "id": 1, "method": "tools/list"}}]}},
+        "expect": {"error": false, "error_status": 0, "cached_token": "route-a", "policy_revision": 1, "command_tokens": ["legacy-command:shard/with+punctuation="]}
+      },
+      {
+        "request": {"method": "GET", "path": "/v1/tunnels/fixture-tunnel/poll", "headers": {"X-Tunnel-Client-Capabilities": ["wrong-cluster-v1"], "Authorization": ["Bearer fixture-api-key"], "X-Tunnel-Shard-Token": ["route-a"]}, "absent_headers": []},
+        "response": {"status": 409, "headers": {"X-Tunnel-Shard-Token": ["route-b"]}, "body": {"error": {"code": "wrong_cluster", "policy_revision": 2}}},
+        "expect": {"error": true, "error_status": 409, "cached_token": "route-b", "policy_revision": 2, "command_tokens": []}
+      },
+      {
+        "request": {"method": "GET", "path": "/v1/tunnels/fixture-tunnel/poll", "headers": {"X-Tunnel-Client-Capabilities": ["wrong-cluster-v1"], "Authorization": ["Bearer fixture-api-key"], "X-Tunnel-Shard-Token": ["route-b"]}, "absent_headers": []},
+        "response": {"status": 204, "headers": {}},
+        "expect": {"error": false, "error_status": 0, "cached_token": "route-b", "policy_revision": 2, "command_tokens": []}
+      }
+    ]
+  },
+  {
+    "name": "old_service_success_needs_no_correction_support",
+    "endpoint": "https://eu.api.openai.com",
+    "tunnel_id": "fixture-tunnel",
+    "steps": [
+      {
+        "request": {"method": "GET", "path": "/v1/tunnels/fixture-tunnel/poll", "headers": {"X-Tunnel-Client-Capabilities": ["wrong-cluster-v1"], "Authorization": ["Bearer fixture-api-key"]}, "absent_headers": ["X-Tunnel-Shard-Token"]},
+        "response": {"status": 204, "headers": {}},
+        "expect": {"error": false, "error_status": 0, "cached_token": "", "policy_revision": null, "command_tokens": []}
+      },
+      {
+        "request": {"method": "GET", "path": "/v1/tunnels/fixture-tunnel/poll", "headers": {"X-Tunnel-Client-Capabilities": ["wrong-cluster-v1"], "Authorization": ["Bearer fixture-api-key"]}, "absent_headers": ["X-Tunnel-Shard-Token"]},
+        "response": {"status": 200, "headers": {}, "body": {"commands": [], "unknown_server_field": true}},
+        "expect": {"error": false, "error_status": 0, "cached_token": "", "policy_revision": null, "command_tokens": []}
+      },
+      {
+        "request": {"method": "GET", "path": "/v1/tunnels/fixture-tunnel/poll", "headers": {"X-Tunnel-Client-Capabilities": ["wrong-cluster-v1"], "Authorization": ["Bearer fixture-api-key"]}, "absent_headers": ["X-Tunnel-Shard-Token"]},
+        "response": {"status": 500, "headers": {}, "body": {"error": {"code": "service_unavailable"}}},
+        "expect": {"error": true, "error_status": 500, "cached_token": "", "policy_revision": null, "command_tokens": []}
+      },
+      {
+        "request": {"method": "GET", "path": "/v1/tunnels/fixture-tunnel/poll", "headers": {"X-Tunnel-Client-Capabilities": ["wrong-cluster-v1"], "Authorization": ["Bearer fixture-api-key"]}, "absent_headers": ["X-Tunnel-Shard-Token"]},
+        "response": {"status": 204, "headers": {}},
+        "expect": {"error": false, "error_status": 0, "cached_token": "", "policy_revision": null, "command_tokens": []}
+      }
+    ]
+  },
+  {
+    "name": "revision_zero_is_valid_and_unknown_fields_are_ignored",
+    "endpoint": "https://eu.api.openai.com",
+    "tunnel_id": "fixture-tunnel",
+    "steps": [
+      {
+        "request": {"method": "GET", "path": "/v1/tunnels/fixture-tunnel/poll", "headers": {"X-Tunnel-Client-Capabilities": ["wrong-cluster-v1"], "Authorization": ["Bearer fixture-api-key"]}, "absent_headers": ["X-Tunnel-Shard-Token"]},
+        "response": {"status": 409, "headers": {"X-Tunnel-Shard-Token": ["opaque.v1/+=="]}, "body": {"error": {"code": "wrong_cluster", "policy_revision": 0, "future_field": {"policy": "opaque"}}, "future_envelope": true}},
+        "expect": {"error": true, "error_status": 409, "cached_token": "opaque.v1/+==", "policy_revision": 0, "command_tokens": []}
+      },
+      {
+        "request": {"method": "GET", "path": "/v1/tunnels/fixture-tunnel/poll", "headers": {"X-Tunnel-Client-Capabilities": ["wrong-cluster-v1"], "Authorization": ["Bearer fixture-api-key"], "X-Tunnel-Shard-Token": ["opaque.v1/+=="]}, "absent_headers": []},
+        "response": {"status": 204, "headers": {}},
+        "expect": {"error": false, "error_status": 0, "cached_token": "opaque.v1/+==", "policy_revision": 0, "command_tokens": []}
+      }
+    ]
+  },
+  {
+    "name": "stale_revision_and_equal_revision_conflict_do_not_ping_pong",
+    "endpoint": "https://eu.api.openai.com",
+    "tunnel_id": "fixture-tunnel",
+    "steps": [
+      {
+        "request": {"method": "GET", "path": "/v1/tunnels/fixture-tunnel/poll", "headers": {"X-Tunnel-Client-Capabilities": ["wrong-cluster-v1"], "Authorization": ["Bearer fixture-api-key"]}, "absent_headers": ["X-Tunnel-Shard-Token"]},
+        "response": {"status": 409, "headers": {"X-Tunnel-Shard-Token": ["route-a"]}, "body": {"error": {"code": "wrong_cluster", "policy_revision": 5, "shard_token": "route-a"}}},
+        "expect": {"error": true, "error_status": 409, "cached_token": "route-a", "policy_revision": 5, "command_tokens": []}
+      },
+      {
+        "request": {"method": "GET", "path": "/v1/tunnels/fixture-tunnel/poll", "headers": {"X-Tunnel-Client-Capabilities": ["wrong-cluster-v1"], "Authorization": ["Bearer fixture-api-key"], "X-Tunnel-Shard-Token": ["route-a"]}, "absent_headers": []},
+        "response": {"status": 204, "headers": {}},
+        "expect": {"error": false, "error_status": 0, "cached_token": "route-a", "policy_revision": 5, "command_tokens": []}
+      },
+      {
+        "request": {"method": "GET", "path": "/v1/tunnels/fixture-tunnel/poll", "headers": {"X-Tunnel-Client-Capabilities": ["wrong-cluster-v1"], "Authorization": ["Bearer fixture-api-key"], "X-Tunnel-Shard-Token": ["route-a"]}, "absent_headers": []},
+        "response": {"status": 409, "headers": {"X-Tunnel-Shard-Token": ["older-route"]}, "body": {"error": {"code": "wrong_cluster", "policy_revision": 4, "shard_token": "older-route"}}},
+        "expect": {"error": true, "error_status": 409, "cached_token": "route-a", "policy_revision": 5, "command_tokens": []}
+      },
+      {
+        "request": {"method": "GET", "path": "/v1/tunnels/fixture-tunnel/poll", "headers": {"X-Tunnel-Client-Capabilities": ["wrong-cluster-v1"], "Authorization": ["Bearer fixture-api-key"], "X-Tunnel-Shard-Token": ["route-a"]}, "absent_headers": []},
+        "response": {"status": 204, "headers": {}},
+        "expect": {"error": false, "error_status": 0, "cached_token": "route-a", "policy_revision": 5, "command_tokens": []}
+      },
+      {
+        "request": {"method": "GET", "path": "/v1/tunnels/fixture-tunnel/poll", "headers": {"X-Tunnel-Client-Capabilities": ["wrong-cluster-v1"], "Authorization": ["Bearer fixture-api-key"], "X-Tunnel-Shard-Token": ["route-a"]}, "absent_headers": []},
+        "response": {"status": 409, "headers": {"X-Tunnel-Shard-Token": ["rival-route"]}, "body": {"error": {"code": "wrong_cluster", "policy_revision": 5, "shard_token": "rival-route"}}},
+        "expect": {"error": true, "error_status": 409, "cached_token": "", "policy_revision": 5, "command_tokens": []}
+      },
+      {
+        "request": {"method": "GET", "path": "/v1/tunnels/fixture-tunnel/poll", "headers": {"X-Tunnel-Client-Capabilities": ["wrong-cluster-v1"], "Authorization": ["Bearer fixture-api-key"]}, "absent_headers": ["X-Tunnel-Shard-Token"]},
+        "response": {"status": 204, "headers": {}},
+        "expect": {"error": false, "error_status": 0, "cached_token": "", "policy_revision": 5, "command_tokens": []}
+      },
+      {
+        "request": {"method": "GET", "path": "/v1/tunnels/fixture-tunnel/poll", "headers": {"X-Tunnel-Client-Capabilities": ["wrong-cluster-v1"], "Authorization": ["Bearer fixture-api-key"]}, "absent_headers": ["X-Tunnel-Shard-Token"]},
+        "response": {"status": 409, "headers": {"X-Tunnel-Shard-Token": ["rival-route"]}, "body": {"error": {"code": "wrong_cluster", "policy_revision": 5, "shard_token": "rival-route"}}},
+        "expect": {"error": true, "error_status": 409, "cached_token": "", "policy_revision": 5, "command_tokens": []}
+      },
+      {
+        "request": {"method": "GET", "path": "/v1/tunnels/fixture-tunnel/poll", "headers": {"X-Tunnel-Client-Capabilities": ["wrong-cluster-v1"], "Authorization": ["Bearer fixture-api-key"]}, "absent_headers": ["X-Tunnel-Shard-Token"]},
+        "response": {"status": 204, "headers": {}},
+        "expect": {"error": false, "error_status": 0, "cached_token": "", "policy_revision": 5, "command_tokens": []}
+      },
+      {
+        "request": {"method": "GET", "path": "/v1/tunnels/fixture-tunnel/poll", "headers": {"X-Tunnel-Client-Capabilities": ["wrong-cluster-v1"], "Authorization": ["Bearer fixture-api-key"]}, "absent_headers": ["X-Tunnel-Shard-Token"]},
+        "response": {"status": 409, "headers": {"X-Tunnel-Shard-Token": ["route-a"]}, "body": {"error": {"code": "wrong_cluster", "policy_revision": 5, "shard_token": "route-a"}}},
+        "expect": {"error": true, "error_status": 409, "cached_token": "route-a", "policy_revision": 5, "command_tokens": []}
+      },
+      {
+        "request": {"method": "GET", "path": "/v1/tunnels/fixture-tunnel/poll", "headers": {"X-Tunnel-Client-Capabilities": ["wrong-cluster-v1"], "Authorization": ["Bearer fixture-api-key"], "X-Tunnel-Shard-Token": ["route-a"]}, "absent_headers": []},
+        "response": {"status": 204, "headers": {}},
+        "expect": {"error": false, "error_status": 0, "cached_token": "route-a", "policy_revision": 5, "command_tokens": []}
+      },
+      {
+        "request": {"method": "GET", "path": "/v1/tunnels/fixture-tunnel/poll", "headers": {"X-Tunnel-Client-Capabilities": ["wrong-cluster-v1"], "Authorization": ["Bearer fixture-api-key"], "X-Tunnel-Shard-Token": ["route-a"]}, "absent_headers": []},
+        "response": {"status": 409, "headers": {"X-Tunnel-Shard-Token": ["route-b"]}, "body": {"error": {"code": "wrong_cluster", "policy_revision": 6, "shard_token": "route-b"}}},
+        "expect": {"error": true, "error_status": 409, "cached_token": "route-b", "policy_revision": 6, "command_tokens": []}
+      },
+      {
+        "request": {"method": "GET", "path": "/v1/tunnels/fixture-tunnel/poll", "headers": {"X-Tunnel-Client-Capabilities": ["wrong-cluster-v1"], "Authorization": ["Bearer fixture-api-key"], "X-Tunnel-Shard-Token": ["route-b"]}, "absent_headers": []},
+        "response": {"status": 204, "headers": {}},
+        "expect": {"error": false, "error_status": 0, "cached_token": "route-b", "policy_revision": 6, "command_tokens": []}
+      }
+    ]
+  },
+  {
+    "name": "repeated_identical_corrections_force_bounded_bootstrap",
+    "endpoint": "https://eu.api.openai.com",
+    "tunnel_id": "fixture-tunnel",
+    "steps": [
+      {
+        "request": {"method": "GET", "path": "/v1/tunnels/fixture-tunnel/poll", "headers": {"X-Tunnel-Client-Capabilities": ["wrong-cluster-v1"], "Authorization": ["Bearer fixture-api-key"]}, "absent_headers": ["X-Tunnel-Shard-Token"]},
+        "response": {"status": 409, "headers": {"X-Tunnel-Shard-Token": ["route-a"]}, "body": {"error": {"code": "wrong_cluster", "policy_revision": 1, "shard_token": "route-a"}}},
+        "expect": {"error": true, "error_status": 409, "cached_token": "route-a", "policy_revision": 1, "command_tokens": []}
+      },
+      {
+        "request": {"method": "GET", "path": "/v1/tunnels/fixture-tunnel/poll", "headers": {"X-Tunnel-Client-Capabilities": ["wrong-cluster-v1"], "Authorization": ["Bearer fixture-api-key"], "X-Tunnel-Shard-Token": ["route-a"]}, "absent_headers": []},
+        "response": {"status": 409, "headers": {"X-Tunnel-Shard-Token": ["route-a"]}, "body": {"error": {"code": "wrong_cluster", "policy_revision": 1, "shard_token": "route-a"}}},
+        "expect": {"error": true, "error_status": 409, "cached_token": "route-a", "policy_revision": 1, "command_tokens": []}
+      },
+      {
+        "request": {"method": "GET", "path": "/v1/tunnels/fixture-tunnel/poll", "headers": {"X-Tunnel-Client-Capabilities": ["wrong-cluster-v1"], "Authorization": ["Bearer fixture-api-key"], "X-Tunnel-Shard-Token": ["route-a"]}, "absent_headers": []},
+        "response": {"status": 409, "headers": {"X-Tunnel-Shard-Token": ["route-a"]}, "body": {"error": {"code": "wrong_cluster", "policy_revision": 1, "shard_token": "route-a"}}},
+        "expect": {"error": true, "error_status": 409, "cached_token": "", "policy_revision": 1, "command_tokens": []}
+      },
+      {
+        "request": {"method": "GET", "path": "/v1/tunnels/fixture-tunnel/poll", "headers": {"X-Tunnel-Client-Capabilities": ["wrong-cluster-v1"], "Authorization": ["Bearer fixture-api-key"]}, "absent_headers": ["X-Tunnel-Shard-Token"]},
+        "response": {"status": 409, "headers": {"X-Tunnel-Shard-Token": ["route-a"]}, "body": {"error": {"code": "wrong_cluster", "policy_revision": 1, "shard_token": "route-a"}}},
+        "expect": {"error": true, "error_status": 409, "cached_token": "route-a", "policy_revision": 1, "command_tokens": []}
+      },
+      {
+        "request": {"method": "GET", "path": "/v1/tunnels/fixture-tunnel/poll", "headers": {"X-Tunnel-Client-Capabilities": ["wrong-cluster-v1"], "Authorization": ["Bearer fixture-api-key"], "X-Tunnel-Shard-Token": ["route-a"]}, "absent_headers": []},
+        "response": {"status": 409, "headers": {"X-Tunnel-Shard-Token": ["route-a"]}, "body": {"error": {"code": "wrong_cluster", "policy_revision": 1, "shard_token": "route-a"}}},
+        "expect": {"error": true, "error_status": 409, "cached_token": "route-a", "policy_revision": 1, "command_tokens": []}
+      },
+      {
+        "request": {"method": "GET", "path": "/v1/tunnels/fixture-tunnel/poll", "headers": {"X-Tunnel-Client-Capabilities": ["wrong-cluster-v1"], "Authorization": ["Bearer fixture-api-key"], "X-Tunnel-Shard-Token": ["route-a"]}, "absent_headers": []},
+        "response": {"status": 409, "headers": {"X-Tunnel-Shard-Token": ["route-a"]}, "body": {"error": {"code": "wrong_cluster", "policy_revision": 1, "shard_token": "route-a"}}},
+        "expect": {"error": true, "error_status": 409, "cached_token": "", "policy_revision": 1, "command_tokens": []}
+      },
+      {
+        "request": {"method": "GET", "path": "/v1/tunnels/fixture-tunnel/poll", "headers": {"X-Tunnel-Client-Capabilities": ["wrong-cluster-v1"], "Authorization": ["Bearer fixture-api-key"]}, "absent_headers": ["X-Tunnel-Shard-Token"]},
+        "response": {"status": 409, "headers": {"X-Tunnel-Shard-Token": ["route-a"]}, "body": {"error": {"code": "wrong_cluster", "policy_revision": 1, "shard_token": "route-a"}}},
+        "expect": {"error": true, "error_status": 409, "cached_token": "route-a", "policy_revision": 1, "command_tokens": []}
+      },
+      {
+        "request": {"method": "GET", "path": "/v1/tunnels/fixture-tunnel/poll", "headers": {"X-Tunnel-Client-Capabilities": ["wrong-cluster-v1"], "Authorization": ["Bearer fixture-api-key"], "X-Tunnel-Shard-Token": ["route-a"]}, "absent_headers": []},
+        "response": {"status": 204, "headers": {}},
+        "expect": {"error": false, "error_status": 0, "cached_token": "route-a", "policy_revision": 1, "command_tokens": []}
+      }
+    ]
+  },
+  {
+    "name": "cached_destination_failure_then_unavailable_bootstrap_then_recovery",
+    "endpoint": "https://eu.api.openai.com",
+    "tunnel_id": "fixture-tunnel",
+    "steps": [
+      {
+        "request": {"method": "GET", "path": "/v1/tunnels/fixture-tunnel/poll", "headers": {"X-Tunnel-Client-Capabilities": ["wrong-cluster-v1"], "Authorization": ["Bearer fixture-api-key"]}, "absent_headers": ["X-Tunnel-Shard-Token"]},
+        "response": {"status": 409, "headers": {"X-Tunnel-Shard-Token": ["route-a"]}, "body": {"error": {"code": "wrong_cluster", "policy_revision": 1, "shard_token": "route-a"}}},
+        "expect": {"error": true, "error_status": 409, "cached_token": "route-a", "policy_revision": 1, "command_tokens": []}
+      },
+      {
+        "request": {"method": "GET", "path": "/v1/tunnels/fixture-tunnel/poll", "headers": {"X-Tunnel-Client-Capabilities": ["wrong-cluster-v1"], "Authorization": ["Bearer fixture-api-key"], "X-Tunnel-Shard-Token": ["route-a"]}, "absent_headers": []},
+        "response": {"status": 204, "headers": {}},
+        "expect": {"error": false, "error_status": 0, "cached_token": "route-a", "policy_revision": 1, "command_tokens": []}
+      },
+      {
+        "request": {"method": "GET", "path": "/v1/tunnels/fixture-tunnel/poll", "headers": {"X-Tunnel-Client-Capabilities": ["wrong-cluster-v1"], "Authorization": ["Bearer fixture-api-key"], "X-Tunnel-Shard-Token": ["route-a"]}, "absent_headers": []},
+        "response": {"status": 503, "headers": {}, "body": {"error": {"code": "unavailable"}}},
+        "expect": {"error": true, "error_status": 503, "cached_token": "route-a", "policy_revision": 1, "command_tokens": []}
+      },
+      {
+        "request": {"method": "GET", "path": "/v1/tunnels/fixture-tunnel/poll", "headers": {"X-Tunnel-Client-Capabilities": ["wrong-cluster-v1"], "Authorization": ["Bearer fixture-api-key"], "X-Tunnel-Shard-Token": ["route-a"]}, "absent_headers": []},
+        "response": {"transport_error": "connection reset by peer"},
+        "expect": {"error": true, "error_status": 0, "cached_token": "route-a", "policy_revision": 1, "command_tokens": []}
+      },
+      {
+        "request": {"method": "GET", "path": "/v1/tunnels/fixture-tunnel/poll", "headers": {"X-Tunnel-Client-Capabilities": ["wrong-cluster-v1"], "Authorization": ["Bearer fixture-api-key"], "X-Tunnel-Shard-Token": ["route-a"]}, "absent_headers": []},
+        "response": {"status": 408, "headers": {}, "body": {"error": {"code": "timeout"}}},
+        "expect": {"error": true, "error_status": 408, "cached_token": "", "policy_revision": 1, "command_tokens": []}
+      },
+      {
+        "request": {"method": "GET", "path": "/v1/tunnels/fixture-tunnel/poll", "headers": {"X-Tunnel-Client-Capabilities": ["wrong-cluster-v1"], "Authorization": ["Bearer fixture-api-key"]}, "absent_headers": ["X-Tunnel-Shard-Token"]},
+        "response": {"status": 503, "headers": {}, "body": {"error": {"code": "unavailable"}}},
+        "expect": {"error": true, "error_status": 503, "cached_token": "", "policy_revision": 1, "command_tokens": []}
+      },
+      {
+        "request": {"method": "GET", "path": "/v1/tunnels/fixture-tunnel/poll", "headers": {"X-Tunnel-Client-Capabilities": ["wrong-cluster-v1"], "Authorization": ["Bearer fixture-api-key"]}, "absent_headers": ["X-Tunnel-Shard-Token"]},
+        "response": {"transport_error": "connection refused"},
+        "expect": {"error": true, "error_status": 0, "cached_token": "", "policy_revision": 1, "command_tokens": []}
+      },
+      {
+        "request": {"method": "GET", "path": "/v1/tunnels/fixture-tunnel/poll", "headers": {"X-Tunnel-Client-Capabilities": ["wrong-cluster-v1"], "Authorization": ["Bearer fixture-api-key"]}, "absent_headers": ["X-Tunnel-Shard-Token"]},
+        "response": {"status": 409, "headers": {"X-Tunnel-Shard-Token": ["route-b"]}, "body": {"error": {"code": "wrong_cluster", "policy_revision": 2, "shard_token": "route-b"}}},
+        "expect": {"error": true, "error_status": 409, "cached_token": "route-b", "policy_revision": 2, "command_tokens": []}
+      },
+      {
+        "request": {"method": "GET", "path": "/v1/tunnels/fixture-tunnel/poll", "headers": {"X-Tunnel-Client-Capabilities": ["wrong-cluster-v1"], "Authorization": ["Bearer fixture-api-key"], "X-Tunnel-Shard-Token": ["route-b"]}, "absent_headers": []},
+        "response": {"status": 204, "headers": {}},
+        "expect": {"error": false, "error_status": 0, "cached_token": "route-b", "policy_revision": 2, "command_tokens": []}
+      }
+    ]
+  },
+  {
+    "name": "successful_poll_resets_destination_failure_streak",
+    "endpoint": "https://eu.api.openai.com",
+    "tunnel_id": "fixture-tunnel",
+    "steps": [
+      {
+        "request": {"method": "GET", "path": "/v1/tunnels/fixture-tunnel/poll", "headers": {"X-Tunnel-Client-Capabilities": ["wrong-cluster-v1"], "Authorization": ["Bearer fixture-api-key"]}, "absent_headers": ["X-Tunnel-Shard-Token"]},
+        "response": {"status": 409, "headers": {"X-Tunnel-Shard-Token": ["route-a"]}, "body": {"error": {"code": "wrong_cluster", "policy_revision": 1, "shard_token": "route-a"}}},
+        "expect": {"error": true, "error_status": 409, "cached_token": "route-a", "policy_revision": 1, "command_tokens": []}
+      },
+      {
+        "request": {"method": "GET", "path": "/v1/tunnels/fixture-tunnel/poll", "headers": {"X-Tunnel-Client-Capabilities": ["wrong-cluster-v1"], "Authorization": ["Bearer fixture-api-key"], "X-Tunnel-Shard-Token": ["route-a"]}, "absent_headers": []},
+        "response": {"status": 500, "headers": {}},
+        "expect": {"error": true, "error_status": 500, "cached_token": "route-a", "policy_revision": 1, "command_tokens": []}
+      },
+      {
+        "request": {"method": "GET", "path": "/v1/tunnels/fixture-tunnel/poll", "headers": {"X-Tunnel-Client-Capabilities": ["wrong-cluster-v1"], "Authorization": ["Bearer fixture-api-key"], "X-Tunnel-Shard-Token": ["route-a"]}, "absent_headers": []},
+        "response": {"status": 502, "headers": {}},
+        "expect": {"error": true, "error_status": 502, "cached_token": "route-a", "policy_revision": 1, "command_tokens": []}
+      },
+      {
+        "request": {"method": "GET", "path": "/v1/tunnels/fixture-tunnel/poll", "headers": {"X-Tunnel-Client-Capabilities": ["wrong-cluster-v1"], "Authorization": ["Bearer fixture-api-key"], "X-Tunnel-Shard-Token": ["route-a"]}, "absent_headers": []},
+        "response": {"status": 204, "headers": {}},
+        "expect": {"error": false, "error_status": 0, "cached_token": "route-a", "policy_revision": 1, "command_tokens": []}
+      },
+      {
+        "request": {"method": "GET", "path": "/v1/tunnels/fixture-tunnel/poll", "headers": {"X-Tunnel-Client-Capabilities": ["wrong-cluster-v1"], "Authorization": ["Bearer fixture-api-key"], "X-Tunnel-Shard-Token": ["route-a"]}, "absent_headers": []},
+        "response": {"status": 500, "headers": {}},
+        "expect": {"error": true, "error_status": 500, "cached_token": "route-a", "policy_revision": 1, "command_tokens": []}
+      },
+      {
+        "request": {"method": "GET", "path": "/v1/tunnels/fixture-tunnel/poll", "headers": {"X-Tunnel-Client-Capabilities": ["wrong-cluster-v1"], "Authorization": ["Bearer fixture-api-key"], "X-Tunnel-Shard-Token": ["route-a"]}, "absent_headers": []},
+        "response": {"status": 502, "headers": {}},
+        "expect": {"error": true, "error_status": 502, "cached_token": "route-a", "policy_revision": 1, "command_tokens": []}
+      },
+      {
+        "request": {"method": "GET", "path": "/v1/tunnels/fixture-tunnel/poll", "headers": {"X-Tunnel-Client-Capabilities": ["wrong-cluster-v1"], "Authorization": ["Bearer fixture-api-key"], "X-Tunnel-Shard-Token": ["route-a"]}, "absent_headers": []},
+        "response": {"status": 503, "headers": {}},
+        "expect": {"error": true, "error_status": 503, "cached_token": "", "policy_revision": 1, "command_tokens": []}
+      },
+      {
+        "request": {"method": "GET", "path": "/v1/tunnels/fixture-tunnel/poll", "headers": {"X-Tunnel-Client-Capabilities": ["wrong-cluster-v1"], "Authorization": ["Bearer fixture-api-key"]}, "absent_headers": ["X-Tunnel-Shard-Token"]},
+        "response": {"status": 204, "headers": {}},
+        "expect": {"error": false, "error_status": 0, "cached_token": "", "policy_revision": 1, "command_tokens": []}
+      }
+    ]
+  },
+  {
+    "name": "ordinary_rejections_do_not_clear_or_replace_cached_route",
+    "endpoint": "https://eu.api.openai.com",
+    "tunnel_id": "fixture-tunnel",
+    "steps": [
+      {
+        "request": {"method": "GET", "path": "/v1/tunnels/fixture-tunnel/poll", "headers": {"X-Tunnel-Client-Capabilities": ["wrong-cluster-v1"], "Authorization": ["Bearer fixture-api-key"]}, "absent_headers": ["X-Tunnel-Shard-Token"]},
+        "response": {"status": 409, "headers": {"X-Tunnel-Shard-Token": ["route-a"]}, "body": {"error": {"code": "wrong_cluster", "policy_revision": 1, "shard_token": "route-a"}}},
+        "expect": {"error": true, "error_status": 409, "cached_token": "route-a", "policy_revision": 1, "command_tokens": []}
+      },
+      {
+        "request": {"method": "GET", "path": "/v1/tunnels/fixture-tunnel/poll", "headers": {"X-Tunnel-Client-Capabilities": ["wrong-cluster-v1"], "Authorization": ["Bearer fixture-api-key"], "X-Tunnel-Shard-Token": ["route-a"]}, "absent_headers": []},
+        "response": {"status": 204, "headers": {}},
+        "expect": {"error": false, "error_status": 0, "cached_token": "route-a", "policy_revision": 1, "command_tokens": []}
+      },
+      {
+        "request": {"method": "GET", "path": "/v1/tunnels/fixture-tunnel/poll", "headers": {"X-Tunnel-Client-Capabilities": ["wrong-cluster-v1"], "Authorization": ["Bearer fixture-api-key"], "X-Tunnel-Shard-Token": ["route-a"]}, "absent_headers": []},
+        "response": {"status": 409, "headers": {"X-Tunnel-Shard-Token": ["untrusted"]}, "body": {"error": {"code": "conflict", "policy_revision": 99, "shard_token": "untrusted"}}},
+        "expect": {"error": true, "error_status": 409, "cached_token": "route-a", "policy_revision": 1, "command_tokens": []}
+      },
+      {
+        "request": {"method": "GET", "path": "/v1/tunnels/fixture-tunnel/poll", "headers": {"X-Tunnel-Client-Capabilities": ["wrong-cluster-v1"], "Authorization": ["Bearer fixture-api-key"], "X-Tunnel-Shard-Token": ["route-a"]}, "absent_headers": []},
+        "response": {"status": 401, "headers": {"X-Tunnel-Shard-Token": ["untrusted"]}, "body": {"error": {"code": "wrong_cluster", "policy_revision": 99}}},
+        "expect": {"error": true, "error_status": 401, "cached_token": "route-a", "policy_revision": 1, "command_tokens": []}
+      },
+      {
+        "request": {"method": "GET", "path": "/v1/tunnels/fixture-tunnel/poll", "headers": {"X-Tunnel-Client-Capabilities": ["wrong-cluster-v1"], "Authorization": ["Bearer fixture-api-key"], "X-Tunnel-Shard-Token": ["route-a"]}, "absent_headers": []},
+        "response": {"status": 429, "headers": {"Retry-After": ["600"]}, "body": {"error": {"code": "rate_limit"}}},
+        "expect": {"error": true, "error_status": 429, "cached_token": "route-a", "policy_revision": 1, "command_tokens": []}
+      },
+      {
+        "request": {"method": "GET", "path": "/v1/tunnels/fixture-tunnel/poll", "headers": {"X-Tunnel-Client-Capabilities": ["wrong-cluster-v1"], "Authorization": ["Bearer fixture-api-key"], "X-Tunnel-Shard-Token": ["route-a"]}, "absent_headers": []},
+        "response": {"status": 204, "headers": {}},
+        "expect": {"error": false, "error_status": 0, "cached_token": "route-a", "policy_revision": 1, "command_tokens": []}
+      }
+    ]
+  },
+  {
+    "name": "malformed_corrections_never_change_cached_route",
+    "endpoint": "https://eu.api.openai.com",
+    "tunnel_id": "fixture-tunnel",
+    "steps": [
+      {
+        "request": {"method": "GET", "path": "/v1/tunnels/fixture-tunnel/poll", "headers": {"X-Tunnel-Client-Capabilities": ["wrong-cluster-v1"], "Authorization": ["Bearer fixture-api-key"]}, "absent_headers": ["X-Tunnel-Shard-Token"]},
+        "response": {"status": 409, "headers": {"X-Tunnel-Shard-Token": ["route-a"]}, "body": {"error": {"code": "wrong_cluster", "policy_revision": 1, "shard_token": "route-a"}}},
+        "expect": {"error": true, "error_status": 409, "cached_token": "route-a", "policy_revision": 1, "command_tokens": []}
+      },
+      {
+        "request": {"method": "GET", "path": "/v1/tunnels/fixture-tunnel/poll", "headers": {"X-Tunnel-Client-Capabilities": ["wrong-cluster-v1"], "Authorization": ["Bearer fixture-api-key"], "X-Tunnel-Shard-Token": ["route-a"]}, "absent_headers": []},
+        "response": {"status": 204, "headers": {}},
+        "expect": {"error": false, "error_status": 0, "cached_token": "route-a", "policy_revision": 1, "command_tokens": []}
+      },
+      {
+        "request": {"method": "GET", "path": "/v1/tunnels/fixture-tunnel/poll", "headers": {"X-Tunnel-Client-Capabilities": ["wrong-cluster-v1"], "Authorization": ["Bearer fixture-api-key"], "X-Tunnel-Shard-Token": ["route-a"]}, "absent_headers": []},
+        "response": {"status": 409, "headers": {}, "body": {"error": {"code": "wrong_cluster", "policy_revision": 9}}},
+        "expect": {"error": true, "error_status": 409, "cached_token": "route-a", "policy_revision": 1, "command_tokens": []},
+        "note": "missing_header"
+      },
+      {
+        "request": {"method": "GET", "path": "/v1/tunnels/fixture-tunnel/poll", "headers": {"X-Tunnel-Client-Capabilities": ["wrong-cluster-v1"], "Authorization": ["Bearer fixture-api-key"], "X-Tunnel-Shard-Token": ["route-a"]}, "absent_headers": []},
+        "response": {"status": 409, "headers": {}, "body": {"error": {"code": "wrong_cluster", "policy_revision": 9}}},
+        "expect": {"error": true, "error_status": 409, "cached_token": "route-a", "policy_revision": 1, "command_tokens": []},
+        "note": "missing_header"
+      },
+      {
+        "request": {"method": "GET", "path": "/v1/tunnels/fixture-tunnel/poll", "headers": {"X-Tunnel-Client-Capabilities": ["wrong-cluster-v1"], "Authorization": ["Bearer fixture-api-key"], "X-Tunnel-Shard-Token": ["route-a"]}, "absent_headers": []},
+        "response": {"status": 409, "headers": {}, "body": {"error": {"code": "wrong_cluster", "policy_revision": 9}}},
+        "expect": {"error": true, "error_status": 409, "cached_token": "route-a", "policy_revision": 1, "command_tokens": []},
+        "note": "missing_header"
+      },
+      {
+        "request": {"method": "GET", "path": "/v1/tunnels/fixture-tunnel/poll", "headers": {"X-Tunnel-Client-Capabilities": ["wrong-cluster-v1"], "Authorization": ["Bearer fixture-api-key"], "X-Tunnel-Shard-Token": ["route-a"]}, "absent_headers": []},
+        "response": {"status": 409, "headers": {"X-Tunnel-Shard-Token": ["untrusted"]}, "body": {"error": {"code": "wrong_cluster"}}},
+        "expect": {"error": true, "error_status": 409, "cached_token": "route-a", "policy_revision": 1, "command_tokens": []},
+        "note": "missing_revision"
+      },
+      {
+        "request": {"method": "GET", "path": "/v1/tunnels/fixture-tunnel/poll", "headers": {"X-Tunnel-Client-Capabilities": ["wrong-cluster-v1"], "Authorization": ["Bearer fixture-api-key"], "X-Tunnel-Shard-Token": ["route-a"]}, "absent_headers": []},
+        "response": {"status": 409, "headers": {"X-Tunnel-Shard-Token": ["untrusted"]}, "body": {"error": {"code": "wrong_cluster", "policy_revision": null}}},
+        "expect": {"error": true, "error_status": 409, "cached_token": "route-a", "policy_revision": 1, "command_tokens": []},
+        "note": "null_revision"
+      },
+      {
+        "request": {"method": "GET", "path": "/v1/tunnels/fixture-tunnel/poll", "headers": {"X-Tunnel-Client-Capabilities": ["wrong-cluster-v1"], "Authorization": ["Bearer fixture-api-key"], "X-Tunnel-Shard-Token": ["route-a"]}, "absent_headers": []},
+        "response": {"status": 409, "headers": {"X-Tunnel-Shard-Token": ["untrusted"]}, "body": {"error": {"code": "wrong_cluster", "policy_revision": -1}}},
+        "expect": {"error": true, "error_status": 409, "cached_token": "route-a", "policy_revision": 1, "command_tokens": []},
+        "note": "negative_revision"
+      },
+      {
+        "request": {"method": "GET", "path": "/v1/tunnels/fixture-tunnel/poll", "headers": {"X-Tunnel-Client-Capabilities": ["wrong-cluster-v1"], "Authorization": ["Bearer fixture-api-key"], "X-Tunnel-Shard-Token": ["route-a"]}, "absent_headers": []},
+        "response": {"status": 409, "headers": {"X-Tunnel-Shard-Token": ["untrusted"]}, "body": {"error": {"code": "wrong_cluster", "policy_revision": 1.5}}},
+        "expect": {"error": true, "error_status": 409, "cached_token": "route-a", "policy_revision": 1, "command_tokens": []},
+        "note": "fractional_revision"
+      },
+      {
+        "request": {"method": "GET", "path": "/v1/tunnels/fixture-tunnel/poll", "headers": {"X-Tunnel-Client-Capabilities": ["wrong-cluster-v1"], "Authorization": ["Bearer fixture-api-key"], "X-Tunnel-Shard-Token": ["route-a"]}, "absent_headers": []},
+        "response": {"status": 409, "headers": {"X-Tunnel-Shard-Token": ["untrusted"]}, "body": {"error": {"code": "wrong_cluster", "policy_revision": "9"}}},
+        "expect": {"error": true, "error_status": 409, "cached_token": "route-a", "policy_revision": 1, "command_tokens": []},
+        "note": "string_revision"
+      },
+      {
+        "request": {"method": "GET", "path": "/v1/tunnels/fixture-tunnel/poll", "headers": {"X-Tunnel-Client-Capabilities": ["wrong-cluster-v1"], "Authorization": ["Bearer fixture-api-key"], "X-Tunnel-Shard-Token": ["route-a"]}, "absent_headers": []},
+        "response": {"status": 409, "headers": {"X-Tunnel-Shard-Token": ["untrusted"]}, "body": {"error": {"code": "wrong_cluster", "policy_revision": 9007199254740992}}},
+        "expect": {"error": true, "error_status": 409, "cached_token": "route-a", "policy_revision": 1, "command_tokens": []},
+        "note": "unsafe_large_revision"
+      },
+      {
+        "request": {"method": "GET", "path": "/v1/tunnels/fixture-tunnel/poll", "headers": {"X-Tunnel-Client-Capabilities": ["wrong-cluster-v1"], "Authorization": ["Bearer fixture-api-key"], "X-Tunnel-Shard-Token": ["route-a"]}, "absent_headers": []},
+        "response": {"status": 409, "headers": {"X-Tunnel-Shard-Token": [""]}, "body": {"error": {"code": "wrong_cluster", "policy_revision": 9}}},
+        "expect": {"error": true, "error_status": 409, "cached_token": "route-a", "policy_revision": 1, "command_tokens": []},
+        "note": "empty_header"
+      },
+      {
+        "request": {"method": "GET", "path": "/v1/tunnels/fixture-tunnel/poll", "headers": {"X-Tunnel-Client-Capabilities": ["wrong-cluster-v1"], "Authorization": ["Bearer fixture-api-key"], "X-Tunnel-Shard-Token": ["route-a"]}, "absent_headers": []},
+        "response": {"status": 409, "headers": {"X-Tunnel-Shard-Token": ["untrusted", "second"]}, "body": {"error": {"code": "wrong_cluster", "policy_revision": 9}}},
+        "expect": {"error": true, "error_status": 409, "cached_token": "route-a", "policy_revision": 1, "command_tokens": []},
+        "note": "duplicate_header"
+      },
+      {
+        "request": {"method": "GET", "path": "/v1/tunnels/fixture-tunnel/poll", "headers": {"X-Tunnel-Client-Capabilities": ["wrong-cluster-v1"], "Authorization": ["Bearer fixture-api-key"], "X-Tunnel-Shard-Token": ["route-a"]}, "absent_headers": []},
+        "response": {"status": 409, "headers": {"X-Tunnel-Shard-Token": ["untrusted,second"]}, "body": {"error": {"code": "wrong_cluster", "policy_revision": 9}}},
+        "expect": {"error": true, "error_status": 409, "cached_token": "route-a", "policy_revision": 1, "command_tokens": []},
+        "note": "comma_header"
+      },
+      {
+        "request": {"method": "GET", "path": "/v1/tunnels/fixture-tunnel/poll", "headers": {"X-Tunnel-Client-Capabilities": ["wrong-cluster-v1"], "Authorization": ["Bearer fixture-api-key"], "X-Tunnel-Shard-Token": ["route-a"]}, "absent_headers": []},
+        "response": {"status": 409, "headers": {"X-Tunnel-Shard-Token": ["untrusted token"]}, "body": {"error": {"code": "wrong_cluster", "policy_revision": 9}}},
+        "expect": {"error": true, "error_status": 409, "cached_token": "route-a", "policy_revision": 1, "command_tokens": []},
+        "note": "space_header"
+      },
+      {
+        "request": {"method": "GET", "path": "/v1/tunnels/fixture-tunnel/poll", "headers": {"X-Tunnel-Client-Capabilities": ["wrong-cluster-v1"], "Authorization": ["Bearer fixture-api-key"], "X-Tunnel-Shard-Token": ["route-a"]}, "absent_headers": []},
+        "response": {"status": 409, "headers": {"X-Tunnel-Shard-Token": ["untrusted\ttoken"]}, "body": {"error": {"code": "wrong_cluster", "policy_revision": 9}}},
+        "expect": {"error": true, "error_status": 409, "cached_token": "route-a", "policy_revision": 1, "command_tokens": []},
+        "note": "tab_header"
+      },
+      {
+        "request": {"method": "GET", "path": "/v1/tunnels/fixture-tunnel/poll", "headers": {"X-Tunnel-Client-Capabilities": ["wrong-cluster-v1"], "Authorization": ["Bearer fixture-api-key"], "X-Tunnel-Shard-Token": ["route-a"]}, "absent_headers": []},
+        "response": {"status": 409, "headers": {"X-Tunnel-Shard-Token": ["untrusted-\u00e9"]}, "body": {"error": {"code": "wrong_cluster", "policy_revision": 9}}},
+        "expect": {"error": true, "error_status": 409, "cached_token": "route-a", "policy_revision": 1, "command_tokens": []},
+        "note": "non_ascii_header"
+      },
+      {
+        "request": {"method": "GET", "path": "/v1/tunnels/fixture-tunnel/poll", "headers": {"X-Tunnel-Client-Capabilities": ["wrong-cluster-v1"], "Authorization": ["Bearer fixture-api-key"], "X-Tunnel-Shard-Token": ["route-a"]}, "absent_headers": []},
+        "response": {"status": 409, "headers": {"X-Tunnel-Shard-Token": ["xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"]}, "body": {"error": {"code": "wrong_cluster", "policy_revision": 9}}},
+        "expect": {"error": true, "error_status": 409, "cached_token": "route-a", "policy_revision": 1, "command_tokens": []},
+        "note": "oversized_header"
+      },
+      {
+        "request": {"method": "GET", "path": "/v1/tunnels/fixture-tunnel/poll", "headers": {"X-Tunnel-Client-Capabilities": ["wrong-cluster-v1"], "Authorization": ["Bearer fixture-api-key"], "X-Tunnel-Shard-Token": ["route-a"]}, "absent_headers": []},
+        "response": {"status": 409, "headers": {"X-Tunnel-Shard-Token": ["untrusted"]}, "body": {"error": {"code": "wrong_cluster", "policy_revision": 9, "shard_token": "different"}}},
+        "expect": {"error": true, "error_status": 409, "cached_token": "route-a", "policy_revision": 1, "command_tokens": []},
+        "note": "conflicting_body"
+      },
+      {
+        "request": {"method": "GET", "path": "/v1/tunnels/fixture-tunnel/poll", "headers": {"X-Tunnel-Client-Capabilities": ["wrong-cluster-v1"], "Authorization": ["Bearer fixture-api-key"], "X-Tunnel-Shard-Token": ["route-a"]}, "absent_headers": []},
+        "response": {"status": 409, "headers": {"X-Tunnel-Shard-Token": ["untrusted"]}, "body": {"error": {"code": "wrong_cluster", "policy_revision": 9, "shard_token": null}}},
+        "expect": {"error": true, "error_status": 409, "cached_token": "route-a", "policy_revision": 1, "command_tokens": []},
+        "note": "null_body_token"
+      },
+      {
+        "request": {"method": "GET", "path": "/v1/tunnels/fixture-tunnel/poll", "headers": {"X-Tunnel-Client-Capabilities": ["wrong-cluster-v1"], "Authorization": ["Bearer fixture-api-key"], "X-Tunnel-Shard-Token": ["route-a"]}, "absent_headers": []},
+        "response": {"status": 204, "headers": {}},
+        "expect": {"error": false, "error_status": 0, "cached_token": "route-a", "policy_revision": 1, "command_tokens": []}
+      }
+    ]
+  }
+]

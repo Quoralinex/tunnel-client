@@ -29,6 +29,8 @@ func TestMain(m *testing.M) {
 // Cmd.Start path. The payload must reach the re-executed tunnel-client as one
 // literal profile-dir argument, not shell syntax or a selectable executable.
 func TestStartProcessReexecsCurrentExecutableWithFixedArgs(t *testing.T) {
+	t.Parallel()
+
 	tempDir := t.TempDir()
 	markerPath := filepath.Join(tempDir, "injected")
 	argsPath := filepath.Join(tempDir, "argv")
@@ -47,7 +49,7 @@ func TestStartProcessReexecsCurrentExecutableWithFixedArgs(t *testing.T) {
 	osProcess, ok := process.(*osProcess)
 	require.True(t, ok)
 	require.Equal(t, executable, osProcess.cmd.Path)
-	require.Equal(t, append([]string{executable}, tunnelClientRunArgs("profile", payload)...), osProcess.cmd.Args)
+	require.Equal(t, append(append([]string{executable}, tunnelClientRunArgs("profile", payload)...), "--log.file", ""), osProcess.cmd.Args)
 	select {
 	case <-osProcess.done:
 		exitCode := osProcess.Poll()
@@ -58,7 +60,7 @@ func TestStartProcessReexecsCurrentExecutableWithFixedArgs(t *testing.T) {
 	}
 
 	require.NoFileExists(t, markerPath)
-	require.Equal(t, strings.Join(tunnelClientRunArgs("profile", payload), "\n")+"\n", readFile(t, argsPath))
+	require.Equal(t, strings.Join(append(tunnelClientRunArgs("profile", payload), "--log.file", ""), "\n")+"\n", readFile(t, argsPath))
 }
 
 func readFile(t *testing.T, path string) string {

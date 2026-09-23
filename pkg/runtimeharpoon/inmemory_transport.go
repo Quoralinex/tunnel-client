@@ -340,10 +340,24 @@ func (c *legacyProtocolForTestingConnection) Write(ctx context.Context, message 
 	if c == nil || c.base == nil {
 		return nil
 	}
+	response, ok := message.(*jsonrpc.Response)
+	if !ok || response.Error != nil {
+		return c.base.Write(ctx, message)
+	}
+	c.mu.Lock()
+	if !c.hasPendingInit || response.ID.Raw() != c.pendingInitialize.Raw() {
+		c.mu.Unlock()
+		return c.base.Write(ctx, message)
+	}
+	defer c.mu.Unlock()
+	// The peer can receive this response before base.Write returns. Keep
+	// follow-up reads from observing stale state during response publication;
+	// a failed write must still leave the session uninitialized.
 	if err := c.base.Write(ctx, message); err != nil {
 		return err
 	}
-	c.noteInitializeResponse(message)
+	c.initialized = true
+	c.hasPendingInit = false
 	return nil
 }
 
@@ -378,23 +392,6 @@ func (c *legacyProtocolForTestingConnection) noteInitializeRequest(request *json
 	defer c.mu.Unlock()
 	c.pendingInitialize = request.ID
 	c.hasPendingInit = true
-}
-
-func (c *legacyProtocolForTestingConnection) noteInitializeResponse(message jsonrpc.Message) {
-	if c == nil {
-		return
-	}
-	response, ok := message.(*jsonrpc.Response)
-	if !ok || response.Error != nil {
-		return
-	}
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if !c.hasPendingInit || response.ID.Raw() != c.pendingInitialize.Raw() {
-		return
-	}
-	c.initialized = true
-	c.hasPendingInit = false
 }
 
 func legacyProtocolForTestingError(request *jsonrpc.Request, initialized bool) *jsonrpc.Error {

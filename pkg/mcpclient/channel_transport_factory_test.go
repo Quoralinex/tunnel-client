@@ -366,8 +366,8 @@ func TestChannelHTTPClientScopesForwardedHeadersAcrossRedirects(t *testing.T) {
 			seenHeaders: untrustedOriginHeaders,
 		},
 	} {
-		testCase := testCase
 		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
 			ctx, carrier, err := internal.ContextWithHeaders(context.Background(), forwardedHeaders)
 			if err != nil {
 				t.Fatalf("ContextWithHeaders failed: %v", err)
@@ -402,7 +402,6 @@ func TestRuntimeMCPHTTPClientRejectsCrossOriginRedirects(t *testing.T) {
 		http.StatusTemporaryRedirect,
 		http.StatusPermanentRedirect,
 	} {
-		statusCode := statusCode
 		t.Run(http.StatusText(statusCode), func(t *testing.T) {
 			t.Parallel()
 
@@ -569,7 +568,6 @@ func TestRuntimeMCPHTTPClientRejectsCrossOriginSessionTerminationRedirect(t *tes
 	t.Parallel()
 
 	for _, statusCode := range []int{http.StatusTemporaryRedirect, http.StatusPermanentRedirect} {
-		statusCode := statusCode
 		t.Run(http.StatusText(statusCode), func(t *testing.T) {
 			t.Parallel()
 
@@ -671,7 +669,6 @@ func TestSameURLOriginCanonicalizesRuntimeMCPOrigin(t *testing.T) {
 		{name: "ipv6 link local destination", left: "https://mcp.example.test/mcp", right: "http://[fe80::1]/mcp", want: false},
 	}
 	for _, tc := range testCases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			left := mustParseURLFactoryTest(t, tc.left)
@@ -753,6 +750,7 @@ func TestChannelTransportFactoryMTLS(t *testing.T) {
 	bundle := &tlsconfig.Bundle{RootCAs: material.caPool}
 
 	t.Run("request without client certificate fails", func(t *testing.T) {
+		t.Parallel()
 		binding := config.MCPChannelBinding{
 			Channel:       types.DefaultChannel,
 			TransportKind: config.MCPTransportHTTPStreamable,
@@ -783,6 +781,7 @@ func TestChannelTransportFactoryMTLS(t *testing.T) {
 	})
 
 	t.Run("request with client certificate succeeds", func(t *testing.T) {
+		t.Parallel()
 		binding := config.MCPChannelBinding{
 			Channel:           types.DefaultChannel,
 			TransportKind:     config.MCPTransportHTTPStreamable,
@@ -875,7 +874,7 @@ func TestChannelTransportFactoryBuildSingleInstanceUnderConcurrency(t *testing.T
 	results := make([]mcp.Transport, callers)
 	var wg sync.WaitGroup
 	wg.Add(callers)
-	for i := 0; i < callers; i++ {
+	for i := range callers {
 		index := i
 		go func() {
 			defer wg.Done()

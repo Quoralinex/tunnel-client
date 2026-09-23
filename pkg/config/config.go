@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/url"
 	"os"
+	"slices"
 	"strconv"
 	"time"
 
@@ -16,6 +17,8 @@ import (
 	"github.com/openai/tunnel-client/pkg/version"
 )
 
+// LogFormat selects the format used for log output.
+//
 // Shared production types are owned by runtimeconfig. These aliases preserve
 // the historical pkg/config API for full-client callers.
 type LogFormat = runtimeconfig.LogFormat
@@ -101,12 +104,7 @@ type ProxyHealthConfig struct {
 }
 
 func (h HarpoonConfig) AdditionalTransportEnabled(kind HarpoonTransportKind) bool {
-	for _, transport := range h.AdditionalTransports {
-		if transport == kind {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(h.AdditionalTransports, kind)
 }
 
 // Load builds the full-client superset from the canonical runtime loader plus
@@ -136,7 +134,14 @@ func RegisterFlags(fs *pflag.FlagSet) {
 // applies the full-client-only extension values against the same effective
 // flag > environment > profile > default lookup.
 func LoadFromFlagSet(fs *pflag.FlagSet, lookupEnv func(string) (string, bool)) (*Config, error) {
-	core, cloudflared, context, err := runtimeconfig.LoadFullFromFlagSet(fs, lookupEnv)
+	return LoadFromFlagSetWithMainMCPServerURL(fs, lookupEnv, "")
+}
+
+// LoadFromFlagSetWithMainMCPServerURL replaces only the main MCP binding with a
+// process-owned HTTP server after parsing configured targets. An empty URL keeps
+// ordinary configuration loading unchanged.
+func LoadFromFlagSetWithMainMCPServerURL(fs *pflag.FlagSet, lookupEnv func(string) (string, bool), mainServerURL string) (*Config, error) {
+	core, cloudflared, context, err := runtimeconfig.LoadFullFromFlagSetWithMainMCPServerURL(fs, lookupEnv, mainServerURL)
 	if err != nil {
 		return nil, err
 	}

@@ -11,6 +11,8 @@ import (
 )
 
 func TestRegistryExplainBlockedRedirectCacheEvictsOldEntries(t *testing.T) {
+	t.Parallel()
+
 	registry, err := NewRegistry(runtimeRegistryTestLogger(), true, []Target{{
 		Label:   "oauth-auth-server-metadata-0",
 		BaseURL: runtimeRegistryTestURL(t, "https://example.com/.well-known/oauth-authorization-server/"),
@@ -44,6 +46,8 @@ func TestRegistryExplainBlockedRedirectCacheEvictsOldEntries(t *testing.T) {
 }
 
 func TestRegistryExplainBlockedRedirectCachesHashForOversizedURL(t *testing.T) {
+	t.Parallel()
+
 	registry, err := NewRegistry(runtimeRegistryTestLogger(), true, []Target{{
 		Label:   "oauth-auth-server-metadata-0",
 		BaseURL: runtimeRegistryTestURL(t, "https://example.com/.well-known/oauth-authorization-server/"),

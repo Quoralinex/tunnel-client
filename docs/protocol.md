@@ -8,6 +8,13 @@ The machine-readable contract is [`openapi.json`](openapi.json). Use it to
 generate types or validate fixtures, and use this document for behavior that
 OpenAPI alone cannot express.
 
+Supporting clients advertise their optional protocol features through the
+common `X-Tunnel-Client-Capabilities` header. Its first defined capability is the
+[`wrong-cluster-v1` routing correction protocol](routing-correction.md).
+Its replacement polling token stays separate from each command's original
+response/notification token. Existing services and legacy command tokens remain
+compatible; server activation follows client release separately.
+
 ## Scope
 
 A tunnel client:
@@ -47,6 +54,62 @@ headers are diagnostic metadata, not feature negotiation:
 X-Tunnel-Client-Name: example-rust-client
 X-Tunnel-Client-Version: 1.2.3
 ```
+
+### Tunnel client capabilities
+
+`X-Tunnel-Client-Capabilities` describes features implemented by the tunnel
+client itself. Send it on all control-plane requests: tunnel metadata, managed
+Cloudflare runtime, polling, and command responses or notifications. The
+official client currently advertises one capability:
+
+```http
+X-Tunnel-Client-Capabilities: wrong-cluster-v1
+```
+
+This is a common, extensible set of capability names, not a header dedicated to
+routing. A client advertises only behavior it implements. New optional features
+add names to this set; each feature defines what its name means and which
+operations it affects. Names use case-sensitive ASCII HTTP `token` syntax, with
+no quoted strings, parameters, or whitespace inside a name.
+
+Consumers parse the header as follows:
+
+- Combine repeated header fields as a comma-separated list. Trim spaces and
+  tabs around each member, ignore empty members, and deduplicate names. Order
+  has no meaning.
+- Allow up to 4096 aggregate value bytes, counting one comma between field
+  values; the bound includes whitespace and empty members. Allow up to 64
+  nonempty members before deduplication and up to 128 bytes per name.
+- Ignore unknown valid names. Their presence does not disable known names.
+  Matching is exact and case-sensitive; `Wrong-Cluster-v1` does not advertise
+  `wrong-cluster-v1`.
+- If any member is malformed or any bound is exceeded, treat the whole
+  declaration as having no recognized capabilities. An absent or empty header
+  also means no capabilities; preserve the legacy operation in these cases.
+
+For example, the following two field lines have the same set semantics as
+`wrong-cluster-v1, example-future-v1`:
+
+```http
+X-Tunnel-Client-Capabilities: wrong-cluster-v1, example-future-v1
+X-Tunnel-Client-Capabilities: , wrong-cluster-v1
+```
+
+`example-future-v1` is illustrative, not an implemented capability. A service
+that understands only `wrong-cluster-v1` ignores the example name and recognizes
+routing support. Repetition alone does not invalidate a capability.
+
+Capability declarations belong to the current request. Do not remember a
+capability for every process sharing a tunnel ID: replicas can run different
+client versions. Advertising support is separate from the server's decision to
+enable a feature; it grants no authentication or authorization privileges. The
+`wrong-cluster-v1` name permits the specified polling correction behavior only,
+not retries of command responses or tool execution.
+
+This header is distinct from `X-Tunnel-MCP-Server-Info`, which describes the MCP
+servers or channels behind the tunnel, and from the dated wire protocol version
+below. Existing services may ignore it, and new services must keep legacy
+behavior for clients that do not advertise the capability they require.
 
 ### Tunnel wire protocol version
 
@@ -192,6 +255,11 @@ a transport field, affinity token, token echo, keyed FIFO lane, body field,
 command, or endpoint. This reader-first client protocol prerequisite does not
 provide service-side lazy-owner/FIFO behavior; that is a separate service
 implementation.
+
+In particular, `proc_affinity` does not make multiple active stdio clients
+sharing a tunnel ID supported. Operators must keep one active instance per
+tunnel ID for stdio bindings, including during restarts. See
+[stdio deployment limits](configuration.md#stdio-deployment-limits).
 
 Treat tunnel IDs, request IDs, and shard tokens as opaque strings. Do not parse
 them or infer routing from their contents.
@@ -534,6 +602,19 @@ terminal `jsonrpc_response`. Every POST for the command must reuse its
 `jsonrpc_notify` does not complete the command. `notify_ack` is the terminal
 acknowledgment for a JSON-RPC notification without an ID; it is not a progress
 event.
+
+Response JSON strings, object keys, and forwarded response headers must contain
+valid Unicode. An escaped lone surrogate is rejected with
+`400 invalid_json_payload`; valid Unicode and escaped surrogate pairs are
+preserved. For a rejected final response, the service makes one best-effort
+completion of that command with a fixed JSON-RPC `-32603` gateway error so its
+caller does not wait for the undeliverable response. Rejected progress
+notifications do not complete the command; continue draining the MCP stream and
+attempt its final response. Do not retry the rejected payload or replay the MCP
+operation. Both response route aliases and the legacy `rpc_resp` field follow
+these rules; no client upgrade or new field is required for valid responses.
+An invalid Unicode `request_id` receives the same `400` without completing any
+command because it cannot identify a valid pending request.
 
 A successful POST returns:
 

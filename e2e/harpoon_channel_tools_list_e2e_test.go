@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -21,6 +22,8 @@ import (
 )
 
 func TestHarpoonChannelInitializeThenToolsList(t *testing.T) {
+	t.Parallel()
+
 	const (
 		channel              = "harpoon"
 		initializeCommandID  = "cmd-harpoon-init"
@@ -283,6 +286,8 @@ func TestHarpoonChannelAcceptsSelfContained20260728Requests(t *testing.T) {
 }
 
 func TestHarpoonChannelSelfContainedRequestsHandoverAcrossRedundantClients(t *testing.T) {
+	t.Parallel()
+
 	var targetCalls atomic.Int32
 	targetServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		targetCalls.Add(1)
@@ -421,6 +426,8 @@ func TestHarpoonChannelSelfContainedRequestsHandoverAcrossRedundantClients(t *te
 }
 
 func TestHarpoonStartupCatalogDigestMatchesRedundantClientsE2E(t *testing.T) {
+	t.Parallel()
+
 	oauthServer := newStartupCatalogDigestOAuthServer(t)
 
 	capture := newStartupCatalogDigestCapture()
@@ -635,9 +642,7 @@ func newModernHarpoonCommand(
 			"io.modelcontextprotocol/clientCapabilities": map[string]any{},
 		},
 	}
-	for key, value := range extraParams {
-		params[key] = value
-	}
+	maps.Copy(params, extraParams)
 	payload, err := json.Marshal(map[string]any{
 		"jsonrpc": "2.0",
 		"id":      requestID,

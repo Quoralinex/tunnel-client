@@ -7,6 +7,8 @@ import (
 )
 
 func TestDeriveStableUUID(t *testing.T) {
+	t.Parallel()
+
 	id, err := DeriveStableUUID(
 		func() string { return "cli-host" },
 		func() string { return "cli-user" },
@@ -22,6 +24,8 @@ func TestDeriveStableUUID(t *testing.T) {
 }
 
 func TestDeriveStableUUIDHandlesErrors(t *testing.T) {
+	t.Parallel()
+
 	if _, err := DeriveStableUUID(
 		nil,
 		func() string { return "host" },
@@ -43,12 +47,16 @@ func TestDeriveStableUUIDHandlesErrors(t *testing.T) {
 }
 
 func TestDeriveStableUUIDRequiresProviders(t *testing.T) {
+	t.Parallel()
+
 	if _, err := DeriveStableUUID(); err == nil {
 		t.Fatalf("expected error when no providers supplied")
 	}
 }
 
 func TestDeriveStableUUIDWithOSProviders(t *testing.T) {
+	t.Parallel()
+
 	id, err := DeriveStableUUID(OsHost, OsUser)
 	if err != nil {
 		t.Skipf("skipping OS provider assertion: %v", err)

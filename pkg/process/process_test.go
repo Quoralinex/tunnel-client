@@ -76,6 +76,8 @@ func (h *captureHandler) LastAttrs() map[string]slog.Value {
 }
 
 func TestRegisterPIDFileSuccess(t *testing.T) {
+	t.Parallel()
+
 	tempDir := t.TempDir()
 	pidPath := filepath.Join(tempDir, "tunnel-client.pid")
 
@@ -125,6 +127,8 @@ func TestRegisterPIDFileSuccess(t *testing.T) {
 }
 
 func TestRegisterPIDFileWriteFailure(t *testing.T) {
+	t.Parallel()
+
 	tempDir := t.TempDir()
 	pidPath := tempDir
 
@@ -144,6 +148,8 @@ func TestRegisterPIDFileWriteFailure(t *testing.T) {
 }
 
 func TestRegisterPIDFileRemoveFailure(t *testing.T) {
+	t.Parallel()
+
 	tempDir := t.TempDir()
 	pidPath := filepath.Join(tempDir, "tunnel-client.pid")
 

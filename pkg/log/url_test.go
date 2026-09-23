@@ -12,6 +12,8 @@ import (
 )
 
 func TestRedactURLKeepsOnlyOriginWithoutMutation(t *testing.T) {
+	t.Parallel()
+
 	sensitiveURL := &url.URL{
 		Scheme:      "https",
 		Opaque:      "//opaque-user:opaque-credential@opaque.internal/token-path?opaque-query#opaque-fragment",
@@ -41,6 +43,8 @@ func TestRedactURLKeepsOnlyOriginWithoutMutation(t *testing.T) {
 }
 
 func TestErrorForLogRedactsNestedURLError(t *testing.T) {
+	t.Parallel()
+
 	rawURL := "https://url-user-secret:url-password-secret@auth.internal/url-path-secret?url-query-key=url-query-secret#url-fragment-secret"
 	urlErr := &url.Error{
 		Op:  "Get",
@@ -81,6 +85,8 @@ func TestErrorForLogRedactsNestedURLError(t *testing.T) {
 }
 
 func TestErrorForLogHandlesEmptyURLErrorURL(t *testing.T) {
+	t.Parallel()
+
 	err := &url.Error{Op: "Get", Err: errors.New("connection refused")}
 	got := ErrorForLog(err)
 	if got != err.Error() {
@@ -89,6 +95,8 @@ func TestErrorForLogHandlesEmptyURLErrorURL(t *testing.T) {
 }
 
 func TestErrorForLogDoesNotReplaceRelativeURLCharactersInContext(t *testing.T) {
+	t.Parallel()
+
 	err := fmt.Errorf("metadata wrapper: %w", &url.Error{
 		Op:  "Get",
 		URL: "a",
@@ -101,6 +109,8 @@ func TestErrorForLogDoesNotReplaceRelativeURLCharactersInContext(t *testing.T) {
 }
 
 func TestErrorForLogPreservesNonURLQuotedParseDiagnostic(t *testing.T) {
+	t.Parallel()
+
 	err := &url.Error{
 		Op:  "Get",
 		URL: "https://auth.internal/sensitive-path",
@@ -113,6 +123,8 @@ func TestErrorForLogPreservesNonURLQuotedParseDiagnostic(t *testing.T) {
 }
 
 func TestErrorForLogRedactsQuotedInvalidURL(t *testing.T) {
+	t.Parallel()
+
 	err := &url.Error{
 		Op:  "Get",
 		URL: "https://control-user-secret:control-password-secret@auth.internal/control-path-secret\n?control-query-secret=value",
@@ -135,6 +147,8 @@ func TestErrorForLogRedactsQuotedInvalidURL(t *testing.T) {
 }
 
 func TestErrorForLogRedactsURLDerivedParseDetails(t *testing.T) {
+	t.Parallel()
+
 	testCases := []struct {
 		name      string
 		rawURL    string
@@ -168,6 +182,7 @@ func TestErrorForLogRedactsURLDerivedParseDetails(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			_, err := url.Parse(tc.rawURL)
 			if err == nil {
 				t.Fatal("expected URL parse error")
@@ -189,6 +204,8 @@ func TestErrorForLogRedactsURLDerivedParseDetails(t *testing.T) {
 }
 
 func TestErrorForLogRedactsMalformedRedirectLocation(t *testing.T) {
+	t.Parallel()
+
 	const location = "https://redirect-user-secret:redirect-password-secret@redirect.internal:redirect-port-secret/redirect-path-secret?redirect-query=secret#redirect-fragment-secret"
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Location", location)

@@ -6,6 +6,8 @@ import (
 	runtimeharpoon "github.com/openai/tunnel-client/pkg/runtimeharpoon"
 )
 
+// Target describes a registered outbound HTTP target.
+//
 // The runtime package owns routing and allowlist behavior. Keep full-client
 // names as aliases so existing callers remain source-compatible.
 type Target = runtimeharpoon.Target

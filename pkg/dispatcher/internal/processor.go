@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -83,6 +84,7 @@ type mcpProcessor struct {
 	hostBus           hostbus.HostRegistrationBus
 	mcpServerURL      *url.URL
 	mcpUnixSocketPath string
+	oauthOrigins      []*url.URL
 	withDeadlineCause func(context.Context, time.Time, error) (context.Context, context.CancelFunc)
 }
 
@@ -97,6 +99,9 @@ type responsePostResult struct {
 // even when the post fails.
 func (p *mcpProcessor) postTunnelResponse(ctx context.Context, requestID types.RequestID, response *types.TunnelResponse) responsePostResult {
 	tunnelServiceRequestID, err := p.tunnelResponder.PostResponse(ctx, requestID, response)
+	if err != nil {
+		recordWorkFailure(ctx, err, 0)
+	}
 	return responsePostResult{
 		tunnelServiceRequestID: tunnelServiceRequestID,
 		err:                    err,
@@ -139,15 +144,6 @@ func requiredProcessorChannels(cfg *runtimeconfig.ControlPlaneConfig) []types.Ch
 		return cfg.PollChannels
 	}
 	return legacyRequiredProcessorChannels
-}
-
-func containsChannel(channels []types.Channel, want types.Channel) bool {
-	for _, channel := range channels {
-		if channel == want {
-			return true
-		}
-	}
-	return false
 }
 
 func missingRequiredChannels(channels map[types.Channel]channelConfig, requiredChannels []types.Channel) []types.Channel {
@@ -205,7 +201,7 @@ func NewProcessor(p processorParams) (Processor, error) {
 	if transportKind == "" {
 		transportKind = runtimeconfig.MCPTransportHTTPStreamable
 	}
-	if transportKind == runtimeconfig.MCPTransportHTTPStreamable && p.MCPConfig.ServerURL == nil && (!p.ControlPlaneCfg.PollChannelsConfigured || containsChannel(p.ControlPlaneCfg.PollChannels, types.DefaultChannel)) {
+	if transportKind == runtimeconfig.MCPTransportHTTPStreamable && p.MCPConfig.ServerURL == nil && (!p.ControlPlaneCfg.PollChannelsConfigured || slices.Contains(p.ControlPlaneCfg.PollChannels, types.DefaultChannel)) {
 		return nil, fmt.Errorf("dispatcher processor: missing MCP server URL")
 	}
 
@@ -215,7 +211,7 @@ func NewProcessor(p processorParams) (Processor, error) {
 		if channelName == "" {
 			return nil, fmt.Errorf("dispatcher processor: channel name %q is invalid after normalization", rawChannelName)
 		}
-		if p.ControlPlaneCfg.PollChannelsConfigured && !containsChannel(p.ControlPlaneCfg.PollChannels, channelName) {
+		if p.ControlPlaneCfg.PollChannelsConfigured && !slices.Contains(p.ControlPlaneCfg.PollChannels, channelName) {
 			continue
 		}
 		if _, exists := channels[channelName]; exists {
@@ -297,6 +293,7 @@ func NewProcessor(p processorParams) (Processor, error) {
 		hostBus:           p.HostBus,
 		mcpServerURL:      p.MCPConfig.ServerURL,
 		mcpUnixSocketPath: p.MCPConfig.UnixSocketPath,
+		oauthOrigins:      append([]*url.URL(nil), p.MCPConfig.OAuthTrustedOrigins...),
 		withDeadlineCause: context.WithDeadlineCause,
 	}, nil
 }
@@ -337,6 +334,7 @@ func (p *mcpProcessor) Process(ctx context.Context, cmd controlplane.PolledComma
 	}
 	defer cancel()
 	if errors.Is(context.Cause(ctx), errResponseDeadlineExceeded) {
+		recordWorkFailure(ctx, context.DeadlineExceeded, 0)
 		logger.InfoContext(ctx, "dropping command whose response deadline has passed")
 		return nil
 	}
@@ -348,6 +346,7 @@ func (p *mcpProcessor) Process(ctx context.Context, cmd controlplane.PolledComma
 			return
 		}
 		logger.InfoContext(ctx, "command response deadline reached; dropping without posting a response")
+		recordWorkFailure(ctx, context.DeadlineExceeded, 0)
 		processErr = nil
 	}()
 
@@ -482,6 +481,7 @@ func (p *mcpProcessor) processJsonRpcCommand(ctx context.Context, logger *slog.L
 	// Establish MCP connection only for JSON-RPC commands.
 	conn, err := channelCfg.transport.Connect(ctx)
 	if err != nil {
+		recordWorkFailure(ctx, err, 0)
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
@@ -560,6 +560,9 @@ func (p *mcpProcessor) processJsonRpcCommand(ctx context.Context, logger *slog.L
 		return ctx.Err()
 	}
 	statusCode := normalizeTransportStatusCode(writeResult.StatusCode, err)
+	if err != nil || statusCode >= http.StatusBadRequest {
+		recordWorkFailure(ctx, err, statusCode)
+	}
 	respHeader := writeResult.ResponseHeaders
 	if preserved := writeResult.PreservedError; preserved != nil {
 		encodedError := preserved.Payload()
@@ -671,6 +674,7 @@ func (p *mcpProcessor) processSessionTerminationCommand(ctx context.Context, log
 	latencyRecorded := &latencyFlags{}
 
 	if !channelCfg.features.supportsSessionTermination {
+		recordWorkFailure(ctx, nil, http.StatusMethodNotAllowed)
 		tunnelResponse := types.NewSessionTerminationResponse(channel, http.StatusMethodNotAllowed, http.Header{})
 		post := p.postTunnelResponse(ctx, cmd.RequestID(), tunnelResponse)
 		if post.err != nil {
@@ -695,6 +699,9 @@ func (p *mcpProcessor) processSessionTerminationCommand(ctx context.Context, log
 
 	statusCode, respHeader, err := terminator.TerminateSession(ctx, cloneHeaders(cmd.Headers()))
 	statusCode = normalizeTransportStatusCode(statusCode, err)
+	if err != nil || statusCode >= http.StatusBadRequest {
+		recordWorkFailure(ctx, err, statusCode)
+	}
 	if respHeader == nil {
 		respHeader = http.Header{}
 	}
@@ -727,7 +734,7 @@ func (p *mcpProcessor) processOauthDiscoveryCommand(ctx context.Context, logger 
 		return fmt.Errorf("dispatcher processor: missing MCP server URL")
 	}
 
-	candidates, _, err := oauth.BuildOAuthDiscoveryCandidates(ctx, p.oauthHTTPClient, p.mcpServerURL, logger)
+	candidates, _, err := oauth.BuildOAuthDiscoveryCandidates(ctx, p.oauthHTTPClient, p.mcpServerURL, logger, p.oauthOrigins...)
 	if err != nil {
 		return err
 	}
@@ -740,6 +747,9 @@ func (p *mcpProcessor) processOauthDiscoveryCommand(ctx context.Context, logger 
 		logger.ErrorContext(ctx, "failed to fetch OAuth discovery ProtectedResourceMetaData", slog.String("error", err.Error()))
 		return err
 	}
+	if resp.ResponseCode() >= http.StatusBadRequest {
+		recordWorkFailure(ctx, nil, resp.ResponseCode())
+	}
 
 	if p.hostBus != nil {
 		bundle, _, bundleErr := oauth.BuildURLBundleFromPRMDWithAuthServerMetadata(
@@ -749,9 +759,10 @@ func (p *mcpProcessor) processOauthDiscoveryCommand(ctx context.Context, logger 
 			time.Now(),
 			sourceURL,
 			oauth.URLBundleOptions{
-				UnixSocketPath: p.mcpUnixSocketPath,
-				UnixSocketURL:  p.mcpServerURL,
-				TrustedMCPURL:  p.mcpServerURL,
+				UnixSocketPath:      p.mcpUnixSocketPath,
+				UnixSocketURL:       p.mcpServerURL,
+				TrustedMCPURL:       p.mcpServerURL,
+				TrustedOAuthOrigins: p.oauthOrigins,
 			},
 			logger,
 		)
@@ -823,6 +834,7 @@ func (p *mcpProcessor) forwardResponses(ctx context.Context, conn mcpclient.Forw
 		if cause == nil {
 			return
 		}
+		recordWorkFailure(ttlCtx, cause, 0)
 
 		statusCode := http.StatusBadGateway
 		failure := classifyTunnelFailure(0, cause)
@@ -862,6 +874,7 @@ func (p *mcpProcessor) forwardResponses(ctx context.Context, conn mcpclient.Forw
 	for {
 		msg, readErr := conn.Read(ttlCtx)
 		if readErr != nil {
+			recordWorkFailure(ttlCtx, readErr, 0)
 			switch {
 			case errors.Is(readErr, mcp.ErrConnectionClosed) || errors.Is(readErr, io.EOF):
 				logger.DebugContext(ctx, "MCP connection closed while reading response", tunnelFailureLogAttrs(classifyTunnelFailure(0, readErr), classifyTransportErrorKind(0, readErr))...)
@@ -892,6 +905,7 @@ func (p *mcpProcessor) forwardResponses(ctx context.Context, conn mcpclient.Forw
 			}
 			keepForwarding, err := p.forwardNotification(ttlCtx, logger, cmd, responseCode, responseHeaders, notifyMsg, channel)
 			if err != nil {
+				recordWorkFailure(ttlCtx, err, 0)
 				return
 			}
 			notificationForwardingEnabled = keepForwarding
@@ -1103,8 +1117,7 @@ func jsonRPCResponseCorrelationAttrs(req *jsonrpc.Request, response *jsonrpc.Res
 		attrs = append(attrs, jsonRPCIDAttr("rpc_response_id", response.ID))
 	}
 	if response.Error != nil {
-		var rpcErr *jsonrpc.Error
-		if errors.As(response.Error, &rpcErr) {
+		if rpcErr, ok := errors.AsType[*jsonrpc.Error](response.Error); ok {
 			attrs = append(attrs, slog.Int64("rpc_error_code", rpcErr.Code))
 		}
 	}

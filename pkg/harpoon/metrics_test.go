@@ -17,6 +17,8 @@ import (
 )
 
 func TestHarpoonMetricsRecordSuccessAndInvalidInput(t *testing.T) {
+	t.Parallel()
+
 	reader := sdkmetric.NewManualReader()
 	provider := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
 	t.Cleanup(func() {
@@ -79,6 +81,8 @@ func TestHarpoonMetricsRecordSuccessAndInvalidInput(t *testing.T) {
 }
 
 func TestHarpoonMetricsCollapseUnknownTargetLabels(t *testing.T) {
+	t.Parallel()
+
 	reader := sdkmetric.NewManualReader()
 	provider := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
 	t.Cleanup(func() {

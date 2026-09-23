@@ -2,6 +2,7 @@ package e2e_test
 
 import (
 	"fmt"
+	"maps"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -9,12 +10,14 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/openai/tunnel-client/pkg/healthurl"
 	"github.com/openai/tunnel-client/testsupport/mockmcpserver"
 	"github.com/openai/tunnel-client/testsupport/mockproxy"
 	"github.com/openai/tunnel-client/testsupport/mocktunnelservice"
@@ -100,7 +103,6 @@ func newRuntimeFixture(t *testing.T, mcpOptions ...mockmcpserver.Option) runtime
 
 type runtimeScenario struct {
 	name          string
-	subjects      []runtimeSubject
 	profilePath   string
 	healthURLFile string
 	pidFile       string
@@ -188,17 +190,27 @@ type runtimeProxyObservation struct {
 	route  string
 }
 
-func runRuntimeScenario(t *testing.T, scenario runtimeScenario) map[string]runtimeObservation {
+// runRuntimeScenario gives every subject its own profile, output paths, and
+// companion markers. The group joins the parallel subjects before callers
+// compare their observations.
+func runRuntimeScenario(t *testing.T, subjects []runtimeSubject, newScenario func(*testing.T) runtimeScenario) map[string]runtimeObservation {
 	t.Helper()
 
-	require.NotEmpty(t, scenario.subjects, "scenario needs at least one subject")
-	observations := make(map[string]runtimeObservation, len(scenario.subjects))
-	for _, subject := range scenario.subjects {
-		subject := subject
-		t.Run(subject.name, func(t *testing.T) {
-			observations[subject.name] = runRuntimeSubject(t, subject, scenario)
-		})
-	}
+	require.NotEmpty(t, subjects, "scenario needs at least one subject")
+	observations := make(map[string]runtimeObservation, len(subjects))
+	var mu sync.Mutex
+	// This synchronous group is a join barrier, not an independent test case.
+	t.Run("subjects", func(t *testing.T) {
+		for _, subject := range subjects {
+			t.Run(subject.name, func(t *testing.T) {
+				t.Parallel()
+				observation := runRuntimeSubject(t, subject, newScenario(t))
+				mu.Lock()
+				observations[subject.name] = observation
+				mu.Unlock()
+			})
+		}
+	})
 	return observations
 }
 
@@ -214,6 +226,11 @@ func runRuntimeSubject(t *testing.T, subject runtimeSubject, scenario runtimeSce
 	fixture := fixtureFactory(t)
 
 	env := copyRuntimeEnvironment(scenario.options.env)
+	// Keep enough headroom for all three scripted commands so each poll requests
+	// the 25-command batch cap regardless of when the dispatcher drains the queue.
+	if _, configured := env["CONTROL_PLANE_MAX_INFLIGHT_REQUESTS"]; !configured {
+		env["CONTROL_PLANE_MAX_INFLIGHT_REQUESTS"] = "30"
+	}
 	if scenario.profilePath != "" {
 		env["TUNNEL_CLIENT_PROFILE_FILE"] = scenario.profilePath
 	}
@@ -332,7 +349,12 @@ func observeRuntimeSubject(
 ) runtimeObservation {
 	t.Helper()
 
-	client := &http.Client{Timeout: 2 * time.Second}
+	target, err := healthurl.Parse(healthBaseURL)
+	require.NoError(t, err)
+	client, err := target.HTTPClient(2 * time.Second)
+	require.NoError(t, err)
+	defer client.CloseIdleConnections()
+	healthBaseURL = target.RequestBaseURL
 	readyStatus, readyBody := runtimeArtifactResponse(t, client, healthBaseURL+"/readyz")
 	healthStatus, healthBody := runtimeArtifactResponse(t, client, healthBaseURL+"/healthz")
 	metricsStatus, metricsBody := runtimeArtifactResponse(t, client, healthBaseURL+"/metrics")
@@ -544,9 +566,7 @@ func assertRuntimeOutputRedacted(t *testing.T, output string, secrets ...string)
 
 func copyRuntimeEnvironment(src map[string]string) map[string]string {
 	out := make(map[string]string, len(src)+3)
-	for key, value := range src {
-		out[key] = value
-	}
+	maps.Copy(out, src)
 	return out
 }
 

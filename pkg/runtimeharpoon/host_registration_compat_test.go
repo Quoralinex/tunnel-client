@@ -15,6 +15,8 @@ import (
 )
 
 func TestRegisterHostBundleRedactsLoggedURLWithoutMutatingTarget(t *testing.T) {
+	t.Parallel()
+
 	var logBuffer bytes.Buffer
 	logger := slog.New(slog.NewJSONHandler(&logBuffer, nil))
 	registry, err := NewRegistry(logger, true, nil)
@@ -64,6 +66,8 @@ func TestRegisterHostBundleRedactsLoggedURLWithoutMutatingTarget(t *testing.T) {
 }
 
 func TestRegisterHostBundleRespectsClassifier(t *testing.T) {
+	t.Parallel()
+
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	registry, err := NewRegistry(logger, true, nil)
 	if err != nil {
@@ -98,6 +102,8 @@ func TestRegisterHostBundleRespectsClassifier(t *testing.T) {
 }
 
 func TestRegisterHostBundleDerivesCategoryAndTags(t *testing.T) {
+	t.Parallel()
+
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	registry, err := NewRegistry(logger, true, nil)
 	if err != nil {
@@ -148,6 +154,8 @@ func TestRegisterHostBundleDerivesCategoryAndTags(t *testing.T) {
 }
 
 func TestRegisterHostBundleIncludesGroupPublicTag(t *testing.T) {
+	t.Parallel()
+
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	registry, err := NewRegistry(logger, true, nil)
 	if err != nil {
@@ -187,6 +195,8 @@ func TestRegisterHostBundleIncludesGroupPublicTag(t *testing.T) {
 }
 
 func TestBuildAutoLabelUsesRoleIndex(t *testing.T) {
+	t.Parallel()
+
 	label := buildAutoLabel(hostbus.URLRecord{
 		Tags: []hostbus.Tag{{Key: hostbus.TagKeyRole, Value: "registration-endpoint"}, {Key: hostbus.TagKeyIndex, Value: "2"}},
 	}, 0)
@@ -197,6 +207,8 @@ func TestBuildAutoLabelUsesRoleIndex(t *testing.T) {
 }
 
 func TestRegisterHostBundleAddsDeterministicSuffixOnCollision(t *testing.T) {
+	t.Parallel()
+
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	registry, err := NewRegistry(logger, true, nil)
 	if err != nil {
@@ -240,6 +252,8 @@ func TestRegisterHostBundleAddsDeterministicSuffixOnCollision(t *testing.T) {
 }
 
 func TestRegisterHostBundleDerivedEndpointsPrivateHostsOnly(t *testing.T) {
+	t.Parallel()
+
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	registry, err := NewRegistry(logger, true, nil)
 	if err != nil {
@@ -276,6 +290,8 @@ func TestRegisterHostBundleDerivedEndpointsPrivateHostsOnly(t *testing.T) {
 }
 
 func TestRegisterHostBundleDisallowsClassifierOnlyPrivateMetadataRecordsCompat(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name string
 		url  string
@@ -287,6 +303,7 @@ func TestRegisterHostBundleDisallowsClassifierOnlyPrivateMetadataRecordsCompat(t
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 			registry, err := NewRegistry(logger, false, nil)
 			if err != nil {
@@ -310,6 +327,8 @@ func TestRegisterHostBundleDisallowsClassifierOnlyPrivateMetadataRecordsCompat(t
 }
 
 func TestRegisterHostBundleAllowsPrivateMetadataRecordOnExactProtectedResourceOrigin(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name       string
 		origin     string
@@ -328,8 +347,8 @@ func TestRegisterHostBundleAllowsPrivateMetadataRecordOnExactProtectedResourceOr
 	}
 
 	for _, tc := range tests {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 			registry, err := NewRegistry(logger, false, nil)
 			if err != nil {
@@ -362,6 +381,8 @@ func TestRegisterHostBundleAllowsPrivateMetadataRecordOnExactProtectedResourceOr
 }
 
 func TestRegisterHostBundleDoesNotAllowDisallowedRecordOnDifferentProtectedResourceOrigin(t *testing.T) {
+	t.Parallel()
+
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	registry, err := NewRegistry(logger, true, nil)
 	if err != nil {
@@ -391,6 +412,8 @@ func TestRegisterHostBundleDoesNotAllowDisallowedRecordOnDifferentProtectedResou
 }
 
 func TestRegisterHostBundleDoesNotSeedOAuthPolicyFromDisallowedPrivateRecords(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name       string
 		host       string
@@ -414,11 +437,11 @@ func TestRegisterHostBundleDoesNotSeedOAuthPolicyFromDisallowedPrivateRecords(t 
 	}
 
 	for _, tc := range tests {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			for _, seedRole := range []string{"prmd-resource", "prmd-source"} {
-				seedRole := seedRole
 				t.Run(seedRole, func(t *testing.T) {
+					t.Parallel()
 					logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 					registry, err := NewRegistry(logger, false, nil)
 					if err != nil {
@@ -453,6 +476,8 @@ func TestRegisterHostBundleDoesNotSeedOAuthPolicyFromDisallowedPrivateRecords(t 
 }
 
 func TestRegisterHostBundleAllowsOAuthEndpointsOnProtectedResourceHost(t *testing.T) {
+	t.Parallel()
+
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	registry, err := NewRegistry(logger, true, nil)
 	if err != nil {
@@ -523,6 +548,8 @@ func TestRegisterHostBundleAllowsOAuthEndpointsOnProtectedResourceHost(t *testin
 }
 
 func TestRegisterHostBundleAllowsPRMDResourceHostWhenMetadataIsOffHost(t *testing.T) {
+	t.Parallel()
+
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	registry, err := NewRegistry(logger, true, nil)
 	if err != nil {
@@ -586,6 +613,8 @@ func TestRegisterHostBundleAllowsPRMDResourceHostWhenMetadataIsOffHost(t *testin
 }
 
 func TestRegisterHostBundleDoesNotSeedOAuthPolicyFromOverbroadPRMDResource(t *testing.T) {
+	t.Parallel()
+
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	registry, err := NewRegistry(logger, true, nil)
 	if err != nil {

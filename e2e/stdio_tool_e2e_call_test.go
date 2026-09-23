@@ -19,21 +19,204 @@ import (
 )
 
 func TestHarnessExecuteScenarioWithStdioCommand(t *testing.T) {
+	t.Parallel()
+
 	commandArgs := mockmcpserver.StdioServerCommand(t)
 	runSimpleToolScenarioWithCommand(t, commandArgs)
 }
 
 func TestHarnessStdioOptInInitializesBeforeToolCallWhenControlPlaneOmitsNotification(t *testing.T) {
-	t.Setenv("MOCK_MCP_REQUIRE_INITIALIZED", "1")
-	runStdioInitializeThenToolScenario(t, true, "initialize\nnotifications/initialized\ntools/call\n")
+	t.Parallel()
+
+	runStdioInitializeThenToolScenario(t, true, "MOCK_MCP_REQUIRE_INITIALIZED=1", "initialize\nnotifications/initialized\ntools/call\n")
 }
 
-func TestHarnessStdioLegacyDefaultDoesNotInjectInitializedNotification(t *testing.T) {
-	t.Setenv("MOCK_MCP_REJECT_INITIALIZED", "1")
-	runStdioInitializeThenToolScenario(t, false, "initialize\ntools/call\n")
+func TestHarnessStdioDefaultDoesNotInjectInitializedNotification(t *testing.T) {
+	t.Parallel()
+
+	runStdioInitializationGuardScenario(t, false, false, []mocktunnelservice.CommandResponse{
+		stdioGuardInitializeCommand(t),
+		stdioGuardToolCommand(t, "before-initialized", false, http.StatusConflict),
+	}, "initialize\n")
 }
 
-func runStdioInitializeThenToolScenario(t *testing.T, sendInitializedNotification bool, wantMessages string) {
+func TestHarnessStdioInitializationGuardRequiresServiceHandshakeAfterRestart(t *testing.T) {
+	t.Parallel()
+
+	// Each harness stops its client and child before returning. Reusing the
+	// default tunnel ID proves the replacement runtime starts uninitialized.
+	for _, generation := range []string{"first_child", "replacement_child"} {
+		t.Run(generation, func(t *testing.T) {
+			runStdioInitializationGuardScenario(t, false, true, []mocktunnelservice.CommandResponse{
+				stdioGuardToolCommand(t, "before-initialize", false, http.StatusConflict),
+				stdioGuardInitializeCommand(t),
+				stdioGuardToolCommand(t, "before-initialized", false, http.StatusConflict),
+				stdioGuardInitializedCommand(t),
+				stdioGuardToolCommand(t, "after-initialized", false, http.StatusOK),
+			}, "initialize\nnotifications/initialized\ntools/call\n")
+		})
+	}
+}
+
+func TestHarnessStdioInitializationGuardSupportsInitializedNotificationShim(t *testing.T) {
+	t.Parallel()
+
+	runStdioInitializationGuardScenario(t, true, true, []mocktunnelservice.CommandResponse{
+		stdioGuardToolCommand(t, "before-initialize", false, http.StatusConflict),
+		stdioGuardInitializeCommand(t),
+		stdioGuardToolCommand(t, "after-initialize", false, http.StatusOK),
+	}, "initialize\nnotifications/initialized\ntools/call\n")
+}
+
+func TestHarnessStdioInitializationGuardForwardsSelfContainedRequests(t *testing.T) {
+	t.Parallel()
+
+	runStdioInitializationGuardScenario(t, false, false, []mocktunnelservice.CommandResponse{
+		stdioGuardToolCommand(t, "self-contained", true, http.StatusOK),
+		// A self-contained request does not initialize the legacy session.
+		stdioGuardToolCommand(t, "legacy-after-self-contained", false, http.StatusConflict),
+	}, "tools/call\n")
+}
+
+func TestHarnessStdioInitializationGuardClassifiesRequestsIndependentlyOfChild(t *testing.T) {
+	t.Parallel()
+
+	// This child accepts tools without initialization. Metadata-free requests
+	// still require the legacy handshake because they carry no stateless signal.
+	runStdioInitializationGuardScenario(t, false, false, []mocktunnelservice.CommandResponse{
+		stdioGuardToolCommand(t, "legacy-without-initialize", false, http.StatusConflict),
+		stdioGuardToolCommand(t, "self-contained", true, http.StatusOK),
+	}, "tools/call\n")
+}
+
+func runStdioInitializationGuardScenario(t *testing.T, sendInitializedNotification, childRequiresInitialization bool, commands []mocktunnelservice.CommandResponse, wantMessages string) {
+	t.Helper()
+
+	messageLog := t.TempDir() + "/stdio-messages.log"
+	commandArgs := []string{"env", "MOCK_MCP_MESSAGE_LOG=" + messageLog}
+	if childRequiresInitialization {
+		commandArgs = append(commandArgs, "MOCK_MCP_REQUIRE_INITIALIZED=1")
+	}
+	commandArgs = append(commandArgs, mockmcpserver.StdioServerCommand(t)...)
+	h := harnesspkg.NewHarness(t,
+		harnesspkg.WithMCPCommand(commandArgs),
+		harnesspkg.WithScenarioTimeout(3*time.Second),
+		harnesspkg.WithClientConfig(func(cfg *config.Config) {
+			cfg.MCP.StdioSendInitializedNotification = sendInitializedNotification
+		}),
+		harnesspkg.WithControlPlaneOptions(mocktunnelservice.WithCommandResponses(commands...)),
+	)
+	h.ExecuteScenarious(t)
+
+	messages, err := os.ReadFile(messageLog)
+	if err != nil {
+		t.Fatalf("read stdio message log: %v", err)
+	}
+	if got := string(messages); got != wantMessages {
+		t.Fatalf("messages delivered to child = %q, want %q", got, wantMessages)
+	}
+	if got := len(h.ControlPlane.ReceivedResponses(mocktunnelservice.ResponseMatchMatched)); got != len(commands) {
+		t.Fatalf("posted responses = %d, want %d", got, len(commands))
+	}
+}
+
+func stdioGuardInitializeCommand(t *testing.T) mocktunnelservice.CommandResponse {
+	t.Helper()
+	return stdioGuardCommand(t, "initialize", "initialize-1", json.RawMessage(`{
+		"jsonrpc":"2.0","id":"initialize-1","method":"initialize",
+		"params":{"protocolVersion":"2025-11-25","capabilities":{},
+		"clientInfo":{"name":"stdio-guard-e2e","version":"1"}}
+	}`), http.StatusOK)
+}
+
+func stdioGuardInitializedCommand(t *testing.T) mocktunnelservice.CommandResponse {
+	t.Helper()
+	return stdioGuardCommand(t, "initialized", "", json.RawMessage(`{
+		"jsonrpc":"2.0","method":"notifications/initialized"
+	}`), http.StatusOK)
+}
+
+func stdioGuardToolCommand(t *testing.T, requestID string, selfContained bool, wantStatus int) mocktunnelservice.CommandResponse {
+	t.Helper()
+	meta := ""
+	if selfContained {
+		meta = `,"_meta":{
+			"io.modelcontextprotocol/protocolVersion":"2026-07-28",
+			"io.modelcontextprotocol/clientCapabilities":{},
+			"io.modelcontextprotocol/clientInfo":{"name":"stdio-guard-e2e","version":"1"}
+		}`
+	}
+	// Reuse the JSON-RPC ID across rejected and successful calls to verify a
+	// rejected request does not retire an ID that was never sent to the child.
+	return stdioGuardCommand(t, requestID, "tool-1", json.RawMessage(`{
+		"jsonrpc":"2.0","id":"tool-1","method":"tools/call",
+		"params":{"name":"echo","arguments":{"name":"Ada"}`+meta+`}
+	}`), wantStatus)
+}
+
+func stdioGuardCommand(t *testing.T, requestID, rpcID string, payload json.RawMessage, wantStatus int) mocktunnelservice.CommandResponse {
+	t.Helper()
+	return mocktunnelservice.CommandResponse{
+		// The scenario's shorter failure deadline proves rejection is posted
+		// before the normal command response timeout could expire.
+		Command: withResponseTimeout(t, mocktunnelservice.NewCommand(requestID, payload, nil), "30s"),
+		ExpectedResponses: []mocktunnelservice.ExpectedResponse{{
+			RequestID: requestID,
+			Assert: func(tb testing.TB, response mocktunnelservice.ReceivedResponse) {
+				tb.Helper()
+				if response.ResponseCode != wantStatus {
+					tb.Fatalf("%s status = %d, want %d; payload=%s", requestID, response.ResponseCode, wantStatus, response.JSONResponse)
+				}
+				if rpcID == "" {
+					if response.ResponseType != string(wiretypes.ResponsePayloadNotifyAck) || len(response.JSONResponse) != 0 {
+						tb.Fatalf("notification response = %+v, want empty notify_ack", response)
+					}
+					return
+				}
+				if response.ResponseType != string(wiretypes.ResponsePayloadJSONRPC) {
+					tb.Fatalf("%s response type = %q, want JSON-RPC", requestID, response.ResponseType)
+				}
+				var envelope struct {
+					JSONRPC string          `json:"jsonrpc"`
+					ID      string          `json:"id"`
+					Result  json.RawMessage `json:"result"`
+					Error   *struct {
+						Code    int    `json:"code"`
+						Message string `json:"message"`
+						Data    struct {
+							Origin    string `json:"origin"`
+							ErrorType string `json:"error_type"`
+						} `json:"data"`
+					} `json:"error"`
+				}
+				if err := json.Unmarshal(response.JSONResponse, &envelope); err != nil {
+					tb.Fatalf("decode %s response: %v", requestID, err)
+				}
+				if envelope.JSONRPC != "2.0" || envelope.ID != rpcID {
+					tb.Fatalf("%s response envelope = version %q id %q, want 2.0 id %q", requestID, envelope.JSONRPC, envelope.ID, rpcID)
+				}
+				if wantStatus == http.StatusConflict {
+					const wantMessage = "MCP server is not initialized; send initialize and notifications/initialized before operational requests"
+					if envelope.Error == nil || envelope.Error.Code != -32002 || envelope.Error.Message != wantMessage || len(envelope.Result) != 0 {
+						tb.Fatalf("%s initialization-required response = %s", requestID, response.JSONResponse)
+					}
+					if envelope.Error.Data.Origin != "tunnel-client" || envelope.Error.Data.ErrorType != "mcp_initialization_required" {
+						tb.Fatalf("%s initialization-required error source = %+v", requestID, envelope.Error.Data)
+					}
+					return
+				}
+				if envelope.Error != nil || len(envelope.Result) == 0 {
+					tb.Fatalf("%s success response = %s", requestID, response.JSONResponse)
+				}
+				if rpcID == "tool-1" && !bytes.Contains(envelope.Result, []byte(`"message":"hello Ada"`)) {
+					tb.Fatalf("%s tool result = %s", requestID, envelope.Result)
+				}
+			},
+		}},
+	}
+}
+
+func runStdioInitializeThenToolScenario(t *testing.T, sendInitializedNotification bool, serverEnv, wantMessages string) {
 	t.Helper()
 
 	const (
@@ -44,7 +227,11 @@ func runStdioInitializeThenToolScenario(t *testing.T, sendInitializedNotificatio
 	)
 
 	messageLog := t.TempDir() + "/stdio-messages.log"
-	t.Setenv("MOCK_MCP_MESSAGE_LOG", messageLog)
+	commandArgs := append([]string{
+		"env",
+		serverEnv,
+		"MOCK_MCP_MESSAGE_LOG=" + messageLog,
+	}, mockmcpserver.StdioServerCommand(t)...)
 
 	initializeCommand := mocktunnelservice.CommandResponse{
 		Command: mocktunnelservice.NewCommand(
@@ -98,7 +285,7 @@ func runStdioInitializeThenToolScenario(t *testing.T, sendInitializedNotificatio
 	}
 
 	options := []harnesspkg.HarnessOption{
-		harnesspkg.WithMCPCommand(mockmcpserver.StdioServerCommand(t)),
+		harnesspkg.WithMCPCommand(commandArgs),
 		harnesspkg.WithScenarioTimeout(3 * time.Second),
 		harnesspkg.WithControlPlaneOptions(
 			mocktunnelservice.WithCommandResponses(initializeCommand, toolCommand),
@@ -122,6 +309,8 @@ func runStdioInitializeThenToolScenario(t *testing.T, sendInitializedNotificatio
 }
 
 func TestHarnessStdioResponseDeadlineKeepsServingAfterTimedOutRequest(t *testing.T) {
+	t.Parallel()
+
 	const (
 		timedOutRequestID = "cmd-timeout"
 		recoveryRequestID = "cmd-recovery"
@@ -130,9 +319,6 @@ func TestHarnessStdioResponseDeadlineKeepsServingAfterTimedOutRequest(t *testing
 	)
 
 	invocationLog := t.TempDir() + "/stdio-invocations.log"
-	t.Setenv("MOCK_MCP_DROP_RESPONSE_NAME", "timeout")
-	t.Setenv("MOCK_MCP_SERVER_REQUEST_BEFORE_RESPONSE_NAME", "recovered")
-	t.Setenv("MOCK_MCP_INVOCATION_LOG", invocationLog)
 
 	timedOutCommand := mocktunnelservice.CommandResponse{
 		Command: withResponseTimeout(t, mocktunnelservice.NewCommand(
@@ -188,7 +374,12 @@ func TestHarnessStdioResponseDeadlineKeepsServingAfterTimedOutRequest(t *testing
 	}
 
 	var logs bytes.Buffer
-	commandArgs := mockmcpserver.StdioServerCommand(t)
+	commandArgs := append([]string{
+		"env",
+		"MOCK_MCP_DROP_RESPONSE_NAME=timeout",
+		"MOCK_MCP_SERVER_REQUEST_BEFORE_RESPONSE_NAME=recovered",
+		"MOCK_MCP_INVOCATION_LOG=" + invocationLog,
+	}, mockmcpserver.StdioServerCommand(t)...)
 	h := harnesspkg.NewHarness(t,
 		harnesspkg.WithMCPCommand(commandArgs),
 		harnesspkg.WithLogWriter(&logs),

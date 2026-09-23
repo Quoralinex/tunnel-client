@@ -49,6 +49,18 @@ Pick the shortest matching starter sample:
    curl -fsS "$(cat /tmp/tunnel-client-health.url)/readyz"
    open "$(cat /tmp/tunnel-client-health.url)/ui"
 
+   For the same demo tools with stateless MCP handling:
+   tunnel-client run --embedded-stateless-mcp-stub --control-plane.tunnel-id tunnel_... --health.listen-addr 127.0.0.1:0
+   This mode issues no MCP session ID, even for initialize and notifications/initialized.
+   The original --embedded-mcp-stub preserves stateful legacy initialization/session
+   handling and stateless modern discovery/tool handling.
+   Choose one mode; neither accepts explicit --mcp.server-url or --mcp.command
+   (including aliases --mcp-server-url and --mcp-command).
+   Shared options: --embedded-mcp-listen-addr (127.0.0.1:0),
+   --embedded-mcp-server-name (mcp-stub), --embedded-mcp-server-version (0.1.0).
+   Stateless demo tools need no MCP session affinity. OAuth and application state
+   have separate requirements. See docs/configuration.md for details.
+
 1. Local stdio MCP command:
    tunnel-client init --sample sample_mcp_stdio_local --profile local-stdio --tunnel-id tunnel_... --mcp-command "python /path/to/server.py"
 

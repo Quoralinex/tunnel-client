@@ -2,6 +2,7 @@ package main
 
 import (
 	"archive/tar"
+	"bufio"
 	"bytes"
 	"compress/gzip"
 	"context"
@@ -24,18 +25,25 @@ import (
 	"testing"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/stretchr/testify/require"
+	otelprometheus "go.opentelemetry.io/otel/exporters/prometheus"
+	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	"go.uber.org/fx"
 	"go.uber.org/fx/fxtest"
 
 	"github.com/openai/tunnel-client/pkg/app"
+	"github.com/openai/tunnel-client/pkg/codexappserver"
 	"github.com/openai/tunnel-client/pkg/config"
 	"github.com/openai/tunnel-client/pkg/health"
 	"github.com/openai/tunnel-client/pkg/healthurl"
+	"github.com/openai/tunnel-client/pkg/metrics"
 	"github.com/openai/tunnel-client/pkg/types"
 )
 
 func TestRootCommandContextCancelsOnSIGTERM(t *testing.T) {
+	// Signals are process-wide, so this test runs before parallel tests start.
 	if runtime.GOOS == "windows" {
 		t.Skip("SIGTERM is not available on Windows")
 	}
@@ -56,6 +64,7 @@ func TestRootCommandContextCancelsOnSIGTERM(t *testing.T) {
 }
 
 func TestAppBoots(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	healthURLPath := filepath.Join(tempDir, "health_url")
 	pidPath := filepath.Join(tempDir, "pid")
@@ -108,6 +117,8 @@ func TestAppBoots(t *testing.T) {
 
 	opts := app.Options(
 		cfg,
+		isolatedAppMetrics(),
+		isolatedAppCodex(t),
 		fx.StartTimeout(5*time.Second),
 		fx.StopTimeout(5*time.Second),
 		fx.Populate(&svc),
@@ -153,7 +164,7 @@ func TestAppBoots(t *testing.T) {
 	closeErr := resp.Body.Close()
 	require.NoError(t, readErr)
 	require.NoError(t, closeErr)
-	require.Equal(t, http.StatusOK, resp.StatusCode, "metrics response status")
+	require.Equal(t, http.StatusOK, resp.StatusCode, "metrics response status: %s", metricsBody)
 	require.Contains(t, string(metricsBody), "liveness", "metrics should include liveness gauge")
 
 	resp, err = client.Get(baseURL + "/api/logs/export?minutes=30")
@@ -194,19 +205,128 @@ func TestAppBoots(t *testing.T) {
 	require.ErrorIs(t, err, os.ErrNotExist, "health URL file removed on shutdown")
 }
 
+func isolatedAppMetrics() fx.Option {
+	return fx.Decorate(func(lc fx.Lifecycle) (*sdkmetric.MeterProvider, metrics.MetricsExporter, error) {
+		registry := prometheus.NewRegistry()
+		registry.MustRegister(
+			prometheus.NewGoCollector(),
+			prometheus.NewProcessCollector(prometheus.ProcessCollectorOpts{}),
+		)
+		exporter, err := otelprometheus.New(otelprometheus.WithRegisterer(registry))
+		if err != nil {
+			return nil, nil, err
+		}
+		provider := sdkmetric.NewMeterProvider(sdkmetric.WithReader(exporter))
+		lc.Append(fx.Hook{OnStop: provider.Shutdown})
+		handler := promhttp.InstrumentMetricHandler(
+			registry, promhttp.HandlerFor(registry, promhttp.HandlerOpts{}),
+		)
+		return provider, handler, nil
+	})
+}
+
+func isolatedAppCodex(t *testing.T) fx.Option {
+	t.Helper()
+	executable, err := os.Executable()
+	require.NoError(t, err)
+	env := map[string]string{
+		"TUNNEL_CLIENT_CODEX_APP_SERVER_CMD":  executable,
+		"TUNNEL_CLIENT_CODEX_APP_SERVER_ARGS": "-test.run=^TestAppCodexHelperProcess$ -- tunnel-client-app-codex-helper",
+		"TUNNEL_CLIENT_CODEX_APP_SERVER_CWD":  t.TempDir(),
+	}
+	return fx.Decorate(func(lc fx.Lifecycle, logger *slog.Logger) *codexappserver.Bridge {
+		bridge := codexappserver.NewBridgeWithLookupEnv(nil, logger, func(key string) (string, bool) {
+			value, ok := env[key]
+			return value, ok
+		})
+		lc.Append(fx.Hook{OnStart: bridge.EnsureStarted, OnStop: bridge.Stop})
+		return bridge
+	})
+}
+
+// TestAppCodexHelperProcess handles the bridge startup protocol without reading
+// user configuration or starting an installed Codex executable.
+func TestAppCodexHelperProcess(t *testing.T) {
+	t.Parallel()
+	if os.Args[len(os.Args)-1] != "tunnel-client-app-codex-helper" {
+		return
+	}
+
+	signals := make(chan os.Signal, 1)
+	signal.Notify(signals, os.Interrupt, syscall.SIGTERM)
+	done := make(chan error, 1)
+	go func() {
+		scanner := bufio.NewScanner(os.Stdin)
+		encoder := json.NewEncoder(os.Stdout)
+		for scanner.Scan() {
+			var request struct {
+				ID     json.RawMessage `json:"id"`
+				Method string          `json:"method"`
+			}
+			if err := json.Unmarshal(scanner.Bytes(), &request); err != nil {
+				done <- err
+				return
+			}
+			if len(request.ID) == 0 {
+				continue
+			}
+			var result any
+			switch request.Method {
+			case "initialize":
+				result = map[string]any{"userAgent": "app-test-codex-fixture"}
+			case "getAuthStatus":
+				result = map[string]any{"requiresOpenaiAuth": false}
+			case "account/read":
+				result = map[string]any{"account": nil, "requiresOpenaiAuth": false}
+			default:
+				done <- fmt.Errorf("unexpected Codex fixture method %q", request.Method)
+				return
+			}
+			if err := encoder.Encode(map[string]any{"id": request.ID, "result": result}); err != nil {
+				done <- err
+				return
+			}
+		}
+		done <- scanner.Err()
+	}()
+	select {
+	case <-signals:
+	case err := <-done:
+		if err != nil {
+			_, _ = fmt.Fprintln(os.Stderr, err)
+			os.Exit(2)
+		}
+	}
+	os.Exit(0)
+}
+
+func requireAppLivenessMetric(t *testing.T, client *http.Client, baseURL string) {
+	t.Helper()
+	resp, err := client.Get(baseURL + "/metrics")
+	require.NoError(t, err)
+	body, readErr := io.ReadAll(resp.Body)
+	closeErr := resp.Body.Close()
+	require.NoError(t, readErr)
+	require.NoError(t, closeErr)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Contains(t, string(body), "liveness")
+}
+
 func TestAppBindsHealthBeforeCloudflaredReadiness(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("test helper uses a Unix executable wrapper")
 	}
+	t.Parallel()
 
 	tempDir := t.TempDir()
 	healthURLPath := filepath.Join(tempDir, "health_url")
 	readyGatePath := filepath.Join(tempDir, "cloudflared-ready")
 	cloudflaredPath := filepath.Join(tempDir, "cloudflared")
-	wrapper := "#!/bin/sh\nexec " + shellSingleQuote(os.Args[0]) + " -test.run=TestDelayedCloudflaredHelper -- \"$@\"\n"
+	wrapper := "#!/bin/sh\n" +
+		"export GO_WANT_DELAYED_CLOUDFLARED_HELPER='1'\n" +
+		"export DELAYED_CLOUDFLARED_READY_GATE=" + shellSingleQuote(readyGatePath) + "\n" +
+		"exec " + shellSingleQuote(os.Args[0]) + " -test.run=TestDelayedCloudflaredHelper -- \"$@\"\n"
 	require.NoError(t, os.WriteFile(cloudflaredPath, []byte(wrapper), 0o700))
-	t.Setenv("GO_WANT_DELAYED_CLOUDFLARED_HELPER", "1")
-	t.Setenv("DELAYED_CLOUDFLARED_READY_GATE", readyGatePath)
 
 	tunnelID := types.TunnelID("tunnel_0123456789abcdef0123456789abcdef")
 	controlPlane := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -257,6 +377,8 @@ func TestAppBindsHealthBeforeCloudflaredReadiness(t *testing.T) {
 		cfg,
 		fx.StopTimeout(5*time.Second),
 		fx.NopLogger,
+		isolatedAppMetrics(),
+		isolatedAppCodex(t),
 	)...)
 	require.Equal(t, 35*time.Second, fxApp.StartTimeout())
 
@@ -318,13 +440,14 @@ func TestAppBindsHealthBeforeCloudflaredReadiness(t *testing.T) {
 	require.NoError(t, closeErr)
 	require.Equal(t, http.StatusServiceUnavailable, resp.StatusCode)
 	require.Contains(t, string(readyBody), "cloudflared startup pending")
+	requireAppLivenessMetric(t, client, baseURL)
 
 	require.NoError(t, os.WriteFile(readyGatePath, []byte("ready"), 0o600))
 	select {
 	case err := <-startErr:
 		require.NoError(t, err)
-	case <-time.After(5 * time.Second):
-		t.Fatal("app did not finish starting after cloudflared became ready")
+	case <-startCtx.Done():
+		t.Fatalf("app did not finish starting after cloudflared became ready: %v", startCtx.Err())
 	}
 
 	stopCtx, stopCancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -338,18 +461,20 @@ func TestAppManagedCloudflaredFetchesRuntimeAndBecomesReady(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("test helper uses a Unix executable wrapper")
 	}
+	t.Parallel()
 
 	tempDir := t.TempDir()
 	healthURLPath := filepath.Join(tempDir, "health_url")
 	readyGatePath := filepath.Join(tempDir, "cloudflared-ready")
 	cloudflaredPath := filepath.Join(tempDir, "cloudflared")
-	wrapper := "#!/bin/sh\nexec " + shellSingleQuote(os.Args[0]) + " -test.run=TestDelayedCloudflaredHelper -- \"$@\"\n"
-	require.NoError(t, os.WriteFile(cloudflaredPath, []byte(wrapper), 0o700))
-	t.Setenv("GO_WANT_DELAYED_CLOUDFLARED_HELPER", "1")
-	t.Setenv("DELAYED_CLOUDFLARED_READY_GATE", readyGatePath)
 	const runtimeToken = "managed-runtime-secret-token"
 	runtimeTokenDigest := sha256.Sum256([]byte(runtimeToken))
-	t.Setenv("DELAYED_CLOUDFLARED_EXPECT_TOKEN_SHA256", fmt.Sprintf("%x", runtimeTokenDigest))
+	wrapper := "#!/bin/sh\n" +
+		"export GO_WANT_DELAYED_CLOUDFLARED_HELPER='1'\n" +
+		"export DELAYED_CLOUDFLARED_READY_GATE=" + shellSingleQuote(readyGatePath) + "\n" +
+		"export DELAYED_CLOUDFLARED_EXPECT_TOKEN_SHA256=" + shellSingleQuote(fmt.Sprintf("%x", runtimeTokenDigest)) + "\n" +
+		"exec " + shellSingleQuote(os.Args[0]) + " -test.run=TestDelayedCloudflaredHelper -- \"$@\"\n"
+	require.NoError(t, os.WriteFile(cloudflaredPath, []byte(wrapper), 0o700))
 
 	tunnelID := types.TunnelID("tunnel_0123456789abcdef0123456789abcdef")
 	runtimeRequest := make(chan struct{}, 1)
@@ -420,6 +545,8 @@ func TestAppManagedCloudflaredFetchesRuntimeAndBecomesReady(t *testing.T) {
 		cfg,
 		fx.StopTimeout(5*time.Second),
 		fx.NopLogger,
+		isolatedAppMetrics(),
+		isolatedAppCodex(t),
 	)...)
 	require.Equal(t, 25*time.Second+200*time.Millisecond, fxApp.StartTimeout())
 
@@ -464,14 +591,15 @@ func TestAppManagedCloudflaredFetchesRuntimeAndBecomesReady(t *testing.T) {
 	select {
 	case err := <-startErr:
 		require.NoError(t, err)
-	case <-time.After(5 * time.Second):
-		t.Fatal("app did not finish starting after managed cloudflared became ready")
+	case <-startCtx.Done():
+		t.Fatalf("app did not finish starting after managed cloudflared became ready: %v", startCtx.Err())
 	}
 
 	data, err := os.ReadFile(healthURLPath)
 	require.NoError(t, err)
 	baseURL := strings.TrimSpace(string(data))
 	require.NoError(t, waitForReady(&http.Client{Timeout: 2 * time.Second}, baseURL, 5*time.Second))
+	requireAppLivenessMetric(t, &http.Client{Timeout: 2 * time.Second}, baseURL)
 
 	stopCtx, stopCancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer stopCancel()
@@ -481,6 +609,7 @@ func TestAppManagedCloudflaredFetchesRuntimeAndBecomesReady(t *testing.T) {
 }
 
 func TestDelayedCloudflaredHelper(t *testing.T) {
+	t.Parallel()
 	if os.Getenv("GO_WANT_DELAYED_CLOUDFLARED_HELPER") != "1" {
 		return
 	}
@@ -548,6 +677,7 @@ func shellSingleQuote(value string) string {
 }
 
 func TestAppFailsToStartWithBusyHealthPort(t *testing.T) {
+	t.Parallel()
 	busyListener, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
 	defer func() {
@@ -580,6 +710,8 @@ func TestAppFailsToStartWithBusyHealthPort(t *testing.T) {
 	app := fxtest.New(t,
 		app.Options(
 			cfg,
+			isolatedAppMetrics(),
+			isolatedAppCodex(t),
 			fx.StartTimeout(5*time.Second),
 			fx.StopTimeout(5*time.Second),
 		)...,
@@ -593,6 +725,7 @@ func TestAppFailsToStartWithBusyHealthPort(t *testing.T) {
 }
 
 func TestAppServesHealthAndAdminOverUnixSocket(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	socketPath := shortSocketPath(t, "tunnel-client-main-health-*.sock")
 	healthURLPath := filepath.Join(tempDir, "health_url")
@@ -641,6 +774,8 @@ func TestAppServesHealthAndAdminOverUnixSocket(t *testing.T) {
 	app := fxtest.New(t,
 		app.Options(
 			cfg,
+			isolatedAppMetrics(),
+			isolatedAppCodex(t),
 			fx.StartTimeout(5*time.Second),
 			fx.StopTimeout(5*time.Second),
 			fx.Populate(&svc),

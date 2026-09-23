@@ -78,6 +78,13 @@ Supported customer MCP transports are:
   ignore proxy, CA, and mTLS settings.
 - **in-memory**: used by tests and embedded/demo flows, not by customer YAML.
 
+**Stdio requires one active `tunnel-client` instance per tunnel ID.** Multiple
+active instances sharing the same tunnel ID with stdio bindings are **not
+supported**, including overlap during restarts. Each instance has its own MCP
+child, and related requests are not pinned to the same instance. See
+[stdio deployment limits](configuration.md#stdio-deployment-limits) for the
+supported setup and replacement procedure.
+
 Additional logical channels can be configured with channel-qualified entries:
 
 ```bash
@@ -169,6 +176,11 @@ Common deployment additions:
   sensitive headers.
 
 ## Troubleshooting connector-specific failures
+
+Use the local `/health?details=true` and `/health/mcp` endpoints to distinguish
+startup readiness from discovery actually observed from the main stdio child.
+These reads do not trigger connector discovery. See [component health](health.md)
+for control-plane polling, response delivery, queue, and dispatcher details.
 
 - **Connector discovery fails but `/healthz` is live**: check `/readyz`. Readiness
   is gated on startup probes and OAuth discovery; liveness only means the

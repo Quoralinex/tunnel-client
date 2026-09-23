@@ -63,6 +63,8 @@ func (s *closeSignalingProbeSession) InitializeResult() *mcp.InitializeResult {
 }
 
 func TestNewMcpClient_DefaultTransport(t *testing.T) {
+	t.Parallel()
+
 	params := clientParams{
 		Config: &config.MCPConfig{
 			ServerURL:             mustParseURL(t, "https://example.invalid"),
@@ -97,6 +99,8 @@ func TestNewMcpClient_DefaultTransport(t *testing.T) {
 }
 
 func TestNewMcpClientLegacyUnixSocket(t *testing.T) {
+	t.Parallel()
+
 	socketFile, err := os.CreateTemp("/tmp", "mcp-client-legacy-*.sock")
 	if err != nil {
 		t.Fatalf("create unix socket temp file: %v", err)
@@ -144,6 +148,8 @@ func TestNewMcpClientLegacyUnixSocket(t *testing.T) {
 }
 
 func TestNewMcpClientSkipsConfiguredMainWhenDisabled(t *testing.T) {
+	t.Parallel()
+
 	serverURL := mustParseURL(t, "https://example.invalid")
 	logging := &config.LoggingConfig{}
 	logger := slog.New(slog.NewTextHandler(&bytes.Buffer{}, nil))
@@ -171,6 +177,8 @@ func TestNewMcpClientSkipsConfiguredMainWhenDisabled(t *testing.T) {
 }
 
 func TestNewMcpClient_LoggingTransport(t *testing.T) {
+	t.Parallel()
+
 	buf := &bytes.Buffer{}
 	logger := slog.New(slog.NewTextHandler(buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
 
@@ -234,6 +242,8 @@ func TestNewMcpClient_LoggingTransport(t *testing.T) {
 }
 
 func TestNewMcpClient_LoggingTransportRequiresDebugLevel(t *testing.T) {
+	t.Parallel()
+
 	params := clientParams{
 		Config: &config.MCPConfig{
 			ServerURL:             mustParseURL(t, "https://example.invalid"),
@@ -901,7 +911,6 @@ func TestIsRetryableStartupProbeError(t *testing.T) {
 	}
 
 	for _, testCase := range testCases {
-		testCase := testCase
 		t.Run(testCase.name, func(t *testing.T) {
 			t.Parallel()
 			if got := isRetryableStartupProbeError(testCase.err, testCase.retryUnixENOENT); got != testCase.want {

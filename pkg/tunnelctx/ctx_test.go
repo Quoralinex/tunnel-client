@@ -59,6 +59,7 @@ func TestContextIdentifierHelpers(t *testing.T) {
 	}
 
 	t.Run("empty values do not override", func(t *testing.T) {
+		t.Parallel()
 		ctx := tunnelctx.ContextWithRequestID(ctx, "")
 		ctx = tunnelctx.ContextWithSessionID(ctx, "")
 		ctx = tunnelctx.ContextWithControlPlaneCommandRequestID(ctx, "")

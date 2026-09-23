@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/http/httptrace"
 	"net/url"
@@ -69,9 +70,11 @@ type TunnelServiceClient struct {
 	apiKey                         string
 	userAgent                      string
 	pollTimeout                    time.Duration
+	initialPollTimeout             time.Duration
 	pollGuardrail                  time.Duration
 	usesProxy                      bool
 	learnedProxyPollTimeout        atomic.Int64
+	initialPollStarted             atomic.Bool
 	pollChannels                   []types.Channel
 	pollChannelsConfigured         bool
 	now                            func() time.Time
@@ -81,6 +84,14 @@ type TunnelServiceClient struct {
 	managedCloudflareRetryAttempts int
 	newManagedCloudflareBackoff    func() *backoff.Backoff
 	retrySleep                     func(context.Context, time.Duration) bool
+	pollHealth                     *controlplane.PollHealth
+	deliveryHealth                 *controlplane.DeliveryHealth
+	routing                        pollRoutingState
+}
+
+// ObserveHealth attaches process-local observers before the client starts work.
+func (c *TunnelServiceClient) ObserveHealth(poll *controlplane.PollHealth, delivery *controlplane.DeliveryHealth) {
+	c.pollHealth, c.deliveryHealth = poll, delivery
 }
 
 // NewTunnelServiceClient constructs an HTTP-backed client using the provided runtimeconfig.
@@ -147,6 +158,7 @@ func NewTunnelServiceClient(ctx context.Context, cfg *runtimeconfig.ControlPlane
 		apiKey:                         cfg.APIKey,
 		userAgent:                      version.UserAgent,
 		pollTimeout:                    pollTimeout,
+		initialPollTimeout:             cfg.InitialPollTimeoutOrDefault(),
 		pollGuardrail:                  pollGuardrail,
 		usesProxy:                      usesProxy,
 		pollChannels:                   append([]types.Channel(nil), cfg.PollChannels...),
@@ -161,9 +173,6 @@ func NewTunnelServiceClient(ctx context.Context, cfg *runtimeconfig.ControlPlane
 	}
 	logger.InfoContext(ctx, "TunnelServiceClient created",
 		slog.String("tunnel_id", client.tunnelID.String()),
-		slog.String("poll_endpoint", client.pollEndpoint.String()),
-		slog.String("response_endpoint", client.responseEndpoint.String()),
-		slog.String("metadata_endpoint", client.metadataEndpoint.String()),
 		slog.Int64("poll_timeout_ms", pollTimeoutMilliseconds(pollTimeout)),
 		slog.Int64("poll_deadline_guardrail_ms", pollGuardrail.Milliseconds()),
 		slog.Int64("poll_deadline_ms", pollDeadline.Milliseconds()),
@@ -251,7 +260,7 @@ func (c *TunnelServiceClient) maybeLearnProxyPollTimeout(
 		}
 		if c.logger != nil {
 			c.logger.WarnContext(ctx, "control-plane proxy closed long poll; lowering future poll timeout",
-				slog.String("error", err.Error()),
+				slog.String("error", (&pollingTransportError{cause: err}).Error()),
 				slog.Int64("observed_disconnect_ms", elapsed.Milliseconds()),
 				slog.Int64("attempted_poll_timeout_ms", pollTimeoutMilliseconds(attemptedTimeout)),
 				slog.Int64("learned_poll_timeout_ms", pollTimeoutMilliseconds(learned)),
@@ -269,17 +278,11 @@ func learnedProxyPollTimeoutFromDisconnect(elapsed, attemptedTimeout, guardrail 
 	if elapsed <= minimumAdaptiveProxyPollMargin || elapsed >= pollDeadline || attemptedTimeout <= minimumAdaptiveProxyPollTimeout {
 		return 0
 	}
-	margin := guardrail
-	if margin < minimumAdaptiveProxyPollMargin {
-		margin = minimumAdaptiveProxyPollMargin
-	}
+	margin := max(guardrail, minimumAdaptiveProxyPollMargin)
 	if halfElapsed := elapsed / 2; margin > halfElapsed {
 		margin = halfElapsed
 	}
-	learned := (elapsed - margin).Truncate(time.Millisecond)
-	if learned < minimumAdaptiveProxyPollTimeout {
-		learned = minimumAdaptiveProxyPollTimeout
-	}
+	learned := max((elapsed - margin).Truncate(time.Millisecond), minimumAdaptiveProxyPollTimeout)
 	if learned >= attemptedTimeout {
 		return 0
 	}
@@ -565,7 +568,10 @@ func buildControlPlaneHTTPTransportWithLogging(cfg *runtimeconfig.ControlPlaneCo
 		base,
 		otelhttp.WithMeterProvider(meterProvider),
 	)
-	if includeRawHTTPLogging {
+	// A poll body can contain rich-header credentials, and the response body
+	// can contain results from the same invocation. Exclude both directions
+	// from raw capture even when the operator enables unsafe HTTP debugging.
+	if includeRawHTTPLogging && !cfg.SuppressRawHTTPLogging {
 		base = tclog.NewRoundTripper(base, logger, loggingCfg, tclog.ComponentControlPlane)
 	}
 
@@ -581,7 +587,19 @@ func buildControlPlaneHTTPTransportWithLogging(cfg *runtimeconfig.ControlPlaneCo
 }
 
 // PostResponse acknowledges the provided request with the JSON-RPC response.
-func (c *TunnelServiceClient) PostResponse(ctx context.Context, requestID types.RequestID, response *types.TunnelResponse) (types.TunnelServiceRequestID, error) {
+func (c *TunnelServiceClient) PostResponse(ctx context.Context, requestID types.RequestID, response *types.TunnelResponse) (serviceRequestID types.TunnelServiceRequestID, returnErr error) {
+	c.deliveryHealth.Begin()
+	disposition, healthStatus := "failed", 0
+	defer func() {
+		category := ""
+		if returnErr != nil {
+			category, _ = healthFailure(returnErr)
+		}
+		if errors.Is(returnErr, context.Canceled) {
+			disposition = "canceled"
+		}
+		c.deliveryHealth.Finish(c.nowTime(), disposition, category, healthStatus)
+	}()
 	if requestID == "" {
 		return "", errors.New("controlplane responder: requestID is required")
 	}
@@ -670,8 +688,12 @@ func (c *TunnelServiceClient) PostResponse(ctx context.Context, requestID types.
 			}))
 		}
 
+		c.deliveryHealth.Attempt(attempt > 1)
 		resp, err := c.client.Do(attemptReq)
 		if err != nil {
+			category, status := healthFailure(err)
+			healthStatus = status
+			c.deliveryHealth.AttemptFailed(c.nowTime(), category, status)
 			// A notification remains non-final after tunnel-service accepts it. Once
 			// its request was written, a transport failure has ambiguous commit state;
 			// replaying it can enqueue the same notification twice.
@@ -690,16 +712,20 @@ func (c *TunnelServiceClient) PostResponse(ctx context.Context, requestID types.
 			logger = tclog.LoggerWithContextIdentifiers(ctx, c.logger)
 		}
 
+		healthStatus = resp.StatusCode
 		switch resp.StatusCode {
 		case http.StatusOK:
+			disposition = "accepted"
 			_ = resp.Body.Close()
 			logger.DebugContext(ctx, "posted response to control-plane")
 			return tunnelServiceRequestID, nil
 		case http.StatusNotFound:
+			disposition = "already_fulfilled_or_unknown"
 			_ = resp.Body.Close()
 			logger.WarnContext(ctx, "response already fulfilled or unknown request")
 			return tunnelServiceRequestID, nil
 		default:
+			c.deliveryHealth.AttemptFailed(c.nowTime(), "http_error", resp.StatusCode)
 			statusErr := newAPIStatusError("controlplane responder: unexpected status", resp, c.nowTime())
 			_ = resp.Body.Close()
 			if !isRetryableResponseStatus(resp.StatusCode) || attempt == attempts ||
@@ -734,7 +760,7 @@ func sanitizeMCPResponseHeaders(headers http.Header) http.Header {
 			continue
 		}
 		for _, value := range headers[name] {
-			for _, option := range strings.Split(value, ",") {
+			for option := range strings.SplitSeq(value, ",") {
 				option = strings.ToLower(strings.Trim(option, " \t"))
 				if option != "" {
 					connectionOptions[option] = struct{}{}
@@ -789,6 +815,10 @@ func (c *TunnelServiceClient) Poll(ctx context.Context, limit int) ([]controlpla
 	if limit <= 0 {
 		return nil, "", nil
 	}
+	if err := ctx.Err(); err != nil {
+		return nil, "", err
+	}
+	attempt := c.routing.snapshot()
 
 	// Keep any learned proxy-specific deadline scoped to polls. The shared HTTP
 	// client also serves metadata and response calls, which retain their
@@ -801,10 +831,21 @@ func (c *TunnelServiceClient) Poll(ctx context.Context, limit int) ([]controlpla
 	if err != nil {
 		return nil, "", err
 	}
+	if attempt.token != "" {
+		req.Header.Set(wiretypes.ShardTokenHeader, attempt.token)
+	}
+	req = req.WithContext(tclog.WithoutRawHTTPLogging(req.Context()))
 
+	// Honor the initial wait cap, then use the configured long-poll wait.
+	// Keep the full deadline above for services that clamp or ignore timeout_ms.
+	requestedPollTimeout := pollTimeout
+	if !c.initialPollStarted.Swap(true) {
+		requestedPollTimeout = min(pollTimeout, c.initialPollTimeout)
+	}
+	c.pollHealth.RequestLimits(requestedPollTimeout, c.pollDeadlineFor(pollTimeout))
 	query := req.URL.Query()
 	query.Set("limit", strconv.Itoa(limit))
-	query.Set("timeout_ms", strconv.FormatInt(pollTimeoutMilliseconds(pollTimeout), 10))
+	query.Set("timeout_ms", strconv.FormatInt(pollTimeoutMilliseconds(requestedPollTimeout), 10))
 	if c.pollChannelsConfigured {
 		for _, channel := range c.pollChannels {
 			query.Add("channel", channel.String())
@@ -826,20 +867,25 @@ func (c *TunnelServiceClient) Poll(ctx context.Context, limit int) ([]controlpla
 		},
 	))
 
-	resp, err := c.client.Do(req)
+	// Keep redirects scoped to polling and reject them before the auth transport
+	// can attach credentials or a routing token to a different destination.
+	pollClient := *c.client
+	pollClient.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	resp, err := pollClient.Do(req)
 	if err != nil {
 		if writtenAt := pollWrittenAt.Load(); writtenAt != nil {
 			_, receivedHeaders := receipt.value()
 			c.maybeLearnProxyPollTimeout(
 				ctx,
 				pollCtx,
-				pollTimeout,
+				requestedPollTimeout,
 				c.elapsedSince(*writtenAt),
 				receivedHeaders,
 				err,
 			)
 		}
-		return nil, "", err
+		c.routing.complete(attempt, nil, false, !errors.Is(ctx.Err(), context.Canceled))
+		return nil, "", &pollingTransportError{cause: err}
 	}
 	receivedAt, recorded := receipt.value()
 	if !recorded {
@@ -857,12 +903,27 @@ func (c *TunnelServiceClient) Poll(ctx context.Context, limit int) ([]controlpla
 
 	switch resp.StatusCode {
 	case http.StatusNoContent:
+		c.routing.complete(attempt, nil, true, false)
 		return nil, tunnelServiceRequestID, nil
 	case http.StatusOK:
 		cmds, err := c.decodeCommands(ctx, resp.Body, limit, receivedAt)
+		if err == nil {
+			c.routing.complete(attempt, nil, true, false)
+		} else if !errors.Is(ctx.Err(), context.Canceled) {
+			// An unreachable route may fail while reading the body, after headers
+			// have arrived. Malformed JSON alone does not evict a reachable route.
+			var networkErr net.Error
+			failed := errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) || errors.As(err, &networkErr)
+			c.routing.complete(attempt, nil, false, failed)
+		}
 		return cmds, tunnelServiceRequestID, err
 	default:
-		return nil, tunnelServiceRequestID, newAPIStatusError("controlplane client: unexpected status", resp, c.nowTime())
+		statusErr, correction, failedBody := c.pollStatusError(resp)
+		if errors.Is(ctx.Err(), context.Canceled) {
+			return nil, tunnelServiceRequestID, ctx.Err()
+		}
+		c.routing.complete(attempt, correction, false, failedBody || resp.StatusCode == http.StatusRequestTimeout || resp.StatusCode >= 500 && resp.StatusCode <= 599)
+		return nil, tunnelServiceRequestID, statusErr
 	}
 }
 
@@ -964,7 +1025,7 @@ func (c *TunnelServiceClient) decodeCommands(ctx context.Context, r io.Reader, l
 
 	data, err := io.ReadAll(r)
 	if err != nil {
-		return nil, fmt.Errorf("controlplane client: read poll response: %w", err)
+		return nil, &pollingTransportError{cause: err}
 	}
 
 	var envelope wiretypes.PolledCommandEnvelope
@@ -1020,6 +1081,7 @@ func (c *TunnelServiceClient) decodeCommands(ctx context.Context, r io.Reader, l
 				logger.WarnContext(ctx, "control-plane command dropped: invalid jsonrpc payload", slog.String(tclog.FieldRequestID, rpc.RequestID), slog.String("error", err.Error()))
 				continue
 			}
+			logPolledCommand(ctx, logger, rpc.BaseRawPolledCommand, polledAt)
 			out = append(out, cmd)
 		case wiretypes.CommandTypeOAuthDiscovery:
 			var od wiretypes.RawOauthDiscoveryPolledCommand
@@ -1032,6 +1094,7 @@ func (c *TunnelServiceClient) decodeCommands(ctx context.Context, r io.Reader, l
 				logger.WarnContext(ctx, "control-plane command dropped: invalid oauth_discovery payload", slog.String(tclog.FieldRequestID, od.RequestID), slog.String("error", err.Error()))
 				continue
 			}
+			logPolledCommand(ctx, logger, od.BaseRawPolledCommand, polledAt)
 			out = append(out, cmd)
 		case wiretypes.CommandTypeSessionTermination:
 			var termination wiretypes.RawSessionTerminationPolledCommand
@@ -1044,6 +1107,7 @@ func (c *TunnelServiceClient) decodeCommands(ctx context.Context, r io.Reader, l
 				logger.WarnContext(ctx, "control-plane command dropped: invalid session_termination payload", slog.String(tclog.FieldRequestID, termination.RequestID), slog.String("error", err.Error()))
 				continue
 			}
+			logPolledCommand(ctx, logger, termination.BaseRawPolledCommand, polledAt)
 			out = append(out, cmd)
 		default:
 			// Unknown command type – drop with warning for forward compatibility.
@@ -1053,6 +1117,28 @@ func (c *TunnelServiceClient) decodeCommands(ctx context.Context, r io.Reader, l
 	}
 
 	return out, nil
+}
+
+// Observe command receipt without raw poll dumps, which can include routing
+// tokens and credentials. Keep customer RPC IDs, sessions, headers and payloads
+// out of this event; the service request ID correlates delivery and deadlines.
+func logPolledCommand(ctx context.Context, logger *slog.Logger, command wiretypes.BaseRawPolledCommand, polledAt time.Time) {
+	if !logger.Enabled(ctx, slog.LevelDebug) {
+		return
+	}
+	attrs := []any{
+		slog.String("command_type", string(command.CommandType)),
+		slog.Time("polled_at", polledAt),
+	}
+	if len(command.RequestID) <= 128 {
+		attrs = append(attrs, slog.String(tclog.FieldRequestID, command.RequestID))
+	}
+	if command.ResponseTimeout != nil && len(*command.ResponseTimeout) <= 64 {
+		if _, valid := command.ResponseTimeout.Value(); valid {
+			attrs = append(attrs, slog.String("response_timeout", string(*command.ResponseTimeout)))
+		}
+	}
+	logger.DebugContext(ctx, "control-plane command received", attrs...)
 }
 
 // parsing and conversion helpers and command types were moved into

@@ -267,7 +267,7 @@ func proxyBypassHost(noProxy string, target *url.URL) bool {
 		return false
 	}
 	port := target.Port()
-	for _, entry := range strings.Split(noProxy, ",") {
+	for entry := range strings.SplitSeq(noProxy, ",") {
 		trimmed := strings.TrimSpace(entry)
 		if trimmed == "" {
 			continue

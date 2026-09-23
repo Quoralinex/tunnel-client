@@ -17,7 +17,7 @@ import (
 )
 
 func TestRuntimeRootCommandExposesOnlyRuntimeSurface(t *testing.T) {
-	setLinkedRuntimeFlavor(t, version.FlavorRuntime)
+	t.Parallel()
 
 	stdout, err := executeRuntimeCommand(t, nil, "--help")
 	require.NoError(t, err)
@@ -45,7 +45,7 @@ func TestRuntimeRootCommandExposesOnlyRuntimeSurface(t *testing.T) {
 }
 
 func TestRuntimeRootCommandDisablesImplicitHelpSubcommand(t *testing.T) {
-	setLinkedRuntimeFlavor(t, version.FlavorRuntime)
+	t.Parallel()
 
 	root := newRootCommand(func(string) (string, bool) { return "", false }, io.Discard, io.Discard)
 	root.InitDefaultHelpCmd()
@@ -64,7 +64,7 @@ func TestRuntimeRootCommandDisablesImplicitHelpSubcommand(t *testing.T) {
 }
 
 func TestRuntimeRunHelpOmitsFullAndCloudflaredFlags(t *testing.T) {
-	setLinkedRuntimeFlavor(t, version.FlavorRuntime)
+	t.Parallel()
 
 	stdout, err := executeRuntimeCommand(t, nil, "run", "--help")
 	require.NoError(t, err)
@@ -89,6 +89,7 @@ func TestRuntimeRunHelpOmitsFullAndCloudflaredFlags(t *testing.T) {
 }
 
 func TestRuntimeRunCommandMatchesCanonicalCobraFlagSurface(t *testing.T) {
+	t.Parallel()
 	root := newRootCommand(func(string) (string, bool) { return "", false }, io.Discard, io.Discard)
 	run, _, err := root.Find([]string{"run"})
 	require.NoError(t, err)
@@ -102,7 +103,7 @@ func TestRuntimeRunCommandMatchesCanonicalCobraFlagSurface(t *testing.T) {
 }
 
 func TestRuntimeRejectsUIFlagAndProfileKey(t *testing.T) {
-	setLinkedRuntimeFlavor(t, version.FlavorRuntime)
+	t.Parallel()
 
 	_, err := executeRuntimeCommand(t, nil, "run", "--allow-remote-ui")
 	require.Error(t, err)
@@ -131,7 +132,10 @@ func TestRuntimeRejectsUIFlagAndProfileKey(t *testing.T) {
 }
 
 func TestRuntimeVersionRejectsMismatchedLinkedFlavor(t *testing.T) {
-	setLinkedRuntimeFlavor(t, version.FlavorFull)
+	// Restore the process-wide flavor before parallel command tests start.
+	originalFlavor := version.Flavor
+	t.Cleanup(func() { version.Flavor = originalFlavor })
+	version.Flavor = version.FlavorFull
 
 	output := runtimecli.Version(version.FlavorRuntime)
 	require.Contains(t, output, "invalid runtime build metadata")
@@ -139,11 +143,10 @@ func TestRuntimeVersionRejectsMismatchedLinkedFlavor(t *testing.T) {
 	require.NotContains(t, output, "flavor=runtime")
 }
 
-func setLinkedRuntimeFlavor(t *testing.T, flavor string) {
-	t.Helper()
-	originalFlavor := version.Flavor
-	version.Flavor = flavor
-	t.Cleanup(func() { version.Flavor = originalFlavor })
+func TestMain(m *testing.M) {
+	// Match this binary flavor once before parallel tests start.
+	version.Flavor = version.FlavorRuntime
+	os.Exit(m.Run())
 }
 
 func executeRuntimeCommand(t *testing.T, env map[string]string, args ...string) (string, error) {

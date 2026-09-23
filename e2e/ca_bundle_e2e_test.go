@@ -21,6 +21,8 @@ import (
 var tlsFixtures embed.FS
 
 func TestCABundleControlsTLSHandshake(t *testing.T) {
+	t.Parallel()
+
 	certPEM := mustReadFixture(t, "testdata/test_server_cert.pem")
 	keyPEM := mustReadFixture(t, "testdata/test_server_key.pem")
 	caPEM := mustReadFixture(t, "testdata/test_ca_bundle.pem")
@@ -57,6 +59,8 @@ func TestCABundleControlsTLSHandshake(t *testing.T) {
 }
 
 func TestCABundleParsesMultipleCertificates(t *testing.T) {
+	t.Parallel()
+
 	caPEM := mustReadFixture(t, "testdata/test_ca_bundle.pem")
 	certs := mustParsePEMCerts(t, caPEM)
 	if len(certs) < 2 {

@@ -12,6 +12,8 @@ import (
 // TestVersionDoesNotSpawnGit proves version initialization is static even
 // when no linked SHA or Go build revision is available.
 func TestVersionDoesNotSpawnGit(t *testing.T) {
+	// Keep serial because this test changes the environment and version metadata.
+
 	tempDir := t.TempDir()
 	markerPath := filepath.Join(tempDir, "injected")
 	gitPath := filepath.Join(tempDir, "git")

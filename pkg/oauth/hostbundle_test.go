@@ -21,6 +21,8 @@ import (
 )
 
 func TestBuildURLBundleFromPRMD(t *testing.T) {
+	t.Parallel()
+
 	payload, err := json.Marshal(oauthex.ProtectedResourceMetadata{
 		Resource: "https://resource.internal/",
 		AuthorizationServers: []string{
@@ -64,6 +66,8 @@ func TestBuildURLBundleFromPRMD(t *testing.T) {
 }
 
 func TestBuildURLBundleFromPRMDEmpty(t *testing.T) {
+	t.Parallel()
+
 	payload, err := json.Marshal(oauthex.ProtectedResourceMetadata{})
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
@@ -75,6 +79,8 @@ func TestBuildURLBundleFromPRMDEmpty(t *testing.T) {
 }
 
 func TestBuildURLBundleFromPRMDWithAuthServerMetadata(t *testing.T) {
+	t.Parallel()
+
 	mux := http.NewServeMux()
 	server := httptest.NewServer(mux)
 	defer server.Close()
@@ -114,7 +120,7 @@ func TestBuildURLBundleFromPRMDWithAuthServerMetadata(t *testing.T) {
 		payload,
 		time.Unix(42, 0).UTC(),
 		sourceURL,
-		URLBundleOptions{},
+		URLBundleOptions{TrustedMCPURL: mustParseURL(t, resource)},
 		slog.New(slog.NewTextHandler(io.Discard, nil)),
 	)
 	if err != nil {
@@ -158,6 +164,8 @@ func TestBuildURLBundleFromPRMDWithAuthServerMetadata(t *testing.T) {
 }
 
 func TestAppendAuthServerMetadataRecordUsesCanonicalOrigin(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name     string
 		issuer   string
@@ -166,21 +174,45 @@ func TestAppendAuthServerMetadataRecordUsesCanonicalOrigin(t *testing.T) {
 	}{
 		{
 			name:     "normalized host and default HTTPS port",
-			issuer:   "https://Auth.Example.COM./issuer",
+			issuer:   "https://Auth.Example.COM/issuer",
 			record:   "https://auth.example.com:443/token",
 			disallow: false,
 		},
 		{
 			name:     "normalized explicit port",
 			issuer:   "https://auth.example.com:08443/issuer",
-			record:   "https://AUTH.EXAMPLE.COM.:8443/token",
+			record:   "https://AUTH.EXAMPLE.COM:8443/token",
 			disallow: false,
+		},
+		{
+			name:     "trailing dot removed",
+			issuer:   "https://auth.example.com./issuer",
+			record:   "https://auth.example.com/token",
+			disallow: true,
+		},
+		{
+			name:     "trailing dot added",
+			issuer:   "https://auth.example.com/issuer",
+			record:   "https://auth.example.com./token",
+			disallow: true,
 		},
 		{
 			name:     "canonical IPv6 host",
 			issuer:   "https://[::1]/issuer",
 			record:   "https://[0:0:0:0:0:0:0:1]:443/token",
 			disallow: false,
+		},
+		{
+			name:     "same IPv6 zone",
+			issuer:   "https://[fe80::1%25eth0]/issuer",
+			record:   "https://[fe80:0:0:0:0:0:0:1%25eth0]:443/token",
+			disallow: false,
+		},
+		{
+			name:     "different IPv6 zone case",
+			issuer:   "https://[fe80::1%25eth0]/issuer",
+			record:   "https://[fe80::1%25ETH0]/token",
+			disallow: true,
 		},
 		{
 			name:     "different port",
@@ -204,6 +236,7 @@ func TestAppendAuthServerMetadataRecordUsesCanonicalOrigin(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			records := appendAuthServerMetadataRecord(
 				nil,
 				tc.record,
@@ -226,13 +259,17 @@ func TestAppendAuthServerMetadataRecordUsesCanonicalOrigin(t *testing.T) {
 }
 
 func TestBuildURLBundleUsesTrustedMCPOriginForPrivateRegistration(t *testing.T) {
+	t.Parallel()
+
 	const (
 		trustedMCPURL = "https://mcp.example/mcp"
 		privateOrigin = "https://10.0.0.1"
 		sourceURL     = privateOrigin + "/.well-known/oauth-protected-resource"
 		authServerURL = privateOrigin + "/oauth"
 	)
+	var requests int
 	client := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		requests++
 		return &http.Response{
 			StatusCode: http.StatusOK,
 			Header:     http.Header{"Content-Type": []string{"application/json"}},
@@ -255,6 +292,12 @@ func TestBuildURLBundleUsesTrustedMCPOriginForPrivateRegistration(t *testing.T) 
 	if err != nil {
 		t.Fatalf("build bundle: %v", err)
 	}
+	if requests != 0 {
+		t.Fatalf("expected untrusted issuer to be blocked before transport, got %d requests", requests)
+	}
+	if len(bundle.URLs) != 3 {
+		t.Fatalf("expected only three base PRMD records, got %d", len(bundle.URLs))
+	}
 
 	recordsByRole := make(map[string]hostbus.URLRecord, len(bundle.URLs))
 	for _, record := range bundle.URLs {
@@ -264,9 +307,6 @@ func TestBuildURLBundleUsesTrustedMCPOriginForPrivateRegistration(t *testing.T) 
 		"prmd-source",
 		"prmd-resource",
 		"prmd-auth-server",
-		"auth-server-metadata",
-		"issuer",
-		"token-endpoint",
 	} {
 		record, ok := recordsByRole[role]
 		if !ok {
@@ -384,6 +424,7 @@ func TestBuildURLBundleFromPRMDWithAuthServerMetadataOverUnixSocket(t *testing.T
 		time.Unix(42, 0).UTC(),
 		sourceURL,
 		URLBundleOptions{
+			TrustedMCPURL:  serverURL,
 			UnixSocketPath: socketPath,
 			UnixSocketURL:  serverURL,
 		},
@@ -460,6 +501,7 @@ func TestBuildURLBundleFromPRMDWithAuthServerMetadataLimitsUnixSocketToAuthServe
 		time.Unix(42, 0).UTC(),
 		mustParseURL(t, prmdURL),
 		URLBundleOptions{
+			TrustedMCPURL:  serverURL,
 			UnixSocketPath: socketPath,
 			UnixSocketURL:  serverURL,
 		},
@@ -516,6 +558,7 @@ func TestBuildURLBundleFromPRMDWithAuthServerMetadataDoesNotPropagateUnixSocketA
 		time.Unix(42, 0).UTC(),
 		mustParseURL(t, prmdURL),
 		URLBundleOptions{
+			TrustedMCPURL:  serverURL,
 			UnixSocketPath: socketPath,
 			UnixSocketURL:  serverURL,
 		},
@@ -532,6 +575,8 @@ func TestBuildURLBundleFromPRMDWithAuthServerMetadataDoesNotPropagateUnixSocketA
 }
 
 func TestBuildURLBundleFromPRMDWithAuthServerMetadataAcceptsIssuerMismatch(t *testing.T) {
+	t.Parallel()
+
 	mux := http.NewServeMux()
 	server := httptest.NewServer(mux)
 	defer server.Close()
@@ -571,7 +616,7 @@ func TestBuildURLBundleFromPRMDWithAuthServerMetadataAcceptsIssuerMismatch(t *te
 		payload,
 		time.Unix(42, 0).UTC(),
 		mustParseURL(t, server.URL+"/.well-known/oauth-protected-resource"),
-		URLBundleOptions{},
+		URLBundleOptions{TrustedMCPURL: mustParseURL(t, server.URL)},
 		slog.New(slog.NewJSONHandler(&logBuffer, nil)),
 	)
 	if err != nil {
@@ -679,6 +724,8 @@ func TestBuildURLBundleFromPRMDWithAuthServerMetadataAcceptsIssuerMismatch(t *te
 }
 
 func TestBuildURLBundleFromPRMDWithAuthServerMetadataPartialFailure(t *testing.T) {
+	t.Parallel()
+
 	mux := http.NewServeMux()
 	server := httptest.NewServer(mux)
 	defer server.Close()
@@ -719,7 +766,7 @@ func TestBuildURLBundleFromPRMDWithAuthServerMetadataPartialFailure(t *testing.T
 		payload,
 		time.Unix(42, 0).UTC(),
 		sourceURL,
-		URLBundleOptions{},
+		URLBundleOptions{TrustedMCPURL: mustParseURL(t, server.URL)},
 		slog.New(slog.NewTextHandler(io.Discard, nil)),
 	)
 	if err != nil {
@@ -751,6 +798,8 @@ func TestBuildURLBundleFromPRMDWithAuthServerMetadataPartialFailure(t *testing.T
 }
 
 func TestBuildURLBundleFromPRMDWithAuthServerMetadataUsesFirstAuthServerOnly(t *testing.T) {
+	t.Parallel()
+
 	mux := http.NewServeMux()
 	server := httptest.NewServer(mux)
 	defer server.Close()
@@ -784,7 +833,7 @@ func TestBuildURLBundleFromPRMDWithAuthServerMetadataUsesFirstAuthServerOnly(t *
 		payload,
 		time.Unix(42, 0).UTC(),
 		sourceURL,
-		URLBundleOptions{},
+		URLBundleOptions{TrustedMCPURL: mustParseURL(t, server.URL)},
 		slog.New(slog.NewTextHandler(io.Discard, nil)),
 	)
 	if err != nil {
@@ -804,6 +853,8 @@ func TestBuildURLBundleFromPRMDWithAuthServerMetadataUsesFirstAuthServerOnly(t *
 }
 
 func TestBuildURLBundleFromPRMDIgnoresAuthorizationServersBeyondIndexZero(t *testing.T) {
+	t.Parallel()
+
 	payload, err := json.Marshal(oauthex.ProtectedResourceMetadata{
 		Resource:             "https://resource.internal/",
 		AuthorizationServers: []string{"https://auth1.internal/", "://not-a-url"},
@@ -833,6 +884,8 @@ func TestBuildURLBundleFromPRMDIgnoresAuthorizationServersBeyondIndexZero(t *tes
 }
 
 func TestOAuthBundleGroupIDUsesSourceURLWhenAvailable(t *testing.T) {
+	t.Parallel()
+
 	sourceA := mustParseURL(t, "https://bundle-a.internal/.well-known/oauth-protected-resource")
 	sourceB := mustParseURL(t, "https://bundle-b.internal/.well-known/oauth-protected-resource")
 

@@ -120,8 +120,10 @@ type adapterFlagSurface struct {
 }
 
 func TestFullAdapterCoversEveryRuntimeConfigField(t *testing.T) {
-	runtimeType := reflect.TypeOf(runtimeconfig.Config{})
-	fullType := reflect.TypeOf(Config{})
+	t.Parallel()
+
+	runtimeType := reflect.TypeFor[runtimeconfig.Config]()
+	fullType := reflect.TypeFor[Config]()
 	for runtimeField := range runtimeType.Fields() {
 		if runtimeField.Name == "Harpoon" {
 			// Harpoon keeps one full-only CapturePayloads bit in the public
@@ -136,8 +138,8 @@ func TestFullAdapterCoversEveryRuntimeConfigField(t *testing.T) {
 			t.Fatalf("full config field %q type = %s, want %s", runtimeField.Name, fullField.Type, runtimeField.Type)
 		}
 	}
-	runtimeHarpoonType := reflect.TypeOf(runtimeconfig.HarpoonConfig{})
-	fullHarpoonType := reflect.TypeOf(HarpoonConfig{})
+	runtimeHarpoonType := reflect.TypeFor[runtimeconfig.HarpoonConfig]()
+	fullHarpoonType := reflect.TypeFor[HarpoonConfig]()
 	for runtimeField := range runtimeHarpoonType.Fields() {
 		fullField, ok := fullHarpoonType.FieldByName(runtimeField.Name)
 		if !ok {
@@ -150,7 +152,9 @@ func TestFullAdapterCoversEveryRuntimeConfigField(t *testing.T) {
 }
 
 func TestFullAdapterCopiesEveryRuntimeConfigFieldValue(t *testing.T) {
-	coreValue := adapterSentinelValue(t, reflect.TypeOf(runtimeconfig.Config{}), 1)
+	t.Parallel()
+
+	coreValue := adapterSentinelValue(t, reflect.TypeFor[runtimeconfig.Config](), 1)
 	core := coreValue.Interface().(runtimeconfig.Config)
 	full := fullConfigFromRuntime(&core, CloudflaredConfig{}, AdminUIConfig{}, false, ProxyHealthConfig{})
 
@@ -185,7 +189,9 @@ func TestFullAdapterCopiesEveryRuntimeConfigFieldValue(t *testing.T) {
 }
 
 func TestRuntimeCoreFromFullCopiesEveryRuntimeConfigFieldValue(t *testing.T) {
-	coreValue := adapterSentinelValue(t, reflect.TypeOf(runtimeconfig.Config{}), 1)
+	t.Parallel()
+
+	coreValue := adapterSentinelValue(t, reflect.TypeFor[runtimeconfig.Config](), 1)
 	core := coreValue.Interface().(runtimeconfig.Config)
 	full := fullConfigFromRuntime(&core, CloudflaredConfig{}, AdminUIConfig{}, false, ProxyHealthConfig{})
 	roundTrip := runtimeCoreFromFull(full)
@@ -196,22 +202,26 @@ func TestRuntimeCoreFromFullCopiesEveryRuntimeConfigFieldValue(t *testing.T) {
 }
 
 func TestFullConfigAddsOnlyExplicitFullOnlyFields(t *testing.T) {
-	runtimeFields := exportedFieldNames(reflect.TypeOf(runtimeconfig.Config{}))
-	fullFields := exportedFieldNames(reflect.TypeOf(Config{}))
+	t.Parallel()
+
+	runtimeFields := exportedFieldNames(reflect.TypeFor[runtimeconfig.Config]())
+	fullFields := exportedFieldNames(reflect.TypeFor[Config]())
 	delete(runtimeFields, "Harpoon")
 	delete(fullFields, "Harpoon")
 	if got := sortedFieldDifference(fullFields, runtimeFields); !reflect.DeepEqual(got, []string{"AdminUI", "Cloudflared", "ProxyHealth"}) {
 		t.Fatalf("full Config adds fields %v, want only [AdminUI Cloudflared ProxyHealth]", got)
 	}
 
-	runtimeHarpoonFields := exportedFieldNames(reflect.TypeOf(runtimeconfig.HarpoonConfig{}))
-	fullHarpoonFields := exportedFieldNames(reflect.TypeOf(HarpoonConfig{}))
+	runtimeHarpoonFields := exportedFieldNames(reflect.TypeFor[runtimeconfig.HarpoonConfig]())
+	fullHarpoonFields := exportedFieldNames(reflect.TypeFor[HarpoonConfig]())
 	if got := sortedFieldDifference(fullHarpoonFields, runtimeHarpoonFields); !reflect.DeepEqual(got, []string{"CapturePayloads"}) {
 		t.Fatalf("full HarpoonConfig adds fields %v, want only [CapturePayloads]", got)
 	}
 }
 
 func TestFullAndRuntimeFlagSurfacesDifferOnlyByExplicitExtensions(t *testing.T) {
+	t.Parallel()
+
 	fullFlags := pflag.NewFlagSet("full", pflag.ContinueOnError)
 	RegisterFlags(fullFlags)
 	runtimeFlags := pflag.NewFlagSet("runtime", pflag.ContinueOnError)
@@ -430,6 +440,8 @@ func assertAdapterFlagSurfaceAddsExactly(t *testing.T, larger map[string]adapter
 }
 
 func TestFullAndRuntimeLoadSharedEffectiveConfigParity(t *testing.T) {
+	t.Parallel()
+
 	profile := writeAdapterConfig(t, `
 config_version: 1
 control_plane:
@@ -483,11 +495,11 @@ health:
 		},
 	}
 	for _, flavor := range adapterRuntimeFlavors() {
-		flavor := flavor
 		t.Run(string(flavor), func(t *testing.T) {
+			t.Parallel()
 			for _, tc := range cases {
-				tc := tc
 				t.Run(tc.name, func(t *testing.T) {
+					t.Parallel()
 					full, runtime := loadParityPairForFlavor(t, tc.args, lookupEnvMap(tc.env), flavor)
 					assertSharedRuntimeParity(t, full, runtime)
 				})
@@ -497,6 +509,8 @@ health:
 }
 
 func TestFullAndRuntimeAcceptDefaultEquivalentFullOnlyEnvironment(t *testing.T) {
+	t.Parallel()
+
 	cases := []struct {
 		name  string
 		value string
@@ -510,11 +524,11 @@ func TestFullAndRuntimeAcceptDefaultEquivalentFullOnlyEnvironment(t *testing.T) 
 		{name: "HARPOON_CAPTURE_PAYLOADS", value: "false"},
 	}
 	for _, flavor := range adapterRuntimeFlavors() {
-		flavor := flavor
 		t.Run(string(flavor), func(t *testing.T) {
+			t.Parallel()
 			for _, tc := range cases {
-				tc := tc
 				t.Run(tc.name+"="+tc.value, func(t *testing.T) {
+					t.Parallel()
 					args := []string{
 						"--control-plane.tunnel-id", adapterTestTunnelID,
 						"--mcp.server-url", "https://mcp.example.invalid/mcp",
@@ -532,8 +546,11 @@ func TestFullAndRuntimeAcceptDefaultEquivalentFullOnlyEnvironment(t *testing.T) 
 }
 
 func TestFullAndRuntimeSharedProductionInputsParity(t *testing.T) {
+	t.Parallel()
+
 	headerFile := writeAdapterSecret(t, "file-header-value\n")
 	t.Run("headers proxies and repeatable flags", func(t *testing.T) {
+		t.Parallel()
 		args := []string{
 			"--control-plane.tunnel-id", adapterTestTunnelID,
 			"--control-plane.poll-channel", "main",
@@ -563,8 +580,8 @@ func TestFullAndRuntimeSharedProductionInputsParity(t *testing.T) {
 			"HARPOON_PROXY":         "http://harpoon-proxy.example.invalid:8080",
 		})
 		for _, flavor := range adapterRuntimeFlavors() {
-			flavor := flavor
 			t.Run(string(flavor), func(t *testing.T) {
+				t.Parallel()
 				full, runtime := loadParityPairForFlavor(t, args, lookup, flavor)
 				assertSharedRuntimeParity(t, full, runtime)
 			})
@@ -572,6 +589,7 @@ func TestFullAndRuntimeSharedProductionInputsParity(t *testing.T) {
 	})
 
 	t.Run("profile secret references TLS and mounted paths", func(t *testing.T) {
+		t.Parallel()
 		certPath, keyPath := writeAdapterClientCertificate(t)
 		apiKeyPath := writeAdapterSecret(t, adapterTestAPIKey+"\n")
 		cwd, err := os.Getwd()
@@ -614,8 +632,8 @@ process:
   pid_file: relative/client.pid
 `)
 		for _, flavor := range adapterRuntimeFlavors() {
-			flavor := flavor
 			t.Run(string(flavor), func(t *testing.T) {
+				t.Parallel()
 				full, runtime := loadParityPairForFlavor(t, []string{"--config", profile}, lookupEnvMap(nil), flavor)
 				assertSharedRuntimeParity(t, full, runtime)
 				if full.TLS == nil || full.TLS.Path != relativeCertPath {
@@ -630,13 +648,15 @@ process:
 }
 
 func TestFullAndRuntimeFlavorsPreserveExactProfileBytes(t *testing.T) {
+	t.Parallel()
+
 	raw := []byte("# bytes are retained for diagnostics\n\nconfig_version: 1\ncontrol_plane:\n  tunnel_id: tunnel_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n  api_key: env:CONTROL_PLANE_API_KEY\nmcp:\n  server_urls:\n    - url: https://mcp.example.invalid/mcp\nadmin_ui:\n  allow_remote: false\n  open_browser: false\n  log_buffer_events: 2000\nharpoon:\n  capture_payloads: false\nproxy:\n  check_interval: 1m0s\n\n")
 	profile := writeAdapterConfigBytes(t, raw)
 	lookup := lookupEnvMap(map[string]string{"CONTROL_PLANE_API_KEY": adapterTestAPIKey})
 
 	for _, flavor := range adapterRuntimeFlavors() {
-		flavor := flavor
 		t.Run(string(flavor), func(t *testing.T) {
+			t.Parallel()
 			full, runtime := loadParityPairForFlavor(t, []string{"--config", profile}, lookup, flavor)
 			assertSharedRuntimeParity(t, full, runtime)
 			if !bytes.Equal(full.Runtime.ConfigFileContents, raw) {
@@ -650,6 +670,8 @@ func TestFullAndRuntimeFlavorsPreserveExactProfileBytes(t *testing.T) {
 }
 
 func TestFullAndRuntimeCloudflaredPreserveSharedConfigAndCompanionSettings(t *testing.T) {
+	t.Parallel()
+
 	raw := []byte("config_version: 1\ncontrol_plane:\n  tunnel_id: tunnel_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n  api_key: env:CONTROL_PLANE_API_KEY\nmcp:\n  server_urls:\n    - url: https://mcp.example.invalid/mcp\ncloudflared:\n  token: env:PROFILE_CLOUDFLARED_TOKEN\n  managed: false\n  path: /profile/cloudflared\n  ready_timeout: 20s\n")
 	profile := writeAdapterConfigBytes(t, raw)
 	args := []string{"--config", profile, "--cloudflared.path", "/flag/cloudflared"}
@@ -670,6 +692,8 @@ func TestFullAndRuntimeCloudflaredPreserveSharedConfigAndCompanionSettings(t *te
 }
 
 func TestFullAndRuntimeCloudflaredEnvironmentParity(t *testing.T) {
+	t.Parallel()
+
 	lookup := lookupEnvMap(map[string]string{
 		"CONTROL_PLANE_API_KEY":     adapterTestAPIKey,
 		"CONTROL_PLANE_TUNNEL_ID":   adapterTestTunnelID,
@@ -688,6 +712,8 @@ func TestFullAndRuntimeCloudflaredEnvironmentParity(t *testing.T) {
 }
 
 func TestFullAndRuntimeFlavorsSharedEnvironmentParity(t *testing.T) {
+	t.Parallel()
+
 	certPath, keyPath := writeAdapterClientCertificate(t)
 	sharedProfile := []byte("config_version: 1\ncontrol_plane:\n  tunnel_id: tunnel_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n  api_key: env:CONTROL_PLANE_API_KEY\nmcp:\n  server_urls:\n    - url: https://mcp.example.invalid/mcp\n")
 	configPath := writeAdapterConfigBytes(t, sharedProfile)
@@ -854,16 +880,16 @@ func TestFullAndRuntimeFlavorsSharedEnvironmentParity(t *testing.T) {
 
 	covered := make(map[string]struct{})
 	for _, tc := range cases {
-		tc := tc
 		for name := range tc.env {
 			if adapterSharedEnvironmentName(name) {
 				covered[name] = struct{}{}
 			}
 		}
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			for _, flavor := range adapterRuntimeFlavors() {
-				flavor := flavor
 				t.Run(string(flavor), func(t *testing.T) {
+					t.Parallel()
 					full, runtime := loadParityPairForFlavor(t, nil, lookupEnvMap(tc.env), flavor)
 					assertSharedRuntimeParity(t, full, runtime)
 				})
@@ -876,6 +902,8 @@ func TestFullAndRuntimeFlavorsSharedEnvironmentParity(t *testing.T) {
 }
 
 func TestFullAndRuntimeStandardProxyEnvironmentDetectionParity(t *testing.T) {
+	t.Parallel()
+
 	type proxyEnvCase struct {
 		name string
 		env  map[string]string
@@ -904,13 +932,13 @@ func TestFullAndRuntimeStandardProxyEnvironmentDetectionParity(t *testing.T) {
 
 	covered := make(map[string]struct{}, len(adapterStandardProxyEnvironmentVariables))
 	for _, testCase := range testCases {
-		testCase := testCase
 		for name := range testCase.env {
 			if adapterStandardProxyEnvironmentName(name) {
 				covered[name] = struct{}{}
 			}
 		}
 		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
 			lookup := lookupEnvMap(testCase.env)
 			full := EnvProxyConfigured(lookup)
 			runtime := runtimeconfig.EnvProxyConfigured(lookup)
@@ -931,6 +959,7 @@ func FuzzFullAndRuntimeSharedProfileParity(f *testing.F) {
 	f.Add("https://api.example.invalid", "https://mcp.example.invalid/mcp", "struct-text", "127.0.0.1:8080", uint8(0))
 	f.Add("https://api.example.invalid/gateway", "https://mcp.example.invalid/mcp", "json", "127.0.0.1:0", uint8(1))
 	f.Fuzz(func(t *testing.T, baseURL string, mcpURL string, logFormat string, healthAddr string, flavorIndex uint8) {
+		t.Parallel()
 		if len(baseURL) > 256 || len(mcpURL) > 256 || len(logFormat) > 64 || len(healthAddr) > 128 {
 			t.Skip()
 		}
@@ -956,8 +985,11 @@ func FuzzFullAndRuntimeSharedProfileParity(f *testing.F) {
 }
 
 func TestRuntimeAcceptsDisabledFullOnlyProfileValuesUnchanged(t *testing.T) {
+	t.Parallel()
+
 	for _, interval := range []string{"60s", "1m", "1m0s"} {
 		t.Run("proxy.check_interval="+interval, func(t *testing.T) {
+			t.Parallel()
 			profile := writeAdapterConfig(t, `
 config_version: 1
 control_plane:
@@ -978,8 +1010,8 @@ proxy:
 			args := []string{"--config", profile}
 			lookup := lookupEnvMap(map[string]string{"CONTROL_PLANE_API_KEY": adapterTestAPIKey})
 			for _, flavor := range adapterRuntimeFlavors() {
-				flavor := flavor
 				t.Run(string(flavor), func(t *testing.T) {
+					t.Parallel()
 					full, runtime := loadParityPairForFlavor(t, args, lookup, flavor)
 					assertSharedRuntimeParity(t, full, runtime)
 				})
@@ -989,6 +1021,8 @@ proxy:
 }
 
 func TestRuntimeRejectsNonDefaultFullOnlyProfileValues(t *testing.T) {
+	t.Parallel()
+
 	cases := map[string]string{
 		"admin_ui.allow_remote":      "admin_ui:\n  allow_remote: true",
 		"admin_ui.open_browser":      "admin_ui:\n  open_browser: true",
@@ -998,6 +1032,7 @@ func TestRuntimeRejectsNonDefaultFullOnlyProfileValues(t *testing.T) {
 	}
 	for want, extension := range cases {
 		t.Run(want, func(t *testing.T) {
+			t.Parallel()
 			profile := writeAdapterConfig(t, `
 config_version: 1
 control_plane:
@@ -1021,6 +1056,8 @@ mcp:
 }
 
 func TestFullOnlyExtensionPrecedenceAndCloudflaredAdapter(t *testing.T) {
+	t.Parallel()
+
 	profile := writeAdapterConfig(t, `
 config_version: 1
 control_plane:
@@ -1071,6 +1108,8 @@ cloudflared:
 }
 
 func TestFullProfileValidationKeepsFullOnlyFields(t *testing.T) {
+	t.Parallel()
+
 	profile := []byte(`
 config_version: 1
 admin_ui:
@@ -1089,6 +1128,36 @@ cloudflared:
 	}
 	if err := runtimeconfig.ValidateProfileBytes("runtime.yaml", profile); err == nil {
 		t.Fatal("runtime profile validation accepted non-default full-only fields")
+	}
+}
+
+func TestFullProfileValidationRequiresTemplatePolicyValidator(t *testing.T) {
+	t.Parallel()
+
+	profile := `config_version: 2
+harpoon:
+  targets:
+    - label: case
+      template:
+        version: 1
+        origin: https://private.example.invalid
+        method: GET
+        path_template: /cases/{case_id}
+        parameters:
+          case_id:
+            type: string
+            required: true
+            pattern: '[A-Za-z0-9_-]+'
+            max_length: 64
+`
+	path := writeAdapterConfig(t, profile)
+	for name, err := range map[string]error{
+		"bytes": ValidateProfileBytes(path, []byte(profile)),
+		"file":  ValidateProfileFile(path),
+	} {
+		if err == nil || !strings.Contains(err.Error(), "template policy validator is required") {
+			t.Fatalf("%s validation accepted a template without its policy validator: %v", name, err)
+		}
 	}
 }
 

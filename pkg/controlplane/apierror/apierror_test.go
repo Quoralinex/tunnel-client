@@ -6,6 +6,8 @@ import (
 )
 
 func TestParseAddsMitigationForStructuredTunnelError(t *testing.T) {
+	t.Parallel()
+
 	info := Parse([]byte(`{"error":{"message":"org required","type":"invalid_request_error","code":"tunnel_active_organization_required"}}`))
 
 	if info.Code != "tunnel_active_organization_required" {
@@ -23,6 +25,8 @@ func TestParseAddsMitigationForStructuredTunnelError(t *testing.T) {
 }
 
 func TestParsePreservesUnknownCodesWithoutMitigation(t *testing.T) {
+	t.Parallel()
+
 	info := Parse([]byte(`{"error":{"message":"missing cert","type":"invalid_request_error","code":"certificate_required"}}`))
 
 	if info.Code != "certificate_required" {

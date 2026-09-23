@@ -901,7 +901,7 @@ func TestProcessorStreamableNotificationsBeforeResponse(t *testing.T) {
 	got := responder.waitForResponses(t, 4)
 	require.Len(t, got, 4)
 
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		notif := got[i]
 		require.Equal(t, command.id, notif.requestID)
 		require.Equal(t, types.ResponseTypeJSONRPCNotification, notif.response.Type())
@@ -1018,8 +1018,8 @@ func TestProcessorLogsIncludeRequestAndSessionID(t *testing.T) {
 	}
 
 	for _, tc := range testCases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			var buf bytes.Buffer
 			logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
 			responder := newRecordingResponder()
@@ -2070,8 +2070,8 @@ func TestNewProcessorValidationErrors(t *testing.T) {
 	}
 
 	for _, tc := range tests {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			_, err := NewProcessor(tc.params)
 			require.Error(t, err)
 		})
@@ -2250,7 +2250,6 @@ func TestProcessorPreservesRecognizedNonSuccessMCPError(t *testing.T) {
 	}
 
 	for _, tc := range testCases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
@@ -3440,6 +3439,8 @@ func TestProcessorOAuthDiscoveryDisallowsOffOriginPrivateHostBundleRecords(t *te
 	t.Cleanup(configuredMCP.Close)
 	configuredMCPURL, err := url.Parse(configuredMCP.URL + "/mcp")
 	require.NoError(t, err)
+	trustedOAuthOrigin, err := url.Parse(offOrigin.URL)
+	require.NoError(t, err)
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	responder := newRecordingResponder()
@@ -3451,6 +3452,7 @@ func TestProcessorOAuthDiscoveryDisallowsOffOriginPrivateHostBundleRecords(t *te
 		TunnelResponder: responder,
 		MCPConfig: &config.MCPConfig{
 			ServerURL:             configuredMCPURL,
+			OAuthTrustedOrigins:   []*url.URL{trustedOAuthOrigin},
 			ConnectionMaxTTL:      2 * time.Second,
 			MaxConcurrentRequests: 1,
 		},

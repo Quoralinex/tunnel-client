@@ -15,16 +15,21 @@ import (
 )
 
 func TestMetricAttributesForRequest(t *testing.T) {
+	t.Parallel()
+
 	t.Run("nil request", func(t *testing.T) {
+		t.Parallel()
 		require.Nil(t, MetricAttributesForRequest(nil))
 	})
 
 	t.Run("nil URL", func(t *testing.T) {
+		t.Parallel()
 		req := &http.Request{}
 		require.Nil(t, MetricAttributesForRequest(req))
 	})
 
 	t.Run("empty path coerces to slash", func(t *testing.T) {
+		t.Parallel()
 		req := &http.Request{URL: &url.URL{}}
 		attrs := MetricAttributesForRequest(req)
 
@@ -34,6 +39,7 @@ func TestMetricAttributesForRequest(t *testing.T) {
 	})
 
 	t.Run("non-empty path uses escaped path", func(t *testing.T) {
+		t.Parallel()
 		req := httptest.NewRequest(http.MethodGet, "https://example.com/v1/hello%20world", nil)
 		attrs := MetricAttributesForRequest(req)
 
@@ -44,6 +50,8 @@ func TestMetricAttributesForRequest(t *testing.T) {
 }
 
 func TestHTTPClientMetricAttributesRoundTripper(t *testing.T) {
+	t.Parallel()
+
 	for _, tc := range []struct {
 		name      string
 		url       string
@@ -53,6 +61,7 @@ func TestHTTPClientMetricAttributesRoundTripper(t *testing.T) {
 		{name: "non-empty path uses escaped path", url: "https://example.com/v1/hello%20world", wantRoute: "/v1/hello%20world"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			ctx := context.Background()
 			reader := sdkmetric.NewManualReader()
 			provider := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))

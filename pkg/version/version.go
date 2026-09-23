@@ -71,18 +71,19 @@ func init() {
 type readBuildInfoFunc func() (*debug.BuildInfo, bool)
 
 func initVersion(readBuildInfo readBuildInfoFunc) {
-	flavor := effectiveFlavor()
-	if GitSHA == "" {
-		GitSHA = detectBuildGitSHAFrom(readBuildInfo)
-	}
-	if GoVersion == "" {
-		GoVersion = runtime.Version()
-	}
-	Flavor = flavor
-	baseVersion := effectiveSemanticVersion()
-	SemanticVersion = baseVersion
-	Version = buildVersion(baseVersion, GitSHA)
-	UserAgent = userAgentPrefix + Version
+	resolved := resolveVersion(BuildMetadata{
+		SemanticVersion: semanticVersion,
+		GitSHA:          GitSHA,
+		GoVersion:       GoVersion,
+		BuildFlags:      BuildFlags,
+		Flavor:          Flavor,
+	}, sourceSemanticVersion, userAgentPrefix, readBuildInfo)
+	GitSHA = resolved.GitSHA
+	GoVersion = resolved.GoVersion
+	Flavor = resolved.Flavor
+	SemanticVersion = resolved.SemanticVersion
+	Version = resolved.Version
+	UserAgent = resolved.UserAgent
 }
 
 // BuildMetadata is the static identity linked into a tunnel-client artifact.
@@ -94,6 +95,29 @@ type BuildMetadata struct {
 	GoVersion       string
 	BuildFlags      string
 	Flavor          string
+}
+
+type resolvedVersion struct {
+	BuildMetadata
+	UserAgent string
+}
+
+// resolveVersion combines linked and source metadata without changing the
+// process-wide version identity.
+func resolveVersion(linked BuildMetadata, sourceVersion, prefix string, readBuildInfo readBuildInfoFunc) resolvedVersion {
+	linked.Flavor = effectiveFlavor(linked.Flavor)
+	if linked.GitSHA == "" {
+		linked.GitSHA = detectBuildGitSHAFrom(readBuildInfo)
+	}
+	if linked.GoVersion == "" {
+		linked.GoVersion = runtime.Version()
+	}
+	linked.SemanticVersion = effectiveSemanticVersion(linked.SemanticVersion, sourceVersion)
+	linked.Version = buildVersion(linked.SemanticVersion, linked.GitSHA)
+	return resolvedVersion{
+		BuildMetadata: linked,
+		UserAgent:     prefix + linked.Version,
+	}
 }
 
 // CurrentBuildMetadata returns the artifact identity without starting
@@ -109,24 +133,24 @@ func CurrentBuildMetadata() BuildMetadata {
 		GitSHA:          strings.TrimSpace(GitSHA),
 		GoVersion:       goVersion,
 		BuildFlags:      strings.TrimSpace(BuildFlags),
-		Flavor:          effectiveFlavor(),
+		Flavor:          effectiveFlavor(Flavor),
 	}
 }
 
-func effectiveFlavor() string {
-	flavor := strings.TrimSpace(Flavor)
+func effectiveFlavor(flavor string) string {
+	flavor = strings.TrimSpace(flavor)
 	if flavor == "" {
 		return FlavorFull
 	}
 	return flavor
 }
 
-func effectiveSemanticVersion() string {
-	buildVersion := strings.TrimSpace(semanticVersion)
+func effectiveSemanticVersion(buildVersion, sourceVersion string) string {
+	buildVersion = strings.TrimSpace(buildVersion)
 	if buildVersion != "" && buildVersion != fallbackSemanticVersion {
 		return buildVersion
 	}
-	sourceVersion := strings.TrimSpace(sourceSemanticVersion)
+	sourceVersion = strings.TrimSpace(sourceVersion)
 	if sourceVersion != "" {
 		return sourceVersion
 	}

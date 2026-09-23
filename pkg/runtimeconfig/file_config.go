@@ -3,12 +3,15 @@ package runtimeconfig
 import (
 	"bytes"
 	"fmt"
+	"io"
 	"os"
 	"strconv"
 	"strings"
 
 	"github.com/spf13/pflag"
 	"gopkg.in/yaml.v3"
+
+	"github.com/openai/tunnel-client/pkg/localfiles"
 )
 
 type fileConfigValues struct {
@@ -20,6 +23,7 @@ type fileConfigValues struct {
 	Raw              []byte
 	Env              map[string]string
 	CloudflaredToken *string
+	HarpoonTargets   []fileHarpoonTarget
 }
 
 type fileConfig struct {
@@ -61,9 +65,10 @@ type fileLogConfig struct {
 }
 
 type fileHealthConfig struct {
-	ListenAddr *string `yaml:"listen_addr"`
-	UnixSocket *string `yaml:"unix_socket"`
-	URLFile    *string `yaml:"url_file"`
+	ListenAddr  *string `yaml:"listen_addr"`
+	UnixSocket  *string `yaml:"unix_socket"`
+	URLFile     *string `yaml:"url_file"`
+	ShowDetails *bool   `yaml:"show_details"`
 }
 
 // fileAdminUICompat is parsed here so one strict YAML schema owns profile
@@ -94,6 +99,7 @@ type fileMCPConfig struct {
 	ClientKey                        *string            `yaml:"client_key"`
 	ExtraHeaders                     map[string]string  `yaml:"extra_headers"`
 	DiscoveryExtraHeaders            map[string]string  `yaml:"discovery_extra_headers"`
+	OAuthTrustedOrigins              []string           `yaml:"oauth_trusted_origins"`
 	StartupWaitTimeout               *string            `yaml:"startup_wait_timeout"`
 	StdioSendInitializedNotification *bool              `yaml:"stdio_send_initialized_notification"`
 	ConnectionMaxTTL                 *string            `yaml:"connection_max_ttl"`
@@ -132,10 +138,11 @@ type fileHarpoonConfig struct {
 }
 
 type fileHarpoonTarget struct {
-	Label       string  `yaml:"label"`
-	URL         string  `yaml:"url"`
-	UnixSocket  *string `yaml:"unix_socket"`
-	Description *string `yaml:"description"`
+	Label       string                 `yaml:"label"`
+	URL         *string                `yaml:"url"`
+	UnixSocket  *string                `yaml:"unix_socket"`
+	Description *string                `yaml:"description"`
+	Template    *HarpoonTargetTemplate `yaml:"template"`
 }
 
 type fileProxyConfig struct {
@@ -151,7 +158,17 @@ func loadFileConfigValues(fs *pflag.FlagSet, lookupEnv func(string) (string, boo
 		return nil, nil
 	}
 
-	data, err := os.ReadFile(source.Path)
+	var data []byte
+	if source.ProfileName != "" && !source.ProfileFile {
+		var root *os.Root
+		root, err = os.OpenRoot(source.ProfileDir)
+		if err == nil {
+			data, err = localfiles.ReadFile(root, source.ProfileName+".yaml")
+			_ = root.Close()
+		}
+	} else {
+		data, err = os.ReadFile(source.Path)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("read config file %s: %w", source.Path, err)
 	}
@@ -162,6 +179,14 @@ func loadFileConfigValues(fs *pflag.FlagSet, lookupEnv func(string) (string, boo
 	}
 
 	selectedCfg := cfg
+	// Retain YAML targets as structured values. Serializing them through the
+	// legacy HARPOON_TARGETS list could discard a template's constraints or
+	// interpret delimiters inside URL and header values as new fields.
+	harpoonTargets := cfg.Harpoon.Targets
+	if configValueOverridden(fs, lookupEnv, "harpoon.target", "HARPOON_TARGETS") {
+		harpoonTargets = nil
+	}
+	selectedCfg.Harpoon.Targets = nil
 	if configValueOverridden(fs, lookupEnv, "control-plane.extra-headers", "CONTROL_PLANE_EXTRA_HEADERS") {
 		selectedCfg.ControlPlane.ExtraHeaders = nil
 	}
@@ -170,6 +195,9 @@ func loadFileConfigValues(fs *pflag.FlagSet, lookupEnv func(string) (string, boo
 	}
 	if configValueOverridden(fs, lookupEnv, "mcp.discovery-extra-headers", "MCP_DISCOVERY_EXTRA_HEADERS") {
 		selectedCfg.MCP.DiscoveryExtraHeaders = nil
+	}
+	if configValueOverridden(fs, lookupEnv, "mcp.oauth-trusted-origin", "MCP_OAUTH_TRUSTED_ORIGINS") {
+		selectedCfg.MCP.OAuthTrustedOrigins = nil
 	}
 
 	env, err := selectedCfg.toEnv(lookupEnv)
@@ -185,6 +213,7 @@ func loadFileConfigValues(fs *pflag.FlagSet, lookupEnv func(string) (string, boo
 		Raw:              bytes.Clone(data),
 		Env:              env,
 		CloudflaredToken: cfg.Cloudflared.Token,
+		HarpoonTargets:   harpoonTargets,
 	}, nil
 }
 
@@ -203,8 +232,21 @@ func parseFileConfig(path string, data []byte, allowCloudflared bool, allowFullO
 	if err := dec.Decode(&cfg); err != nil {
 		return fileConfig{}, fmt.Errorf("parse config file %s: %w", path, err)
 	}
-	if cfg.ConfigVersion != nil && *cfg.ConfigVersion != 1 {
+	if cfg.ConfigVersion != nil && *cfg.ConfigVersion != 1 && *cfg.ConfigVersion != 2 {
 		return fileConfig{}, fmt.Errorf("parse config file %s: unsupported config_version %d", path, *cfg.ConfigVersion)
+	}
+	if cfg.ConfigVersion != nil && *cfg.ConfigVersion == 2 {
+		// Legacy files have always consumed only their first YAML document.
+		// Apply the stricter single-document rule only to the opt-in schema.
+		var trailing yaml.Node
+		if err := dec.Decode(&trailing); err != io.EOF {
+			return fileConfig{}, fmt.Errorf("parse config file %s: exactly one YAML document is required", path)
+		}
+	}
+	for _, target := range cfg.Harpoon.Targets {
+		if err := validateFileHarpoonTarget(target, cfg.ConfigVersion); err != nil {
+			return fileConfig{}, fmt.Errorf("parse config file %s: %w", path, err)
+		}
 	}
 	if !allowCloudflared && cfg.Cloudflared.configured() {
 		return fileConfig{}, fmt.Errorf("parse config file %s: runtime configuration rejects cloudflared settings", path)
@@ -309,6 +351,7 @@ func (c fileConfig) toEnv(lookupEnv func(string) (string, bool)) (map[string]str
 		return nil, err
 	}
 	setString(env, "HEALTH_URL_FILE", c.Health.URLFile)
+	setBool(env, "HEALTH_SHOW_DETAILS", c.Health.ShowDetails)
 	setBool(env, "ALLOW_REMOTE_UI", c.AdminUI.AllowRemote)
 	setBool(env, "OPEN_WEB_UI", c.AdminUI.OpenBrowser)
 	setInt(env, "ADMIN_UI_LOG_BUFFER_EVENTS", c.AdminUI.LogBufferEvents)
@@ -348,18 +391,19 @@ func (c fileConfig) toEnv(lookupEnv func(string) (string, bool)) (map[string]str
 		}
 		env["MCP_DISCOVERY_EXTRA_HEADERS"] = discoveryExtraHeaders
 	}
+	if c.MCP.OAuthTrustedOrigins != nil {
+		// Validate each YAML element before encoding the environment list so a
+		// newline inside one element cannot grant trust to additional origins.
+		if err := validateFileOAuthTrustedOrigins(c.MCP.OAuthTrustedOrigins); err != nil {
+			return nil, err
+		}
+		env["MCP_OAUTH_TRUSTED_ORIGINS"] = strings.Join(c.MCP.OAuthTrustedOrigins, "\n")
+	}
 	setString(env, "MCP_STARTUP_WAIT_TIMEOUT", c.MCP.StartupWaitTimeout)
 	setBool(env, "MCP_STDIO_SEND_INITIALIZED_NOTIFICATION", c.MCP.StdioSendInitializedNotification)
 	setString(env, "MCP_CONNECTION_MAX_TTL", c.MCP.ConnectionMaxTTL)
 	setInt(env, "MCP_MAX_CONCURRENT_REQUESTS", c.MCP.MaxConcurrentRequests)
 
-	harpoonTargets, err := formatResolvedHarpoonTargets(c.Harpoon.Targets, lookupEnv)
-	if err != nil {
-		return nil, err
-	}
-	if len(harpoonTargets) > 0 {
-		env["HARPOON_TARGETS"] = strings.Join(harpoonTargets, ";")
-	}
 	setBool(env, "HARPOON_ALLOW_PLAINTEXT_HTTP", c.Harpoon.AllowPlaintextHTTP)
 	setInt(env, "HARPOON_MAX_RESPONSE_BYTES", c.Harpoon.MaxResponseBytes)
 	setInt(env, "HARPOON_MAX_REDIRECTS", c.Harpoon.MaxRedirects)
@@ -380,6 +424,15 @@ func (c fileConfig) toEnv(lookupEnv func(string) (string, bool)) (map[string]str
 	setString(env, "PROXY_CHECK_INTERVAL", c.Proxy.CheckInterval)
 
 	return env, nil
+}
+
+func validateFileOAuthTrustedOrigins(origins []string) error {
+	for _, raw := range origins {
+		if _, err := parseOAuthTrustedOrigin(raw); err != nil {
+			return fmt.Errorf("mcp.oauth_trusted_origins: %w", err)
+		}
+	}
+	return nil
 }
 
 func setString(env map[string]string, key string, value *string) {
@@ -557,31 +610,78 @@ func formatResolvedMCPCommandEntries(entries []fileMCPCommand, lookupEnv func(st
 	return out, nil
 }
 
-func formatResolvedHarpoonTargets(targets []fileHarpoonTarget, lookupEnv func(string) (string, bool)) ([]string, error) {
-	out := make([]string, 0, len(targets))
+func validateFileHarpoonTarget(target fileHarpoonTarget, configVersion *int) error {
+	if strings.TrimSpace(target.Label) == "" {
+		return fmt.Errorf("harpoon.targets entry requires label")
+	}
+	if target.Template == nil {
+		if target.URL == nil || strings.TrimSpace(*target.URL) == "" {
+			return fmt.Errorf("harpoon.targets entry %q requires url or template", target.Label)
+		}
+		return nil
+	}
+	if configVersion == nil || *configVersion != 2 {
+		return fmt.Errorf("harpoon.targets entry %q: template requires config_version: 2", target.Label)
+	}
+	if target.URL != nil || target.UnixSocket != nil {
+		return fmt.Errorf("harpoon.targets entry %q: template cannot be combined with url or unix_socket", target.Label)
+	}
+	if target.Template.Version != 1 {
+		return fmt.Errorf("harpoon.targets entry %q: template version must be 1", target.Label)
+	}
+	return nil
+}
+
+func resolveFileHarpoonTargets(targets []fileHarpoonTarget, lookupEnv func(string) (string, bool), allowPlaintext bool) ([]HarpoonTarget, error) {
+	out := make([]HarpoonTarget, 0, len(targets))
 	for _, target := range targets {
-		if strings.TrimSpace(target.Label) == "" {
-			return nil, fmt.Errorf("harpoon.targets entry requires label")
+		label := strings.TrimSpace(target.Label)
+		if !harpoonLabelPattern.MatchString(label) {
+			return nil, fmt.Errorf("harpoon.targets label must match %s", harpoonLabelPattern.String())
 		}
-		if strings.TrimSpace(target.URL) == "" {
-			return nil, fmt.Errorf("harpoon.targets entry %q requires url", target.Label)
+		resolved := HarpoonTarget{Label: label}
+		if target.Description != nil {
+			resolved.Description = *target.Description
 		}
-		targetURL, err := resolveConfigValueReference("harpoon.targets.url", target.URL, lookupEnv)
+		if target.Template != nil {
+			template := *target.Template
+			headers, err := NormalizeExtraHeaders("harpoon.targets.template.headers", template.Headers)
+			if err != nil {
+				return nil, err
+			}
+			for name, value := range headers {
+				headers[name], err = resolveHeaderValue("harpoon.targets.template.headers."+name, value, lookupEnv)
+				if err != nil {
+					return nil, err
+				}
+			}
+			template.Headers, err = NormalizeExtraHeaders("harpoon.targets.template.headers", headers)
+			if err != nil {
+				return nil, err
+			}
+			resolved.Template = &template
+			out = append(out, resolved)
+			continue
+		}
+		targetURL, err := resolveConfigValueReference("harpoon.targets.url", *target.URL, lookupEnv)
 		if err != nil {
 			return nil, err
 		}
-		parts := []string{"label=" + target.Label, "url=" + targetURL}
+		resolved.BaseURL, err = parseURL(targetURL)
+		if err != nil {
+			return nil, fmt.Errorf("invalid harpoon target url: %w", err)
+		}
+		if !allowPlaintext && !strings.EqualFold(resolved.BaseURL.Scheme, "https") {
+			return nil, fmt.Errorf("harpoon.targets entry %q: https is required", label)
+		}
 		if target.UnixSocket != nil {
 			socketPath, err := resolvePathReference("harpoon.targets.unix_socket", *target.UnixSocket, lookupEnv)
 			if err != nil {
 				return nil, err
 			}
-			parts = append(parts, "unix-socket="+socketPath)
+			resolved.UnixSocketPath = socketPath
 		}
-		if target.Description != nil && *target.Description != "" {
-			parts = append(parts, "desc="+*target.Description)
-		}
-		out = append(out, strings.Join(parts, ","))
+		out = append(out, resolved)
 	}
 	return out, nil
 }

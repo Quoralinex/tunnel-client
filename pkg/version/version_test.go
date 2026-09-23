@@ -1,12 +1,15 @@
 package version
 
 import (
+	"runtime"
 	"runtime/debug"
 	"strings"
 	"testing"
 )
 
 func TestBuildVersion(t *testing.T) {
+	t.Parallel()
+
 	if got := buildVersion("1.2.3", ""); got != "1.2.3" {
 		t.Fatalf("expected base version, got %q", got)
 	}
@@ -17,12 +20,16 @@ func TestBuildVersion(t *testing.T) {
 }
 
 func TestEmbeddedSourceVersionIsStableRelease(t *testing.T) {
+	t.Parallel()
+
 	if got := strings.TrimSpace(sourceSemanticVersion); got != "0.0.14" {
 		t.Fatalf("expected source VERSION to be 0.0.14, got %q", got)
 	}
 }
 
 func TestDetectBuildGitSHA(t *testing.T) {
+	t.Parallel()
+
 	emptyRead := func() (*debug.BuildInfo, bool) { return nil, false }
 	if got := detectBuildGitSHAFrom(emptyRead); got != "" {
 		t.Fatalf("expected empty sha when build info unavailable, got %q", got)
@@ -48,6 +55,7 @@ func TestDetectBuildGitSHA(t *testing.T) {
 }
 
 func TestInitVersionUpdatesStaticBuildMetadata(t *testing.T) {
+	// Keep serial because this test changes process-wide version metadata.
 	restoreVersionGlobals(t)
 
 	semanticVersion = "1.2.3"
@@ -94,109 +102,117 @@ func TestInitVersionUpdatesStaticBuildMetadata(t *testing.T) {
 	if metadata.BuildFlags != "-trimpath -buildvcs=false" {
 		t.Fatalf("expected linked build flags, got %q", metadata.BuildFlags)
 	}
+	if metadata.SemanticVersion != SemanticVersion || metadata.Version != Version || metadata.GitSHA != GitSHA {
+		t.Fatalf("expected current build metadata to expose initialized version identity, got %+v", metadata)
+	}
+
+	// Check that fallback values are also published over the previous identity.
+	semanticVersion = fallbackSemanticVersion
+	sourceSemanticVersion = "4.5.6\n"
+	GitSHA = ""
+	GoVersion = ""
+	Flavor = ""
+	initVersion(func() (*debug.BuildInfo, bool) { return nil, false })
+	want := BuildMetadata{
+		SemanticVersion: "4.5.6",
+		Version:         "4.5.6",
+		GoVersion:       runtime.Version(),
+		BuildFlags:      "-trimpath -buildvcs=false",
+		Flavor:          FlavorFull,
+	}
+	if metadata := CurrentBuildMetadata(); metadata != want {
+		t.Fatalf("expected published fallback metadata %+v, got %+v", want, metadata)
+	}
+	if UserAgent != "oai-tunnel-client/4.5.6" {
+		t.Fatalf("expected published fallback UserAgent, got %q", UserAgent)
+	}
 }
 
-func TestInitVersionPreservesLinkedGitSHA(t *testing.T) {
-	restoreVersionGlobals(t)
+func TestResolveVersionPreservesLinkedGitSHA(t *testing.T) {
+	t.Parallel()
 
-	semanticVersion = "1.2.3"
-	GitSHA = "linked-sha"
-	GoVersion = "go1.26.2"
-	Flavor = FlavorRuntimeCloudflared
-	SemanticVersion = ""
-	Version = ""
-	UserAgent = ""
-
-	initVersion(func() (*debug.BuildInfo, bool) {
+	readBuildInfoCalled := false
+	resolved := resolveVersion(BuildMetadata{
+		SemanticVersion: "1.2.3",
+		GitSHA:          "linked-sha",
+		GoVersion:       "go1.26.2",
+		Flavor:          FlavorRuntimeCloudflared,
+	}, "", "oai-tunnel-client/", func() (*debug.BuildInfo, bool) {
+		readBuildInfoCalled = true
 		return &debug.BuildInfo{
 			Settings: []debug.BuildSetting{{Key: "vcs.revision", Value: "build-info-sha"}},
 		}, true
 	})
 
-	if GitSHA != "linked-sha" {
-		t.Fatalf("expected linked GitSHA to win, got %q", GitSHA)
+	if resolved.GitSHA != "linked-sha" {
+		t.Fatalf("expected linked GitSHA to win, got %q", resolved.GitSHA)
 	}
-	if metadata := CurrentBuildMetadata(); metadata.Flavor != FlavorRuntimeCloudflared {
-		t.Fatalf("expected linked cloudflared runtime flavor, got %q", metadata.Flavor)
+	if resolved.Flavor != FlavorRuntimeCloudflared {
+		t.Fatalf("expected linked cloudflared runtime flavor, got %q", resolved.Flavor)
 	}
-}
-
-func TestInitVersionWithoutGitMetadataUsesSemanticVersionForFullFlavor(t *testing.T) {
-	restoreVersionGlobals(t)
-
-	semanticVersion = "1.2.3"
-	GitSHA = ""
-	GoVersion = "go1.26.2"
-	Flavor = FlavorFull
-	SemanticVersion = ""
-	Version = ""
-	UserAgent = ""
-
-	initVersion(func() (*debug.BuildInfo, bool) { return nil, false })
-
-	if GitSHA != "" {
-		t.Fatalf("expected no GitSHA without linked or build metadata, got %q", GitSHA)
-	}
-	if Version != "1.2.3" {
-		t.Fatalf("expected semantic Version without Git metadata, got %q", Version)
-	}
-	if UserAgent != "oai-tunnel-client/1.2.3" {
-		t.Fatalf("expected semantic UserAgent without Git metadata, got %q", UserAgent)
+	if readBuildInfoCalled {
+		t.Fatal("expected linked GitSHA to avoid reading build info")
 	}
 }
 
-func TestInitVersionWithoutGitMetadataUsesSemanticVersionForRuntimeFlavor(t *testing.T) {
-	restoreVersionGlobals(t)
+func TestResolveVersionWithoutGitMetadataUsesSemanticVersionForFullFlavor(t *testing.T) {
+	t.Parallel()
 
-	semanticVersion = "1.2.3"
-	GitSHA = ""
-	GoVersion = "go1.26.2"
-	Flavor = FlavorRuntime
-	SemanticVersion = ""
-	Version = ""
-	UserAgent = ""
+	resolved := resolveVersion(BuildMetadata{
+		SemanticVersion: "1.2.3",
+		GoVersion:       "go1.26.2",
+		Flavor:          FlavorFull,
+	}, "", "oai-tunnel-client/", func() (*debug.BuildInfo, bool) { return nil, false })
 
-	initVersion(func() (*debug.BuildInfo, bool) { return nil, false })
-
-	if GitSHA != "" {
-		t.Fatalf("expected no GitSHA without linked or build metadata, got %q", GitSHA)
+	if resolved.GitSHA != "" {
+		t.Fatalf("expected no GitSHA without linked or build metadata, got %q", resolved.GitSHA)
 	}
-	if Version != "1.2.3" {
-		t.Fatalf("expected runtime version without SHA metadata, got %q", Version)
+	if resolved.Version != "1.2.3" {
+		t.Fatalf("expected semantic Version without Git metadata, got %q", resolved.Version)
+	}
+	if resolved.UserAgent != "oai-tunnel-client/1.2.3" {
+		t.Fatalf("expected semantic UserAgent without Git metadata, got %q", resolved.UserAgent)
 	}
 }
 
-func TestInitVersionUsesSourceVersionAndStaticDefaults(t *testing.T) {
-	restoreVersionGlobals(t)
+func TestResolveVersionWithoutGitMetadataUsesSemanticVersionForRuntimeFlavor(t *testing.T) {
+	t.Parallel()
 
-	semanticVersion = fallbackSemanticVersion
-	sourceSemanticVersion = "4.5.6\n"
-	userAgentPrefix = "oai-tunnel-client/"
-	GitSHA = ""
-	GoVersion = ""
-	BuildFlags = ""
-	Flavor = ""
-	SemanticVersion = ""
-	Version = ""
-	UserAgent = ""
+	resolved := resolveVersion(BuildMetadata{
+		SemanticVersion: "1.2.3",
+		GoVersion:       "go1.26.2",
+		Flavor:          FlavorRuntime,
+	}, "", "oai-tunnel-client/", func() (*debug.BuildInfo, bool) { return nil, false })
 
-	initVersion(func() (*debug.BuildInfo, bool) { return nil, false })
+	if resolved.GitSHA != "" {
+		t.Fatalf("expected no GitSHA without linked or build metadata, got %q", resolved.GitSHA)
+	}
+	if resolved.Version != "1.2.3" {
+		t.Fatalf("expected runtime version without SHA metadata, got %q", resolved.Version)
+	}
+}
 
-	if SemanticVersion != "4.5.6" {
-		t.Fatalf("expected SemanticVersion from source VERSION, got %q", SemanticVersion)
+func TestResolveVersionUsesSourceVersionAndStaticDefaults(t *testing.T) {
+	t.Parallel()
+
+	resolved := resolveVersion(BuildMetadata{
+		SemanticVersion: fallbackSemanticVersion,
+	}, "4.5.6\n", "oai-tunnel-client/", func() (*debug.BuildInfo, bool) { return nil, false })
+
+	if resolved.SemanticVersion != "4.5.6" {
+		t.Fatalf("expected SemanticVersion from source VERSION, got %q", resolved.SemanticVersion)
 	}
-	if Version != "4.5.6" {
-		t.Fatalf("expected Version from source VERSION, got %q", Version)
+	if resolved.Version != "4.5.6" {
+		t.Fatalf("expected Version from source VERSION, got %q", resolved.Version)
 	}
-	if UserAgent != "oai-tunnel-client/4.5.6" {
-		t.Fatalf("expected UserAgent from source VERSION, got %q", UserAgent)
+	if resolved.UserAgent != "oai-tunnel-client/4.5.6" {
+		t.Fatalf("expected UserAgent from source VERSION, got %q", resolved.UserAgent)
 	}
-	metadata := CurrentBuildMetadata()
-	if metadata.Flavor != FlavorFull {
-		t.Fatalf("expected default full flavor, got %q", metadata.Flavor)
+	if resolved.Flavor != FlavorFull {
+		t.Fatalf("expected default full flavor, got %q", resolved.Flavor)
 	}
-	if metadata.GoVersion == "" {
-		t.Fatal("expected compiled Go version fallback")
+	if resolved.GoVersion != runtime.Version() {
+		t.Fatalf("expected compiled Go version fallback, got %q", resolved.GoVersion)
 	}
 }
 

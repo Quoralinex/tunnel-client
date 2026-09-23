@@ -16,6 +16,8 @@ import (
 )
 
 func TestHarnessExecuteScenariousWithInitializationAndTool(t *testing.T) {
+	t.Parallel()
+
 	for _, tc := range []struct {
 		name           string
 		harnessOptions []harnesspkg.HarnessOption
@@ -35,12 +37,15 @@ func TestHarnessExecuteScenariousWithInitializationAndTool(t *testing.T) {
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			runSimpleToolScenarioWithHarnessOptions(t, tc.harnessOptions, nil)
 		})
 	}
 }
 
 func TestHarnessExecuteScenarioWithInMemoryTransport(t *testing.T) {
+	t.Parallel()
+
 	runSimpleToolScenarioWithHarnessOptions(
 		t,
 		[]harnesspkg.HarnessOption{
@@ -54,6 +59,8 @@ func TestHarnessExecuteScenarioWithInMemoryTransport(t *testing.T) {
 }
 
 func TestHarnessHandlesKeepalivePingEvents(t *testing.T) {
+	t.Parallel()
+
 	runSimpleToolScenarioWithHarnessOptions(
 		t,
 		nil,
@@ -63,6 +70,8 @@ func TestHarnessHandlesKeepalivePingEvents(t *testing.T) {
 }
 
 func TestCurrentClientHandlesLegacyOrMalformedResponseTimeout(t *testing.T) {
+	t.Parallel()
+
 	for _, tc := range []struct {
 		name            string
 		responseTimeout json.RawMessage
@@ -72,6 +81,7 @@ func TestCurrentClientHandlesLegacyOrMalformedResponseTimeout(t *testing.T) {
 		{name: "malformed", responseTimeout: json.RawMessage(`"0s "`)},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			const requestID = "cmd-timeout-fallback"
 			observedCommand := make(chan controlplane.PolledCommand, 1)
 			command := mocktunnelservice.NewCommand(
@@ -168,6 +178,8 @@ func TestCurrentClientHandlesLegacyOrMalformedResponseTimeout(t *testing.T) {
 }
 
 func TestControlPlaneRequestsSendClientMetadata(t *testing.T) {
+	t.Parallel()
+
 	const (
 		clientInstanceHeader = "X-Tunnel-Client-Instance-Id"
 		serverInfoHeader     = "X-Tunnel-MCP-Server-Info"
@@ -190,8 +202,8 @@ func TestControlPlaneRequestsSendClientMetadata(t *testing.T) {
 			wantServerInfo: `{"version":2,"channels":[{"name":"main"},{"name":"harpoon","stateless":true,"proc_affinity":true}]}`,
 		},
 	} {
-		testCase := testCase
 		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
 			var harnessOptions []harnesspkg.HarnessOption
 			if testCase.enableHarpoon {
 				harnessOptions = append(harnessOptions, harnesspkg.WithClientConfig(func(cfg *config.Config) {

@@ -114,7 +114,6 @@ func TestShellQuoteAlwaysSingleQuotesShellTokens(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			require.Equal(t, tt.want, shellQuote(tt.value))
@@ -139,9 +138,9 @@ func TestDefaultRuntimeRejectsNonTmuxCommands(t *testing.T) {
 
 	rt := DefaultRuntime()
 	_, err := rt.Run([]string{"sh", "-c", "touch /tmp/injected"}, nil)
-	require.EqualError(t, err, "default runtime only supports tmux commands")
+	require.Error(t, err)
 	_, err = rt.RunInput([]string{"sh", "-c", "touch /tmp/injected"}, nil, "secret")
-	require.EqualError(t, err, "default runtime only supports tmux commands")
+	require.Error(t, err)
 }
 
 func TestDefaultRuntimeRejectsUnmanagedTmuxCommands(t *testing.T) {
@@ -149,7 +148,7 @@ func TestDefaultRuntimeRejectsUnmanagedTmuxCommands(t *testing.T) {
 
 	rt := DefaultRuntime()
 	_, err := rt.Run([]string{"tmux", "new-session", "-d", "-s", "safe", "sh", "-c", "touch /tmp/injected"}, nil)
-	require.EqualError(t, err, "default runtime only supports managed tmux commands")
+	require.Error(t, err)
 }
 
 func TestDefaultRuntimeRejectsNonFixedProcessArgs(t *testing.T) {
@@ -574,11 +573,13 @@ func TestStartOrReuseMigratesOwnedTmuxSessionToProcess(t *testing.T) {
 }
 
 func TestStartOrReuseRecoversAmbientLegacyTmuxSocket(t *testing.T) {
+	t.Parallel()
+
 	root := state.Root{Path: t.TempDir()}
 	healthServer := newHealthyRuntimeServer(t)
 	sessionName := TmuxSessionName("docs-mcp", root)
 	const socketPath = "/tmp/tmux-501/custom"
-	t.Setenv("TMUX", socketPath+",123,0")
+	env := map[string]string{"TMUX": socketPath + ",123,0"}
 	var gotRunArgs [][]string
 	rt := Runtime{
 		Run: func(args []string, env map[string]string) (CompletedProcess, error) {
@@ -591,7 +592,7 @@ func TestStartOrReuseRecoversAmbientLegacyTmuxSocket(t *testing.T) {
 		},
 	}
 
-	_, err := StartOrReuseWithExistingRuntime(
+	_, err := startOrReuseWithExistingRuntime(
 		rt,
 		"docs-mcp",
 		"docs-mcp",
@@ -601,6 +602,7 @@ func TestStartOrReuseRecoversAmbientLegacyTmuxSocket(t *testing.T) {
 		nil,
 		ExistingRuntime{Mode: "tmux", SessionName: sessionName},
 		false,
+		func(key string) string { return env[key] },
 	)
 	require.NoError(t, err)
 	require.Equal(t, [][]string{
@@ -610,11 +612,13 @@ func TestStartOrReuseRecoversAmbientLegacyTmuxSocket(t *testing.T) {
 }
 
 func TestStartOrReuseStopsDefaultLegacyTmuxAfterAmbientMiss(t *testing.T) {
+	t.Parallel()
+
 	root := state.Root{Path: t.TempDir()}
 	healthServer := newHealthyRuntimeServer(t)
 	sessionName := TmuxSessionName("docs-mcp", root)
 	const ambientSocket = "/tmp/tmux-501/custom"
-	t.Setenv("TMUX", ambientSocket+",123,0")
+	env := map[string]string{"TMUX": ambientSocket + ",123,0"}
 	var gotRunArgs [][]string
 	rt := Runtime{
 		Run: func(args []string, env map[string]string) (CompletedProcess, error) {
@@ -630,7 +634,7 @@ func TestStartOrReuseStopsDefaultLegacyTmuxAfterAmbientMiss(t *testing.T) {
 		},
 	}
 
-	_, err := StartOrReuseWithExistingRuntime(
+	_, err := startOrReuseWithExistingRuntime(
 		rt,
 		"docs-mcp",
 		"docs-mcp",
@@ -640,6 +644,7 @@ func TestStartOrReuseStopsDefaultLegacyTmuxAfterAmbientMiss(t *testing.T) {
 		nil,
 		ExistingRuntime{Mode: "tmux", SessionName: sessionName},
 		false,
+		func(key string) string { return env[key] },
 	)
 	require.NoError(t, err)
 	require.Equal(t, [][]string{

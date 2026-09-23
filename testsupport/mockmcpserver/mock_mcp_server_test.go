@@ -221,6 +221,7 @@ func TestMockMCPServerInMemory(t *testing.T) {
 }
 
 func TestMockMCPServerStdio(t *testing.T) {
+	// Keep serial because StartStdio replaces process-wide stdin and stdout.
 	server := NewMockMCPServer(
 		WithCalls(
 			Call{

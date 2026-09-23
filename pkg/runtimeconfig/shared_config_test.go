@@ -2,6 +2,8 @@ package runtimeconfig
 
 import (
 	"bytes"
+	"crypto/ecdsa"
+	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
@@ -90,6 +92,8 @@ func TestResolveControlPlanePathUsesSingleSeparator(t *testing.T) {
 }
 
 func TestLoadUsesEnvWhenFlagsEmpty(t *testing.T) {
+	t.Parallel()
+
 	lookup := map[string]string{
 		"CONTROL_PLANE_BASE_URL":                "https://example",
 		"CONTROL_PLANE_URL_PATH":                "/gateway/dev/us",
@@ -189,6 +193,9 @@ func TestLoadUsesEnvWhenFlagsEmpty(t *testing.T) {
 func TestControlPlanePollDefaultsStayBounded(t *testing.T) {
 	t.Parallel()
 
+	if got := (ControlPlaneConfig{}).InitialPollTimeoutOrDefault(); got != 30*time.Second {
+		t.Fatalf("expected initial poll default 30s for literal configs, got %s", got)
+	}
 	if defaultControlPlanePollTimeout <= 0 {
 		t.Fatalf("default poll timeout must be greater than zero: %s", defaultControlPlanePollTimeout)
 	}
@@ -200,6 +207,60 @@ func TestControlPlanePollDefaultsStayBounded(t *testing.T) {
 	}
 	if defaultControlPlanePollDeadlineGuardrail >= maxControlPlanePollDeadlineGuardrail {
 		t.Fatalf("default poll deadline guardrail must stay below %s: %s", maxControlPlanePollDeadlineGuardrail, defaultControlPlanePollDeadlineGuardrail)
+	}
+}
+
+func TestLoadInitialPollTimeout(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name    string
+		env     string
+		flag    string
+		want    time.Duration
+		wantErr string
+	}{
+		{"default", "", "", 30 * time.Second, ""},
+		{"environment", "10ms", "", 10 * time.Millisecond, ""},
+		{"flag overrides environment", "20ms", "5ms", 5 * time.Millisecond, ""},
+		{"flag overrides malformed environment", "invalid", "5ms", 5 * time.Millisecond, ""},
+		{"large initial hint", "1h", "", time.Hour, ""},
+		{"zero environment", "0s", "", 0, "CONTROL_PLANE_INITIAL_POLL_TIMEOUT must be greater than zero"},
+		{"negative environment", "-1ms", "", 0, "CONTROL_PLANE_INITIAL_POLL_TIMEOUT must be greater than zero"},
+		{"malformed environment", "invalid", "", 0, "invalid CONTROL_PLANE_INITIAL_POLL_TIMEOUT"},
+		{"zero flag", "", "0s", 0, "control-plane.initial-poll-timeout must be greater than zero"},
+		{"negative flag", "", "-1ms", 0, "control-plane.initial-poll-timeout must be greater than zero"},
+		{"malformed flag", "", "invalid", 0, "invalid duration"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			var args []string
+			if tc.flag != "" {
+				args = []string{"--control-plane.initial-poll-timeout=" + tc.flag}
+			}
+			cfg, err := LoadRuntimeForTest(args, lookupEnvMap(map[string]string{
+				"CONTROL_PLANE_TUNNEL_ID":            envTunnelID,
+				"CONTROL_PLANE_API_KEY":              "control-key",
+				"CONTROL_PLANE_INITIAL_POLL_TIMEOUT": tc.env,
+				"MCP_SERVER_URL":                     "https://mcp.example",
+			}))
+			if tc.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+					t.Fatalf("expected error containing %q, got %v", tc.wantErr, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Load returned error: %v", err)
+			}
+			if got := cfg.ControlPlane.InitialPollTimeoutOrDefault(); got != tc.want {
+				t.Fatalf("expected initial poll timeout %s, got %s", tc.want, got)
+			}
+			if got := cfg.ControlPlane.PollDeadlineTimeoutOrDefault(); got != 35*time.Second {
+				t.Fatalf("initial poll timeout changed the default poll deadline to %s", got)
+			}
+		})
 	}
 }
 
@@ -223,6 +284,7 @@ func TestLoadRejectsPollTimingAboveExplicitBounds(t *testing.T) {
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			_, err := LoadRuntimeForTest(tc.args, lookupEnvMap(map[string]string{
 				"CONTROL_PLANE_TUNNEL_ID": envTunnelID,
 				"CONTROL_PLANE_API_KEY":   "control-key",
@@ -267,6 +329,8 @@ func TestLoadRejectsControlPlaneOrganizationIDWithLineBreaks(t *testing.T) {
 }
 
 func TestLoadFlagsOverrideEnv(t *testing.T) {
+	t.Parallel()
+
 	lookup := map[string]string{
 		"CONTROL_PLANE_BASE_URL":              "https://env",
 		"CONTROL_PLANE_URL_PATH":              "/env-path",
@@ -381,6 +445,8 @@ func TestLoadFlagsOverrideEnv(t *testing.T) {
 }
 
 func TestLoadUsesYAMLConfigWhenFlagsAndEnvUnset(t *testing.T) {
+	t.Parallel()
+
 	controlHeaderPath := writeTempSecretFile(t, "yaml-control-header\n")
 	discoveryHeaderPath := writeTempSecretFile(t, "yaml-discovery-from-file\n")
 	healthListenAddrPath := writeTempSecretFile(t, "127.0.0.1:9090\n")
@@ -677,6 +743,8 @@ mcp:
 }
 
 func TestLoadPrecedenceFlagsEnvYAMLDefaults(t *testing.T) {
+	t.Parallel()
+
 	configPath := writeTempConfigFile(t, `
 control_plane:
   base_url: https://yaml-control.example
@@ -715,6 +783,8 @@ mcp:
 }
 
 func TestLoadUsesYAMLConfigPathFromEnv(t *testing.T) {
+	t.Parallel()
+
 	configPath := writeTempConfigFile(t, `
 control_plane:
   tunnel_id: tunnel_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
@@ -740,6 +810,8 @@ mcp:
 }
 
 func TestLoadRejectsUnknownYAMLFields(t *testing.T) {
+	t.Parallel()
+
 	configPath := writeTempConfigFile(t, `
 control_plane:
   tunnel_id: tunnel_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
@@ -760,6 +832,8 @@ mcp:
 }
 
 func TestLoadCABundleFlag(t *testing.T) {
+	t.Parallel()
+
 	bundlePath := writeTempCABundle(t)
 	args := []string{
 		"--control-plane.tunnel-id", flagTunnelID,
@@ -784,6 +858,8 @@ func TestLoadCABundleFlag(t *testing.T) {
 }
 
 func TestLoadCABundleEnvReference(t *testing.T) {
+	t.Parallel()
+
 	bundlePath := writeTempCABundle(t)
 	args := []string{
 		"--control-plane.tunnel-id", flagTunnelID,
@@ -806,6 +882,8 @@ func TestLoadCABundleEnvReference(t *testing.T) {
 }
 
 func TestLoadCABundleRejectsInvalidPEM(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	bundlePath := filepath.Join(dir, "bad.pem")
 	if err := os.WriteFile(bundlePath, []byte("not-a-cert"), 0o600); err != nil {
@@ -828,6 +906,8 @@ func TestLoadCABundleRejectsInvalidPEM(t *testing.T) {
 }
 
 func TestLoadFallsBackToOpenAIApiKey(t *testing.T) {
+	t.Parallel()
+
 	cfg, err := LoadRuntimeForTest(nil, func(key string) (string, bool) {
 		if key == "OPENAI_API_KEY" {
 			return "legacy-key", true
@@ -852,6 +932,8 @@ func TestLoadFallsBackToOpenAIApiKey(t *testing.T) {
 }
 
 func TestLoadUsesControlPlaneAPIKeyFlag(t *testing.T) {
+	t.Parallel()
+
 	args := []string{"--control-plane.api-key", "env:OPENAI_API_KEY_STAGING"}
 	lookup := map[string]string{
 		"CONTROL_PLANE_TUNNEL_ID": envTunnelID,
@@ -872,6 +954,8 @@ func TestLoadUsesControlPlaneAPIKeyFlag(t *testing.T) {
 }
 
 func TestLoadRejectsInvalidControlPlaneAPIKeyFlag(t *testing.T) {
+	t.Parallel()
+
 	args := []string{"--control-plane.api-key", "OPENAI_API_KEY_STAGING"}
 	_, err := LoadRuntimeForTest(args, func(key string) (string, bool) {
 		if key == "LOG_FORMAT" {
@@ -894,6 +978,8 @@ func TestLoadRejectsInvalidControlPlaneAPIKeyFlag(t *testing.T) {
 }
 
 func TestLoadParsesHarpoonTargetsFromFlags(t *testing.T) {
+	t.Parallel()
+
 	args := []string{"--harpoon.target", "label=auth,url=https://example.com,unix-socket=env:HARPOON_SOCKET,desc=Auth server"}
 	lookup := map[string]string{
 		"CONTROL_PLANE_TUNNEL_ID": envTunnelID,
@@ -928,6 +1014,8 @@ func TestLoadParsesHarpoonTargetsFromFlags(t *testing.T) {
 }
 
 func TestLoadRejectsInvalidHarpoonTargetLabel(t *testing.T) {
+	t.Parallel()
+
 	args := []string{"--harpoon.target", "label=Auth-Prod,url=https://example.com,desc=Auth server"}
 	lookup := map[string]string{
 		"CONTROL_PLANE_TUNNEL_ID": envTunnelID,
@@ -949,6 +1037,8 @@ func TestLoadRejectsInvalidHarpoonTargetLabel(t *testing.T) {
 }
 
 func TestLoadParsesHarpoonAdditionalTransport(t *testing.T) {
+	t.Parallel()
+
 	args := []string{"--harpoon.additional-transport", "http-streamable"}
 	lookup := map[string]string{
 		"CONTROL_PLANE_TUNNEL_ID": envTunnelID,
@@ -970,6 +1060,8 @@ func TestLoadParsesHarpoonAdditionalTransport(t *testing.T) {
 }
 
 func TestLoadHarpoonHostClassifierDefaults(t *testing.T) {
+	t.Parallel()
+
 	lookup := map[string]string{
 		"CONTROL_PLANE_TUNNEL_ID": envTunnelID,
 		"CONTROL_PLANE_API_KEY":   "control-key",
@@ -996,6 +1088,8 @@ func TestLoadHarpoonHostClassifierDefaults(t *testing.T) {
 }
 
 func TestLoadHarpoonHostClassifierFlags(t *testing.T) {
+	t.Parallel()
+
 	args := []string{
 		"--harpoon.hosts-include-suffix", "internal",
 		"--harpoon.hosts-include-regex", "^svc-.*",
@@ -1028,6 +1122,8 @@ func TestLoadHarpoonHostClassifierFlags(t *testing.T) {
 }
 
 func TestLoadRejectsInvalidHarpoonHostRegex(t *testing.T) {
+	t.Parallel()
+
 	lookup := map[string]string{
 		"CONTROL_PLANE_TUNNEL_ID":     envTunnelID,
 		"CONTROL_PLANE_API_KEY":       "control-key",
@@ -1046,6 +1142,8 @@ func TestLoadRejectsInvalidHarpoonHostRegex(t *testing.T) {
 }
 
 func TestLoadRejectsHarpoonMaxResponseBytesTooHigh(t *testing.T) {
+	t.Parallel()
+
 	lookup := map[string]string{
 		"CONTROL_PLANE_TUNNEL_ID":    envTunnelID,
 		"CONTROL_PLANE_API_KEY":      "control-key",
@@ -1064,6 +1162,8 @@ func TestLoadRejectsHarpoonMaxResponseBytesTooHigh(t *testing.T) {
 }
 
 func TestLoadRejectsUnsetEnvForControlPlaneAPIKeyFlag(t *testing.T) {
+	t.Parallel()
+
 	args := []string{"--control-plane.api-key", "env:OPENAI_API_KEY_STAGING"}
 	_, err := LoadRuntimeForTest(args, func(key string) (string, bool) {
 		if key == "LOG_FORMAT" {
@@ -1086,6 +1186,8 @@ func TestLoadRejectsUnsetEnvForControlPlaneAPIKeyFlag(t *testing.T) {
 }
 
 func TestLoadUsesControlPlaneAPIKeyFile(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	secretPath := filepath.Join(dir, "api_key.txt")
 	if err := os.WriteFile(secretPath, []byte("file-key"), 0o600); err != nil {
@@ -1111,6 +1213,8 @@ func TestLoadUsesControlPlaneAPIKeyFile(t *testing.T) {
 }
 
 func TestLoadTrimsControlPlaneAPIKeyFileTrailingNewline(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	secretPath := filepath.Join(dir, "api_key.txt")
 	if err := os.WriteFile(secretPath, []byte("file-key\n"), 0o600); err != nil {
@@ -1136,6 +1240,8 @@ func TestLoadTrimsControlPlaneAPIKeyFileTrailingNewline(t *testing.T) {
 }
 
 func TestLoadRejectsMalformedControlPlaneAPIKeyReference(t *testing.T) {
+	t.Parallel()
+
 	const malformedKey = "bad key"
 	_, err := LoadRuntimeForTest(
 		[]string{
@@ -1157,9 +1263,12 @@ func TestLoadRejectsMalformedControlPlaneAPIKeyReference(t *testing.T) {
 }
 
 func TestLoadRejectsMalformedDirectControlPlaneAPIKey(t *testing.T) {
+	t.Parallel()
+
 	const malformedKey = "bad\tkey"
 	for _, envName := range []string{"CONTROL_PLANE_API_KEY", "OPENAI_API_KEY"} {
 		t.Run(envName, func(t *testing.T) {
+			t.Parallel()
 			_, err := LoadRuntimeForTest(
 				[]string{"--control-plane.base-url", "http://localhost:8080"},
 				lookupEnvMap(map[string]string{
@@ -1179,6 +1288,8 @@ func TestLoadRejectsMalformedDirectControlPlaneAPIKey(t *testing.T) {
 }
 
 func TestLoadRejectsMissingControlPlaneAPIKeyFile(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	args := []string{"--control-plane.api-key", "file:" + filepath.Join(dir, "missing.txt")}
 	_, err := LoadRuntimeForTest(args, func(key string) (string, bool) {
@@ -1202,6 +1313,8 @@ func TestLoadRejectsMissingControlPlaneAPIKeyFile(t *testing.T) {
 }
 
 func TestLoadRejectsEmptyControlPlaneAPIKeyFile(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	secretPath := filepath.Join(dir, "api_key.txt")
 	if err := os.WriteFile(secretPath, nil, 0o600); err != nil {
@@ -1230,6 +1343,8 @@ func TestLoadRejectsEmptyControlPlaneAPIKeyFile(t *testing.T) {
 }
 
 func TestLoadRejectsNonPositiveMCPConnectionTTL(t *testing.T) {
+	t.Parallel()
+
 	args := []string{
 		"--control-plane.tunnel-id", flagTunnelID,
 		"--mcp.server-url", "https://mcp.default",
@@ -1279,7 +1394,6 @@ func TestLoadMCPStartupWaitTimeout(t *testing.T) {
 	}
 
 	for _, testCase := range testCases {
-		testCase := testCase
 		t.Run(testCase.name, func(t *testing.T) {
 			t.Parallel()
 			args := append([]string{
@@ -1335,7 +1449,6 @@ func TestLoadMCPStdioSendInitializedNotification(t *testing.T) {
 	}
 
 	for _, testCase := range testCases {
-		testCase := testCase
 		t.Run(testCase.name, func(t *testing.T) {
 			t.Parallel()
 			args := append([]string{
@@ -1386,6 +1499,8 @@ func TestLoadRejectsNegativeMCPStartupWaitTimeout(t *testing.T) {
 }
 
 func TestLoadRejectsEmptyControlPlaneAPIKey(t *testing.T) {
+	t.Parallel()
+
 	_, err := LoadRuntimeForTest(nil, func(key string) (string, bool) {
 		if key == "CONTROL_PLANE_API_KEY" {
 			return "", true
@@ -1407,6 +1522,8 @@ func TestLoadRejectsEmptyControlPlaneAPIKey(t *testing.T) {
 }
 
 func TestLoadRejectsLogLevelOverrideWithoutFormat(t *testing.T) {
+	t.Parallel()
+
 	_, err := LoadRuntimeForTest(nil, func(key string) (string, bool) {
 		switch key {
 		case "CONTROL_PLANE_API_KEY":
@@ -1430,6 +1547,8 @@ func TestLoadRejectsLogLevelOverrideWithoutFormat(t *testing.T) {
 }
 
 func TestLoadDefaultsLogFileToStructTextWhenFormatUnset(t *testing.T) {
+	t.Parallel()
+
 	args := []string{
 		"--control-plane.tunnel-id", flagTunnelID,
 		"--log.file", "/tmp/tunnel.log",
@@ -1456,6 +1575,8 @@ func TestLoadDefaultsLogFileToStructTextWhenFormatUnset(t *testing.T) {
 }
 
 func TestLoadKeepsExplicitJSONFormatWhenLogFileIsSet(t *testing.T) {
+	t.Parallel()
+
 	args := []string{
 		"--control-plane.tunnel-id", flagTunnelID,
 		"--log.file", "/tmp/tunnel.jsonl",
@@ -1483,6 +1604,8 @@ func TestLoadKeepsExplicitJSONFormatWhenLogFileIsSet(t *testing.T) {
 }
 
 func TestLoadRejectsUnsupportedFormatWhenLogFileIsSet(t *testing.T) {
+	t.Parallel()
+
 	args := []string{
 		"--control-plane.tunnel-id", flagTunnelID,
 		"--log.file", "/tmp/tunnel.log",
@@ -1507,6 +1630,8 @@ func TestLoadRejectsUnsupportedFormatWhenLogFileIsSet(t *testing.T) {
 }
 
 func TestLoadRequiresTunnelID(t *testing.T) {
+	t.Parallel()
+
 	cfgLookup := func(key string) (string, bool) {
 		switch key {
 		case "OPENAI_API_KEY":
@@ -1529,6 +1654,7 @@ func TestLoadRequiresTunnelID(t *testing.T) {
 	}
 
 	t.Run("rejects empty tunnel id flag", func(t *testing.T) {
+		t.Parallel()
 		args := []string{"--control-plane.tunnel-id", ""}
 		_, err := LoadRuntimeForTest(args, func(key string) (string, bool) {
 			if key == "OPENAI_API_KEY" {
@@ -1548,6 +1674,7 @@ func TestLoadRequiresTunnelID(t *testing.T) {
 	})
 
 	t.Run("rejects empty CONTROL_PLANE_TUNNEL_ID env", func(t *testing.T) {
+		t.Parallel()
 		_, err := LoadRuntimeForTest(nil, func(key string) (string, bool) {
 			if key == "CONTROL_PLANE_TUNNEL_ID" {
 				return "", true
@@ -1570,6 +1697,8 @@ func TestLoadRequiresTunnelID(t *testing.T) {
 }
 
 func TestLoadRequiresMCPServerURL(t *testing.T) {
+	t.Parallel()
+
 	_, err := LoadRuntimeForTest(nil, func(key string) (string, bool) {
 		if key == "CONTROL_PLANE_TUNNEL_ID" {
 			return envTunnelID, true
@@ -1591,6 +1720,8 @@ func TestLoadRequiresMCPServerURL(t *testing.T) {
 }
 
 func TestLoadPrioritizesTunnelIDErrorBeforeMissingMCPBinding(t *testing.T) {
+	t.Parallel()
+
 	_, err := LoadRuntimeForTest(nil, func(key string) (string, bool) {
 		switch key {
 		case "OPENAI_API_KEY":
@@ -1610,6 +1741,8 @@ func TestLoadPrioritizesTunnelIDErrorBeforeMissingMCPBinding(t *testing.T) {
 }
 
 func TestLoadUsesMCPCommand(t *testing.T) {
+	t.Parallel()
+
 	args := []string{
 		"--control-plane.tunnel-id", flagTunnelID,
 		"--mcp.command", `echo "hello world"`,
@@ -1639,7 +1772,85 @@ func TestLoadUsesMCPCommand(t *testing.T) {
 	}
 }
 
+func TestFullMainMCPServerURLOverrideAppliesTransportDefaults(t *testing.T) {
+	t.Parallel()
+
+	certPath, keyPath := writeTempClientCertPair(t)
+	for _, target := range []string{"none", "stdio", "http"} {
+		t.Run(target, func(t *testing.T) {
+			t.Parallel()
+			fs := pflag.NewFlagSet("full", pflag.ContinueOnError)
+			RegisterFlags(fs, FlavorFull)
+			args := []string{
+				"--mcp.client-cert", certPath,
+				"--mcp.client-key", keyPath,
+				"--mcp.http-proxy", "http://mcp-proxy.example:8080",
+				"--http-proxy", "http://global-proxy.example:8080",
+				"--mcp.connection-max-ttl", "7m",
+				"--mcp.startup-wait-timeout", "3s",
+				"--mcp.max-concurrent-requests", "11",
+				"--control-plane.poll-channel", "main",
+			}
+			if target != "none" {
+				args = append(args,
+					"--mcp.server-url", "channel=docs,url=https://docs.example/mcp,http-proxy=http://docs-proxy.example:8080",
+					"--mcp.command", "channel=tools,command=echo tools",
+				)
+			}
+			switch target {
+			case "stdio":
+				args = append(args, "--mcp.command", "echo original")
+			case "http":
+				args = append(args, "--mcp.server-url", "channel=main,url=http://original.example/mcp,unix-socket=/tmp/original-mcp.sock")
+			}
+			if err := fs.Parse(args); err != nil {
+				t.Fatal(err)
+			}
+			const embeddedURL = "http://127.0.0.1:12345/mcp"
+			cfg, _, _, err := LoadFullFromFlagSetWithMainMCPServerURL(fs, lookupEnvMap(map[string]string{
+				"CONTROL_PLANE_TUNNEL_ID": envTunnelID,
+				"CONTROL_PLANE_API_KEY":   "control-key",
+			}), embeddedURL)
+			if err != nil {
+				t.Fatal(err)
+			}
+			main := cfg.MCP.MainChannelBinding()
+			if main == nil || main.ServerURL == nil || main.ServerURL.String() != embeddedURL || main.TransportKind != MCPTransportHTTPStreamable {
+				t.Fatalf("unexpected main binding: %#v", main)
+			}
+			if main.HTTPProxy == nil || main.HTTPProxy.String() != "http://mcp-proxy.example:8080" || main.HTTPProxySource != ProxySource("mcp.http-proxy") {
+				t.Fatalf("main did not inherit MCP proxy: %#v", main)
+			}
+			if main.ClientCertificate == nil || main.ClientCertificate.CertPath != certPath || main.ClientCertificate.KeyPath != keyPath {
+				t.Fatalf("main did not inherit client certificate: %#v", main.ClientCertificate)
+			}
+			if cfg.MCP.ServerURL != main.ServerURL || cfg.MCP.ClientCertificate != main.ClientCertificate || cfg.MCP.TransportKind != main.TransportKind || cfg.MCP.Command != "" || len(cfg.MCP.CommandArgs) != 0 || cfg.MCP.UnixSocketPath != "" || main.UnixSocketPath != "" {
+				t.Fatalf("main projection retained original target fields: %#v", cfg.MCP)
+			}
+			if cfg.MCP.ConnectionMaxTTL != 7*time.Minute || cfg.MCP.StartupWaitTimeout != 3*time.Second || cfg.MCP.MaxConcurrentRequests != 11 {
+				t.Fatalf("shared MCP settings changed: %#v", cfg.MCP)
+			}
+			if target == "none" {
+				if len(cfg.MCP.ChannelBindings) != 1 {
+					t.Fatalf("unexpected bindings: %#v", cfg.MCP.ChannelBindings)
+				}
+				return
+			}
+			docs := cfg.MCP.ChannelBindingFor(types.Channel("docs"))
+			if docs == nil || docs.ServerURL.String() != "https://docs.example/mcp" || docs.HTTPProxy.String() != "http://docs-proxy.example:8080" || docs.HTTPProxySource != ProxySource("mcp.server-url") || docs.ClientCertificate == nil || docs.ClientCertificate.CertPath != certPath {
+				t.Fatalf("non-main HTTP transport defaults changed: %#v", docs)
+			}
+			tools := cfg.MCP.ChannelBindingFor(types.Channel("tools"))
+			if tools == nil || tools.Command != "echo tools" || tools.TransportKind != MCPTransportStdio || tools.HTTPProxySource != ProxySourceIgnored || tools.HTTPProxy != nil || tools.ClientCertificate != nil {
+				t.Fatalf("non-main stdio binding changed: %#v", tools)
+			}
+		})
+	}
+}
+
 func TestLoadRejectsMCPCommandAndServerURLSameChannel(t *testing.T) {
+	t.Parallel()
+
 	args := []string{
 		"--control-plane.tunnel-id", flagTunnelID,
 		"--mcp.server-url", "channel=main,url=https://flag-mcp",
@@ -1660,6 +1871,8 @@ func TestLoadRejectsMCPCommandAndServerURLSameChannel(t *testing.T) {
 }
 
 func TestLoadAllowsMCPCommandAndServerURLDifferentChannels(t *testing.T) {
+	t.Parallel()
+
 	args := []string{
 		"--control-plane.tunnel-id", flagTunnelID,
 		"--mcp.server-url", "channel=main,url=https://flag-mcp",
@@ -1683,6 +1896,8 @@ func TestLoadAllowsMCPCommandAndServerURLDifferentChannels(t *testing.T) {
 }
 
 func TestLoadParsesChannelQualifiedEntries(t *testing.T) {
+	t.Parallel()
+
 	args := []string{
 		"--control-plane.tunnel-id", flagTunnelID,
 		"--mcp.server-url", "channel=main,url=https://flag-mcp",
@@ -1708,6 +1923,8 @@ func TestLoadParsesChannelQualifiedEntries(t *testing.T) {
 }
 
 func TestLoadParsesQualifiedMCPCommandWithCommaInCommandValue(t *testing.T) {
+	t.Parallel()
+
 	args := []string{
 		"--control-plane.tunnel-id", flagTunnelID,
 		"--mcp.command", `channel=main,command=python -c "print(1,2,3)"`,
@@ -1730,6 +1947,8 @@ func TestLoadParsesQualifiedMCPCommandWithCommaInCommandValue(t *testing.T) {
 }
 
 func TestLoadParsesQualifiedMCPCommandWithTrailingChannelAndCommaInCommandValue(t *testing.T) {
+	t.Parallel()
+
 	args := []string{
 		"--control-plane.tunnel-id", flagTunnelID,
 		"--mcp.command", `command=python -c "print(1,2,3)",channel=main`,
@@ -1752,6 +1971,8 @@ func TestLoadParsesQualifiedMCPCommandWithTrailingChannelAndCommaInCommandValue(
 }
 
 func TestLoadParsesEnvMCPEntries(t *testing.T) {
+	t.Parallel()
+
 	cfg, err := LoadRuntimeForTest(nil, func(key string) (string, bool) {
 		switch key {
 		case "OPENAI_API_KEY":
@@ -1778,6 +1999,8 @@ func TestLoadParsesEnvMCPEntries(t *testing.T) {
 }
 
 func TestLoadAllowsSemicolonsInMCPCommandEnv(t *testing.T) {
+	t.Parallel()
+
 	cfg, err := LoadRuntimeForTest(nil, func(key string) (string, bool) {
 		switch key {
 		case "OPENAI_API_KEY":
@@ -1804,6 +2027,8 @@ func TestLoadAllowsSemicolonsInMCPCommandEnv(t *testing.T) {
 }
 
 func TestLoadRejectsHarpoonChannelBinding(t *testing.T) {
+	t.Parallel()
+
 	args := []string{
 		"--control-plane.tunnel-id", flagTunnelID,
 		"--mcp.server-url", "channel=harpoon,url=https://flag-mcp",
@@ -1823,6 +2048,8 @@ func TestLoadRejectsHarpoonChannelBinding(t *testing.T) {
 }
 
 func TestLoadRejectsHarpoonCommandBinding(t *testing.T) {
+	t.Parallel()
+
 	args := []string{
 		"--control-plane.tunnel-id", flagTunnelID,
 		"--mcp.command", "channel=harpoon,command=echo hello",
@@ -1842,6 +2069,8 @@ func TestLoadRejectsHarpoonCommandBinding(t *testing.T) {
 }
 
 func TestLoadRejectsMissingMainChannel(t *testing.T) {
+	t.Parallel()
+
 	args := []string{
 		"--control-plane.tunnel-id", flagTunnelID,
 		"--mcp.server-url", "channel=tools,url=https://flag-mcp",
@@ -1861,6 +2090,8 @@ func TestLoadRejectsMissingMainChannel(t *testing.T) {
 }
 
 func TestLoadPollChannelsPrecedenceAndHarpoonOnly(t *testing.T) {
+	t.Parallel()
+
 	args := []string{
 		"--control-plane.tunnel-id", flagTunnelID,
 		"--control-plane.poll-channel", "harpoon",
@@ -1882,6 +2113,8 @@ func TestLoadPollChannelsPrecedenceAndHarpoonOnly(t *testing.T) {
 }
 
 func TestLoadHarpoonOnlyPollChannelsRetainDisabledMainBinding(t *testing.T) {
+	t.Parallel()
+
 	cfg, err := LoadRuntimeForTest([]string{
 		"--control-plane.tunnel-id", flagTunnelID,
 		"--control-plane.poll-channel", "harpoon",
@@ -1903,6 +2136,8 @@ func TestLoadHarpoonOnlyPollChannelsRetainDisabledMainBinding(t *testing.T) {
 }
 
 func TestLoadPollChannelsEnvSorted(t *testing.T) {
+	t.Parallel()
+
 	cfg, err := LoadRuntimeForTest([]string{"--control-plane.tunnel-id", flagTunnelID, "--mcp.server-url", "https://mcp.example", "--harpoon.target", "label=auth,url=https://example.com"}, lookupEnvMap(map[string]string{
 		"OPENAI_API_KEY":              "key",
 		"CONTROL_PLANE_POLL_CHANNELS": "main,harpoon",
@@ -1916,6 +2151,8 @@ func TestLoadPollChannelsEnvSorted(t *testing.T) {
 }
 
 func TestLoadMainAndHarpoonPollChannelsAllowOAuthBootstrap(t *testing.T) {
+	t.Parallel()
+
 	cfg, err := LoadRuntimeForTest([]string{"--control-plane.tunnel-id", flagTunnelID, "--mcp.server-url", "https://mcp.example"}, lookupEnvMap(map[string]string{
 		"OPENAI_API_KEY":              "key",
 		"CONTROL_PLANE_POLL_CHANNELS": "main,harpoon",
@@ -1929,6 +2166,8 @@ func TestLoadMainAndHarpoonPollChannelsAllowOAuthBootstrap(t *testing.T) {
 }
 
 func TestLoadPollChannelsFromYAML(t *testing.T) {
+	t.Parallel()
+
 	path := writeTempConfigFile(t, `
 config_version: 1
 control_plane:
@@ -1953,6 +2192,8 @@ harpoon:
 }
 
 func TestLoadRejectsInvalidPollChannels(t *testing.T) {
+	t.Parallel()
+
 	for _, value := range []string{"", "main,", "Main", "main,main", "unknown"} {
 		_, err := LoadRuntimeForTest([]string{"--control-plane.tunnel-id", flagTunnelID, "--mcp.server-url", "https://mcp.example"}, lookupEnvMap(map[string]string{
 			"OPENAI_API_KEY":              "key",
@@ -1965,6 +2206,8 @@ func TestLoadRejectsInvalidPollChannels(t *testing.T) {
 }
 
 func TestLoadParsesMCPClientCertificateFlags(t *testing.T) {
+	t.Parallel()
+
 	certPath, keyPath := writeTempClientCertPair(t)
 	args := []string{
 		"--control-plane.tunnel-id", flagTunnelID,
@@ -1994,6 +2237,8 @@ func TestLoadParsesMCPClientCertificateFlags(t *testing.T) {
 }
 
 func TestLoadParsesControlPlaneClientCertificateFlagsAndSelectsMTLSBaseURL(t *testing.T) {
+	t.Parallel()
+
 	certPath, keyPath := writeTempClientCertPair(t)
 	args := []string{
 		"--control-plane.tunnel-id", flagTunnelID,
@@ -2022,6 +2267,8 @@ func TestLoadParsesControlPlaneClientCertificateFlagsAndSelectsMTLSBaseURL(t *te
 }
 
 func TestLoadParsesControlPlaneClientCertificateEnvReferences(t *testing.T) {
+	t.Parallel()
+
 	certPath, keyPath := writeTempClientCertPair(t)
 	cfg, err := LoadRuntimeForTest([]string{
 		"--control-plane.tunnel-id", flagTunnelID,
@@ -2045,6 +2292,8 @@ func TestLoadParsesControlPlaneClientCertificateEnvReferences(t *testing.T) {
 }
 
 func TestLoadParsesControlPlaneClientCertificateYAMLFileReferences(t *testing.T) {
+	t.Parallel()
+
 	certPath, keyPath := writeTempClientCertPair(t)
 	configPath := writeTempConfigFile(t, `
 control_plane:
@@ -2075,6 +2324,8 @@ mcp:
 }
 
 func TestLoadParsesMCPUnixSocketYAMLReference(t *testing.T) {
+	t.Parallel()
+
 	configPath := writeTempConfigFile(t, `
 control_plane:
   tunnel_id: tunnel_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
@@ -2106,6 +2357,8 @@ mcp:
 }
 
 func TestLoadRejectsMCPUnixSocketProxyCombination(t *testing.T) {
+	t.Parallel()
+
 	_, err := LoadRuntimeForTest([]string{
 		"--control-plane.tunnel-id", flagTunnelID,
 		"--mcp.server-url", "channel=main,url=http://localhost/mcp,unix-socket=/tmp/mcp.sock,http-proxy=http://proxy.example:8080",
@@ -2121,6 +2374,8 @@ func TestLoadRejectsMCPUnixSocketProxyCombination(t *testing.T) {
 }
 
 func TestLoadPreservesExplicitNonDefaultControlPlaneBaseURLWithMTLS(t *testing.T) {
+	t.Parallel()
+
 	certPath, keyPath := writeTempClientCertPair(t)
 	cfg, err := LoadRuntimeForTest([]string{
 		"--control-plane.tunnel-id", flagTunnelID,
@@ -2140,6 +2395,8 @@ func TestLoadPreservesExplicitNonDefaultControlPlaneBaseURLWithMTLS(t *testing.T
 }
 
 func TestLoadRejectsIncompleteControlPlaneClientCertificate(t *testing.T) {
+	t.Parallel()
+
 	certPath, _ := writeTempClientCertPair(t)
 	_, err := LoadRuntimeForTest([]string{
 		"--control-plane.tunnel-id", flagTunnelID,
@@ -2157,6 +2414,8 @@ func TestLoadRejectsIncompleteControlPlaneClientCertificate(t *testing.T) {
 }
 
 func TestLoadRejectsMismatchedControlPlaneClientCertificate(t *testing.T) {
+	t.Parallel()
+
 	certPath, _ := writeTempClientCertPair(t)
 	_, keyPath := writeTempClientCertPair(t)
 	_, err := LoadRuntimeForTest([]string{
@@ -2176,6 +2435,8 @@ func TestLoadRejectsMismatchedControlPlaneClientCertificate(t *testing.T) {
 }
 
 func TestLoadParsesMCPClientCertificatePerChannel(t *testing.T) {
+	t.Parallel()
+
 	certPath, keyPath := writeTempClientCertPair(t)
 	args := []string{
 		"--control-plane.tunnel-id", flagTunnelID,
@@ -2197,6 +2458,8 @@ func TestLoadParsesMCPClientCertificatePerChannel(t *testing.T) {
 }
 
 func TestLoadSupportsDistinctMCPClientCertificatesPerChannel(t *testing.T) {
+	t.Parallel()
+
 	mainCertPath, mainKeyPath := writeTempClientCertPair(t)
 	analyticsCertPath, analyticsKeyPath := writeTempClientCertPair(t)
 	args := []string{
@@ -2224,6 +2487,8 @@ func TestLoadSupportsDistinctMCPClientCertificatesPerChannel(t *testing.T) {
 }
 
 func TestLoadMCPClientCertificateFallbackAndOverride(t *testing.T) {
+	t.Parallel()
+
 	defaultCertPath, defaultKeyPath := writeTempClientCertPair(t)
 	overrideCertPath, overrideKeyPath := writeTempClientCertPair(t)
 	args := []string{
@@ -2256,6 +2521,8 @@ func TestLoadMCPClientCertificateFallbackAndOverride(t *testing.T) {
 }
 
 func TestLoadRejectsIncompleteMCPClientCertificate(t *testing.T) {
+	t.Parallel()
+
 	certPath, _ := writeTempClientCertPair(t)
 	args := []string{
 		"--control-plane.tunnel-id", flagTunnelID,
@@ -2274,6 +2541,8 @@ func TestLoadRejectsIncompleteMCPClientCertificate(t *testing.T) {
 }
 
 func TestLoadRejectsIncompletePerChannelMCPClientCertificate(t *testing.T) {
+	t.Parallel()
+
 	certPath, _ := writeTempClientCertPair(t)
 	args := []string{
 		"--control-plane.tunnel-id", flagTunnelID,
@@ -2291,6 +2560,8 @@ func TestLoadRejectsIncompletePerChannelMCPClientCertificate(t *testing.T) {
 }
 
 func TestLoadParsesMCPClientCertificateEnvReferences(t *testing.T) {
+	t.Parallel()
+
 	certPath, keyPath := writeTempClientCertPair(t)
 	args := []string{
 		"--control-plane.tunnel-id", flagTunnelID,
@@ -2312,6 +2583,8 @@ func TestLoadParsesMCPClientCertificateEnvReferences(t *testing.T) {
 }
 
 func TestParseCommandArgv(t *testing.T) {
+	t.Parallel()
+
 	testCases := map[string]struct {
 		raw     string
 		want    []string
@@ -2345,6 +2618,7 @@ func TestParseCommandArgv(t *testing.T) {
 
 	for name, tc := range testCases {
 		t.Run(name, func(t *testing.T) {
+			t.Parallel()
 			got, err := parseCommandArgv(tc.raw)
 			if tc.wantErr {
 				if err == nil {
@@ -2363,6 +2637,8 @@ func TestParseCommandArgv(t *testing.T) {
 }
 
 func TestLoadValidatesControlPlaneBaseURL(t *testing.T) {
+	t.Parallel()
+
 	_, err := LoadRuntimeForTest([]string{"--control-plane.base-url", "http://"}, func(key string) (string, bool) {
 		if key == "OPENAI_API_KEY" {
 			return "key", true
@@ -2384,6 +2660,8 @@ func TestLoadValidatesControlPlaneBaseURL(t *testing.T) {
 }
 
 func TestLoadValidatesControlPlaneURLPath(t *testing.T) {
+	t.Parallel()
+
 	testCases := map[string]string{
 		"must-start-with-slash":  "gateway/dev/us",
 		"must-not-include-host":  "https://gateway.example/dev/us",
@@ -2391,6 +2669,7 @@ func TestLoadValidatesControlPlaneURLPath(t *testing.T) {
 	}
 	for name, urlPath := range testCases {
 		t.Run(name, func(t *testing.T) {
+			t.Parallel()
 			_, err := LoadRuntimeForTest([]string{"--control-plane.url-path", urlPath}, func(key string) (string, bool) {
 				if key == "OPENAI_API_KEY" {
 					return "key", true
@@ -2424,8 +2703,6 @@ func TestLoadValidatesTunnelIDFormat(t *testing.T) {
 	}
 
 	for name, tunnelID := range testCases {
-		name := name
-		tunnelID := tunnelID
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			_, err := LoadRuntimeForTest([]string{"--control-plane.tunnel-id", tunnelID}, func(key string) (string, bool) {
@@ -2448,6 +2725,8 @@ func TestLoadValidatesTunnelIDFormat(t *testing.T) {
 }
 
 func TestLoadRejectsTunnelIDUnsafeForPath(t *testing.T) {
+	t.Parallel()
+
 	_, err := LoadRuntimeForTest([]string{"--control-plane.tunnel-id", "path/unsafe"}, func(key string) (string, bool) {
 		switch key {
 		case "OPENAI_API_KEY":
@@ -2467,7 +2746,10 @@ func TestLoadRejectsTunnelIDUnsafeForPath(t *testing.T) {
 }
 
 func TestLoadRejectsControlPlaneMaxInFlightAboveLimit(t *testing.T) {
+	t.Parallel()
+
 	t.Run("flag value", func(t *testing.T) {
+		t.Parallel()
 		args := []string{
 			"--control-plane.tunnel-id", flagTunnelID,
 			fmt.Sprintf("--control-plane.max-inflight=%d", maxControlPlaneMaxInFlight+1),
@@ -2490,6 +2772,7 @@ func TestLoadRejectsControlPlaneMaxInFlightAboveLimit(t *testing.T) {
 	})
 
 	t.Run("env value", func(t *testing.T) {
+		t.Parallel()
 		_, err := LoadRuntimeForTest([]string{"--control-plane.tunnel-id", flagTunnelID}, func(key string) (string, bool) {
 			switch key {
 			case "CONTROL_PLANE_API_KEY":
@@ -2512,6 +2795,8 @@ func TestLoadRejectsControlPlaneMaxInFlightAboveLimit(t *testing.T) {
 }
 
 func TestLoadRejectsUnsupportedFormat(t *testing.T) {
+	t.Parallel()
+
 	args := []string{"--control-plane.tunnel-id", flagTunnelID, "--log.format", "yaml"}
 	_, err := LoadRuntimeForTest(args, func(key string) (string, bool) {
 		if key == "OPENAI_API_KEY" {
@@ -2528,6 +2813,8 @@ func TestLoadRejectsUnsupportedFormat(t *testing.T) {
 }
 
 func TestLoadRequiresAPIKey(t *testing.T) {
+	t.Parallel()
+
 	_, err := LoadRuntimeForTest(nil, func(key string) (string, bool) {
 		if key == "MCP_SERVER_URL" {
 			return "https://mcp.default", true
@@ -2566,7 +2853,6 @@ func TestParseHeader(t *testing.T) {
 	}
 
 	for _, tc := range tests {
-		tc := tc
 		t.Run(tc.input, func(t *testing.T) {
 			t.Parallel()
 			key, val, err := parseHeader(tc.input)
@@ -2593,7 +2879,6 @@ func TestParseHeaderRejectsInvalid(t *testing.T) {
 		{name: "missing value", input: "Missing-value:   "},
 		{name: "line break", input: "X-Auth: secret-value\ncontinuation", doNotExpose: "secret-value"},
 	} {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			_, _, err := parseHeader(tc.input)
@@ -2713,7 +2998,6 @@ func TestBuildControlPlaneExtraHeadersRejectsReservedHeaders(t *testing.T) {
 	}
 
 	for _, tc := range testCases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
@@ -2877,7 +3161,6 @@ func TestValidateFileConfigSyntaxRejectsReservedControlPlaneExtraHeaders(t *test
 	t.Parallel()
 
 	for _, header := range []string{"Authorization", "x-tunnel-mcp-server-info"} {
-		header := header
 		t.Run(header, func(t *testing.T) {
 			t.Parallel()
 
@@ -3057,6 +3340,8 @@ func TestBuildMCPExtraHeadersResolvesEnvFileAndRejectsInvalidReferences(t *testi
 }
 
 func TestParseProxyReference(t *testing.T) {
+	t.Parallel()
+
 	t.Run("envReference", func(t *testing.T) {
 		t.Parallel()
 		proxy, source, err := parseProxyReference("http-proxy", "env:PROXY_URL", lookupEnvMap(map[string]string{
@@ -3101,6 +3386,8 @@ func TestRedactProxyURL(t *testing.T) {
 }
 
 func TestLoadProxyPrecedence(t *testing.T) {
+	t.Parallel()
+
 	args := []string{
 		"--control-plane.tunnel-id", flagTunnelID,
 		"--mcp.server-url", "channel=main,url=https://mcp.example,http-proxy=http://channel-proxy:8080",
@@ -3149,6 +3436,8 @@ func TestLoadProxyPrecedence(t *testing.T) {
 }
 
 func TestLoadRejectsStdioProxy(t *testing.T) {
+	t.Parallel()
+
 	args := []string{
 		"--control-plane.tunnel-id", flagTunnelID,
 		"--mcp.command", "channel=main,command=echo hello,http-proxy=http://proxy.example:8080",
@@ -3162,6 +3451,8 @@ func TestLoadRejectsStdioProxy(t *testing.T) {
 }
 
 func TestCABundleHelpMentionsAdditive(t *testing.T) {
+	t.Parallel()
+
 	fs := pflag.NewFlagSet("test", pflag.ContinueOnError)
 	RegisterFlags(fs, FlavorRuntime)
 	buf := &bytes.Buffer{}
@@ -3172,6 +3463,8 @@ func TestCABundleHelpMentionsAdditive(t *testing.T) {
 }
 
 func TestBackpressureFlagHelpDistinguishesBufferFromExecutionConcurrency(t *testing.T) {
+	t.Parallel()
+
 	fs := pflag.NewFlagSet("test", pflag.ContinueOnError)
 	RegisterFlags(fs, FlavorRuntime)
 
@@ -3229,7 +3522,8 @@ func writeTempSecretFile(t *testing.T, contents string) string {
 func writeTempClientCertPair(t *testing.T) (string, string) {
 	t.Helper()
 
-	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	// These tests exercise certificate configuration, so use fast, fresh P-256 keys.
+	privateKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		t.Fatalf("generate key: %v", err)
 	}
@@ -3248,8 +3542,12 @@ func writeTempClientCertPair(t *testing.T) (string, string) {
 		t.Fatalf("create certificate: %v", err)
 	}
 
+	keyDER, err := x509.MarshalECPrivateKey(privateKey)
+	if err != nil {
+		t.Fatalf("marshal key: %v", err)
+	}
 	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: derBytes})
-	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(privateKey)})
+	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER})
 
 	dir := t.TempDir()
 	certPath := filepath.Join(dir, "client.crt")
@@ -3268,6 +3566,7 @@ func FuzzRuntimeScalarParsers(f *testing.F) {
 	f.Add("X-Test: value", "http://proxy.example.invalid:8080", "1m0s", envTunnelID, "NO_PROXY", "localhost")
 	f.Add("Bad Header: secret", "socks5://proxy.example.invalid:1080", "not-a-duration", "path/unsafe", "UNKNOWN_PROXY_ENV", "value")
 	f.Fuzz(func(t *testing.T, header string, proxy string, duration string, tunnelID string, proxyEnvKey string, proxyEnvValue string) {
+		t.Parallel()
 		if len(header) > 512 || len(proxy) > 512 || len(duration) > 128 || len(tunnelID) > 256 || len(proxyEnvKey) > 64 || len(proxyEnvValue) > 512 {
 			t.Skip()
 		}
@@ -3318,6 +3617,7 @@ func FuzzRequiredSecretReferences(f *testing.F) {
 	f.Add(uint8(1), " file-secret \n")
 	f.Add(uint8(2), "")
 	f.Fuzz(func(t *testing.T, sourceKind uint8, secret string) {
+		t.Parallel()
 		if len(secret) > 1024 {
 			t.Skip()
 		}
@@ -3402,4 +3702,61 @@ func equalStringSlices(a, b []string) bool {
 		}
 	}
 	return true
+}
+
+func TestEffectiveRichHeadersSuppressControlPlaneRawCapture(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name, rule, replacement string
+		want                    bool
+	}{
+		{name: "legacy strings", rule: `allowed_headers: [X-Tag]`},
+		{name: "canonical strings", rule: `header_rules: [X-Tag]`},
+		{name: "canonical structured", rule: `header_rules: [{name: X-Tag, description: Caller value}]`, want: true},
+		{name: "alias structured", rule: `allowed_headers: [{name: X-Tag, description: Caller value}]`, want: true},
+		{name: "replacement flags", rule: `header_rules: [{name: X-Tag, description: Caller value}]`, replacement: "flag"},
+		{name: "replacement env", rule: `header_rules: [{name: X-Tag, description: Caller value}]`, replacement: "env"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			path := writeTempConfigFile(t, fmt.Sprintf(`config_version: 2
+control_plane:
+  poll_channels: [harpoon]
+harpoon:
+  targets:
+    - label: resource
+      template:
+        version: 1
+        origin: https://example.com
+        method: GET
+        path_template: /resource/{id}
+        parameters:
+          id: {type: string, required: true, pattern: '[a-z]+', max_length: 32}
+        %s
+log:
+  level: debug
+  format: json
+  http_raw_unsafe: true
+`, tc.rule))
+			args := []string{"--config", path}
+			env := map[string]string{"CONTROL_PLANE_TUNNEL_ID": envTunnelID, "CONTROL_PLANE_API_KEY": "runtime-key"}
+			const replacement = "label=replacement,url=https://example.com/resource"
+			switch tc.replacement {
+			case "flag":
+				args = append(args, "--harpoon.target", replacement)
+			case "env":
+				env["HARPOON_TARGETS"] = replacement
+			}
+			cfg, err := LoadRuntimeForTest(args, lookupEnvMap(env))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if cfg.ControlPlane.SuppressRawHTTPLogging != tc.want {
+				t.Fatalf("suppression=%v, want %v", cfg.ControlPlane.SuppressRawHTTPLogging, tc.want)
+			}
+			if !cfg.Logging.HTTPRawUnsafe {
+				t.Fatal("effective logging setting was changed globally")
+			}
+		})
+	}
 }

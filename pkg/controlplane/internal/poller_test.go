@@ -68,10 +68,7 @@ func (f *recordingFetcher) Poll(ctx context.Context, limit int) ([]controlplane.
 	if len(f.data) == 0 {
 		return nil, "", nil
 	}
-	n := limit
-	if n > len(f.data) {
-		n = len(f.data)
-	}
+	n := min(limit, len(f.data))
 
 	out := make([]controlplane.PolledCommand, n)
 	copy(out, f.data[:n])
@@ -80,6 +77,8 @@ func (f *recordingFetcher) Poll(ctx context.Context, limit int) ([]controlplane.
 }
 
 func TestPollerWritesAtMostQueueCapacity(t *testing.T) {
+	t.Parallel()
+
 	queue := make(chan controlplane.PolledCommand, 2)
 	queueAdapter := &chanQueue{ch: queue}
 	fetcher := &recordingFetcher{
@@ -122,7 +121,7 @@ func TestPollerWritesAtMostQueueCapacity(t *testing.T) {
 		}
 	}
 
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		received = append(received, waitForQueue())
 	}
 
@@ -166,6 +165,8 @@ func TestPollLimitCapsControlPlaneBatchSize(t *testing.T) {
 }
 
 func TestPollerRecordsQueueDropsAndCommandAge(t *testing.T) {
+	t.Parallel()
+
 	queue := &failingQueue{}
 	fetcher := &recordingFetcher{
 		t: t,
@@ -219,6 +220,8 @@ func (u untypedCommand) Channel() types.Channel     { return types.DefaultChanne
 func (u untypedCommand) SessionID() (string, bool)  { return "", false }
 
 func TestPollerRecordsInvalidCommandTypeDrops(t *testing.T) {
+	t.Parallel()
+
 	queueCh := make(chan controlplane.PolledCommand, 2)
 	queue := &chanQueue{ch: queueCh}
 	fetcher := &recordingFetcher{
@@ -271,6 +274,8 @@ func TestPollerRecordsInvalidCommandTypeDrops(t *testing.T) {
 }
 
 func TestBuildBaseDefaultsChannel(t *testing.T) {
+	t.Parallel()
+
 	raw := wiretypes.BaseRawPolledCommand{
 		RequestID:   "req-1",
 		ShardToken:  "shard-1",
@@ -288,6 +293,8 @@ func TestBuildBaseDefaultsChannel(t *testing.T) {
 }
 
 func TestBuildBasePreservesChannel(t *testing.T) {
+	t.Parallel()
+
 	raw := wiretypes.BaseRawPolledCommand{
 		RequestID:   "req-2",
 		ShardToken:  "shard-2",
@@ -306,6 +313,8 @@ func TestBuildBasePreservesChannel(t *testing.T) {
 }
 
 func TestPollerRecordsContextCanceledQueueDrops(t *testing.T) {
+	t.Parallel()
+
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -344,6 +353,8 @@ func TestPollerRecordsContextCanceledQueueDrops(t *testing.T) {
 }
 
 func TestPollerTagsPollErrors(t *testing.T) {
+	t.Parallel()
+
 	queue := &chanQueue{ch: make(chan controlplane.PolledCommand, 1)}
 	fetcher := &erroringFetcher{err: context.DeadlineExceeded, pollCh: make(chan struct{}, 1)}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
@@ -420,7 +431,7 @@ func TestPollerDoesNotDropCommandsWhenFetcherExceedsLimit(t *testing.T) {
 	// Drain slowly to force backpressure on the second/third enqueue while ensuring
 	// all commands are eventually observed.
 	got := make([]string, 0, 3)
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		select {
 		case <-time.After(2 * time.Second):
 			t.Fatalf("timed out waiting for command %d", i+1)
@@ -829,7 +840,7 @@ func (f *timeoutRecordingFetcher) waitForCalls(t *testing.T, want int) {
 	if f.pollCh == nil {
 		t.Fatal("timeoutRecordingFetcher poll channel was nil")
 	}
-	for i := 0; i < want; i++ {
+	for i := range want {
 		select {
 		case <-f.pollCh:
 		case <-time.After(2 * time.Second):
@@ -872,6 +883,8 @@ func (f *sequenceFetcher) Poll(ctx context.Context, limit int) ([]controlplane.P
 }
 
 func TestPollerLogsRecoveryAfterError(t *testing.T) {
+	t.Parallel()
+
 	queue := &chanQueue{ch: make(chan controlplane.PolledCommand, 1)}
 	var output strings.Builder
 	logger := slog.New(slog.NewTextHandler(&output, nil))
@@ -903,6 +916,8 @@ func TestPollerLogsRecoveryAfterError(t *testing.T) {
 }
 
 func TestPollerLogsAPIStatusErrorDetails(t *testing.T) {
+	t.Parallel()
+
 	queue := &chanQueue{ch: make(chan controlplane.PolledCommand, 1)}
 	var output strings.Builder
 	logger := slog.New(slog.NewTextHandler(&output, nil))
@@ -954,6 +969,8 @@ func TestPollerLogsAPIStatusErrorDetails(t *testing.T) {
 }
 
 func TestPollerPollsWithGuardrailedTimeoutAndRetries(t *testing.T) {
+	t.Parallel()
+
 	queue := &chanQueue{ch: make(chan controlplane.PolledCommand, 1)}
 	fetcher := &timeoutRecordingFetcher{pollCh: make(chan struct{}, 8)}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
@@ -1000,6 +1017,8 @@ func TestPollerPollsWithGuardrailedTimeoutAndRetries(t *testing.T) {
 }
 
 func TestPollerRetriesOnCanceledErrorWithoutStop(t *testing.T) {
+	t.Parallel()
+
 	queue := &chanQueue{ch: make(chan controlplane.PolledCommand, 1)}
 	fetcher := &erroringFetcher{err: context.Canceled, pollCh: make(chan struct{}, 4)}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
@@ -1009,39 +1028,49 @@ func TestPollerRetriesOnCanceledErrorWithoutStop(t *testing.T) {
 		_ = meterProvider.Shutdown(context.Background())
 	}()
 
-	poller, err := NewPoller(queue, fetcher, logger, meterProvider.Meter("test"), 25*time.Millisecond, 0, time.Millisecond, 2*time.Millisecond)
+	runner, err := NewPoller(queue, fetcher, logger, meterProvider.Meter("test"), 25*time.Millisecond, 0, time.Millisecond, 2*time.Millisecond)
 	if err != nil {
 		t.Fatalf("new poller: %v", err)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	var wg sync.WaitGroup
-	wg.Go(func() {
-		poller.Run(ctx)
-	})
-
-	fetcher.waitForPoll(t)
-	select {
-	case <-fetcher.pollCh:
-	case <-time.After(50 * time.Millisecond):
-		t.Fatal("poller did not retry after context.Canceled error")
+	// Drive retry waits directly so scheduler delays cannot expire the parent
+	// context before the retry under test. Both canceled fetches must back off
+	// while that parent remains active; only the test ends the loop afterward.
+	retries := 0
+	runner.(*poller).retrySleep = func(retryCtx context.Context, delay time.Duration) bool {
+		if err := retryCtx.Err(); err != nil {
+			t.Fatalf("retry unexpectedly inherited parent cancellation: %v", err)
+		}
+		if delay <= 0 {
+			t.Fatalf("retry backoff must be positive, got %v", delay)
+		}
+		retries++
+		if retries == 2 {
+			cancel()
+			return false
+		}
+		return true
 	}
-
-	cancel()
-	wg.Wait()
+	runner.Run(ctx)
+	if retries != 2 || len(fetcher.pollCh) != 2 {
+		t.Fatalf("expected exactly two canceled polls and backoffs, got %d polls and %d backoffs", len(fetcher.pollCh), retries)
+	}
 
 	var rm metricdata.ResourceMetrics
 	if err := reader.Collect(context.Background(), &rm); err != nil {
 		t.Fatalf("collect metrics: %v", err)
 	}
-	if got, ok := findCounterValueWithAttributes(rm, metricNameCommandsPollErrors, attribute.String(attributeKeyErrorKind, errorKindContextCanceled)); !ok || got == 0 {
+	if got, ok := findCounterValueWithAttributes(rm, metricNameCommandsPollErrors, attribute.String(attributeKeyErrorKind, errorKindContextCanceled)); !ok || got != 2 {
 		t.Fatalf("expected context_canceled poll error metric, got %d (ok=%v)", got, ok)
 	}
 }
 
 func TestPollerStopsWithoutBackoffOnCancel(t *testing.T) {
+	t.Parallel()
+
 	queue := &chanQueue{ch: make(chan controlplane.PolledCommand, 1)}
 	fetcher := &cancelAwareFetcher{pollStarted: make(chan struct{}, 1)}
 	var output strings.Builder

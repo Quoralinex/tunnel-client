@@ -18,7 +18,8 @@ import (
 var Module = fx.Module(
 	"harpoon",
 	fx.Provide(newHarpoonService, newRegistryCounter, newHarpoonGuardedMux, NewHostBusSubscriber, NewHostBus, NewStartupCatalogDigestState),
-	fx.Invoke(registerAdditionalTransport, StartHostRegistration, StartCatalogDigestLogging),
+	fx.Provide(NewHealth, fx.Annotate(HealthComponent, fx.ResultTags(`group:"runtime_health_components"`))),
+	fx.Invoke(AttachHealth, registerAdditionalTransport, StartHostRegistration, StartCatalogDigestLogging),
 )
 
 func newRegistryCounter(registry *Registry) RegistryCounter {
@@ -32,6 +33,7 @@ type harpoonParams struct {
 	Logger        *slog.Logger
 	MeterProvider *sdkmetric.MeterProvider `optional:"true"`
 	Config        *runtimeconfig.HarpoonConfig
+	ControlPlane  *runtimeconfig.ControlPlaneConfig `optional:"true"`
 	Health        *runtimeconfig.HealthConfig
 	HealthSvc     runtimehealth.Service
 	AdminMux      *http.ServeMux `name:"admin_mux"`
@@ -54,6 +56,7 @@ func newHarpoonService(p harpoonParams) (harpoonOutputs, error) {
 		Logger:        p.Logger,
 		MeterProvider: p.MeterProvider,
 		Config:        p.Config,
+		ControlPlane:  p.ControlPlane,
 		Health:        p.Health,
 		HealthSvc:     p.HealthSvc,
 		TLSBundle:     p.TLSBundle,

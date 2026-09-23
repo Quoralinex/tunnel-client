@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"maps"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -24,6 +25,7 @@ import (
 	"github.com/openai/tunnel-client/pkg/app"
 	"github.com/openai/tunnel-client/pkg/config"
 	"github.com/openai/tunnel-client/pkg/controlplane"
+	"github.com/openai/tunnel-client/pkg/dispatcher"
 	"github.com/openai/tunnel-client/pkg/harpoon"
 	"github.com/openai/tunnel-client/pkg/mcpclient"
 	"github.com/openai/tunnel-client/pkg/oauth"
@@ -36,8 +38,6 @@ import (
 
 // Leave room for failure state dumps and cleanup before the outer runner stops the test.
 const testDeadlineReserve = 5 * time.Second
-
-const tunnelIntegrationSocketEnv = "TUNNEL_INTEGRATION_TUNNEL_SERVICE_SOCKET_PATH"
 
 // TestClientInstanceHeader identifies harnessed tunnel-client instances in mock control-plane requests.
 const TestClientInstanceHeader = "X-Test-Tunnel-Client-Instance"
@@ -192,26 +192,30 @@ func WithMCPCommand(commandArgs []string) HarnessOption {
 
 // Harness wires together the mock control plane, mock MCP server, and a running tunnel-client.
 type Harness struct {
-	ControlPlane    *mocktunnelservice.MockTunnelService
-	MCP             *mockmcpserver.MockMCPServer
-	HarpoonRegistry *harpoon.Registry
-	MCPProbeState   *mcpclient.ProbeState
-	OAuthState      *oauth.DiscoveryState
-	cfg             *config.Config
-	app             *fxtest.App
-	clients         []*TunnelClient
-	waitTimeout     time.Duration
-	tunnelStarted   bool
-	mcpStarted      bool
-	inMemoryMCP     *mcp.InMemoryTransport
-	useHarpoon      bool
-	preserveURLs    bool
-	beforeStart     func(*Harness)
-	afterStart      func(*Harness)
-	beforeStop      func(*Harness)
-	commandObserver func(controlplane.PolledCommand)
-	logWriter       io.Writer
-	logBuffer       *lockedBuffer
+	ControlPlane     *mocktunnelservice.MockTunnelService
+	MCP              *mockmcpserver.MockMCPServer
+	HarpoonRegistry  *harpoon.Registry
+	MCPProbeState    *mcpclient.ProbeState
+	OAuthState       *oauth.DiscoveryState
+	PollHealth       *controlplane.PollHealth
+	DeliveryHealth   *controlplane.DeliveryHealth
+	QueueHealth      *controlplane.QueueHealth
+	DispatcherHealth *dispatcher.ActivityHealth
+	cfg              *config.Config
+	app              *fxtest.App
+	clients          []*TunnelClient
+	waitTimeout      time.Duration
+	tunnelStarted    bool
+	mcpStarted       bool
+	inMemoryMCP      *mcp.InMemoryTransport
+	useHarpoon       bool
+	preserveURLs     bool
+	beforeStart      func(*Harness)
+	afterStart       func(*Harness)
+	beforeStop       func(*Harness)
+	commandObserver  func(controlplane.PolledCommand)
+	logWriter        io.Writer
+	logBuffer        *lockedBuffer
 }
 
 type lockedBuffer struct {
@@ -301,10 +305,10 @@ func NewHarness(t testing.TB, opts ...HarnessOption) *Harness {
 		mocktunnelservice.WithAPIKey(cfg.apiKey),
 		mocktunnelservice.WithTunnelID(string(cfg.tunnelID)),
 	)
+	controlPlaneSocketPath := ""
 	if cfg.useUnixControlPlane {
-		socketPath := newUnixSocketPath(t, "control-plane.sock")
-		t.Setenv(tunnelIntegrationSocketEnv, socketPath)
-		controlPlaneOpts = append(controlPlaneOpts, mocktunnelservice.WithUnixSocketPath(socketPath))
+		controlPlaneSocketPath = newUnixSocketPath(t, "control-plane.sock")
+		controlPlaneOpts = append(controlPlaneOpts, mocktunnelservice.WithUnixSocketPath(controlPlaneSocketPath))
 	}
 	controlPlaneOpts = append(controlPlaneOpts, cfg.controlPlaneOptions...)
 	controlPlane := mocktunnelservice.NewMockTunnelService(controlPlaneOpts...)
@@ -320,6 +324,7 @@ func NewHarness(t testing.TB, opts ...HarnessOption) *Harness {
 	clientCfg := &config.Config{
 		ControlPlane: config.ControlPlaneConfig{
 			BaseURL:             nil,
+			UnixSocketPath:      controlPlaneSocketPath,
 			TunnelID:            cfg.tunnelID,
 			APIKey:              cfg.apiKey,
 			MaxInFlightRequests: 10,
@@ -623,14 +628,18 @@ func (h *Harness) startTunnelClient(t testing.TB) *TunnelClient {
 	}
 	poller := newPollerControl()
 	var (
-		harpoonRegistry *harpoon.Registry
-		mcpProbeState   *mcpclient.ProbeState
-		oauthState      *oauth.DiscoveryState
+		harpoonRegistry  *harpoon.Registry
+		mcpProbeState    *mcpclient.ProbeState
+		oauthState       *oauth.DiscoveryState
+		pollHealth       *controlplane.PollHealth
+		deliveryHealth   *controlplane.DeliveryHealth
+		queueHealth      *controlplane.QueueHealth
+		dispatcherHealth *dispatcher.ActivityHealth
 	)
 	options := []fx.Option{
 		fx.Provide(func() io.Writer { return logWriter }),
 		fx.WithLogger(func(*slog.Logger) fxevent.Logger { return fxevent.NopLogger }),
-		fx.Populate(&harpoonRegistry, &mcpProbeState, &oauthState),
+		fx.Populate(&harpoonRegistry, &mcpProbeState, &oauthState, &pollHealth, &deliveryHealth, &queueHealth, &dispatcherHealth),
 		fx.Decorate(func(fetcher controlplane.Fetcher) controlplane.Fetcher {
 			return poller.wrap(fetcher, h.commandObserver)
 		}),
@@ -659,6 +668,10 @@ func (h *Harness) startTunnelClient(t testing.TB) *TunnelClient {
 		h.HarpoonRegistry = harpoonRegistry
 		h.MCPProbeState = mcpProbeState
 		h.OAuthState = oauthState
+		h.PollHealth = pollHealth
+		h.DeliveryHealth = deliveryHealth
+		h.QueueHealth = queueHealth
+		h.DispatcherHealth = dispatcherHealth
 	}
 	return client
 }
@@ -854,28 +867,13 @@ func (h *Harness) cloneConfig() *config.Config {
 	}
 	clone := *h.cfg
 	clone.ControlPlane = h.cfg.ControlPlane
-	if h.cfg.ControlPlane.ExtraHeaders != nil {
-		clone.ControlPlane.ExtraHeaders = make(map[string]string, len(h.cfg.ControlPlane.ExtraHeaders))
-		for k, v := range h.cfg.ControlPlane.ExtraHeaders {
-			clone.ControlPlane.ExtraHeaders[k] = v
-		}
-	}
+	clone.ControlPlane.ExtraHeaders = maps.Clone(h.cfg.ControlPlane.ExtraHeaders)
 	clone.Logging = h.cfg.Logging
 	clone.Health = h.cfg.Health
 	clone.Process = h.cfg.Process
 	clone.MCP = h.cfg.MCP
-	if h.cfg.MCP.ExtraHeaders != nil {
-		clone.MCP.ExtraHeaders = make(map[string]string, len(h.cfg.MCP.ExtraHeaders))
-		for k, v := range h.cfg.MCP.ExtraHeaders {
-			clone.MCP.ExtraHeaders[k] = v
-		}
-	}
-	if h.cfg.MCP.DiscoveryExtraHeaders != nil {
-		clone.MCP.DiscoveryExtraHeaders = make(map[string]string, len(h.cfg.MCP.DiscoveryExtraHeaders))
-		for k, v := range h.cfg.MCP.DiscoveryExtraHeaders {
-			clone.MCP.DiscoveryExtraHeaders[k] = v
-		}
-	}
+	clone.MCP.ExtraHeaders = maps.Clone(h.cfg.MCP.ExtraHeaders)
+	clone.MCP.DiscoveryExtraHeaders = maps.Clone(h.cfg.MCP.DiscoveryExtraHeaders)
 	clone.AdminUI = h.cfg.AdminUI
 	clone.Harpoon = h.cfg.Harpoon
 	clone.TLS = h.cfg.TLS

@@ -37,6 +37,7 @@ const (
 var Module = fx.Module(
 	"cloudflared",
 	fx.Provide(NewState, NewSupervisor),
+	fx.Provide(fx.Annotate(componentHealth, fx.ResultTags(`group:"runtime_health_components"`))),
 	fx.Invoke(registerLifecycle),
 )
 
@@ -145,7 +146,7 @@ func (s *Supervisor) Start(ctx context.Context) error {
 
 	cmd := s.newCommand(path, "tunnel", "--no-autoupdate", "--metrics", metricsAddr, "run")
 	configureChildProcess(cmd)
-	cmd.Env = cloudflaredEnvironment(os.Environ(), token)
+	cmd.Env = cloudflaredEnvironment(cmd.Environ(), token)
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return fmt.Errorf("cloudflared: stdout pipe: %w", err)

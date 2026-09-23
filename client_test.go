@@ -24,6 +24,7 @@ const (
 )
 
 func TestNewValidatesRequiredInputs(t *testing.T) {
+	t.Parallel()
 	_, clientTransport := mcp.NewInMemoryTransports()
 
 	for _, tc := range []struct {
@@ -130,6 +131,7 @@ func TestNewValidatesRequiredInputs(t *testing.T) {
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			_, err := tunnelclient.New(tc.cfg, tc.transport)
 			require.Error(t, err)
 			require.ErrorContains(t, err, tc.wantErr)
@@ -138,6 +140,7 @@ func TestNewValidatesRequiredInputs(t *testing.T) {
 }
 
 func TestClientForwardsMCPToolCallsOverInMemoryTransport(t *testing.T) {
+	t.Parallel()
 	const (
 		toolRequestID = "sdk-tool-request"
 		callID        = "sdk-tool-call"

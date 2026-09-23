@@ -52,11 +52,13 @@ func TestApplyUnixSocketPathDialsUnixListener(t *testing.T) {
 	listener, err := net.Listen("unix", socketPath)
 	require.NoError(t, err)
 
-	server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		require.Equal(t, "/healthz", r.URL.Path)
-		w.WriteHeader(http.StatusNoContent)
-	}))
-	server.Listener = listener
+	server := &httptest.Server{
+		Listener: listener,
+		Config: &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			require.Equal(t, "/healthz", r.URL.Path)
+			w.WriteHeader(http.StatusNoContent)
+		})},
+	}
 	server.Start()
 	t.Cleanup(server.Close)
 
@@ -64,6 +66,7 @@ func TestApplyUnixSocketPathDialsUnixListener(t *testing.T) {
 	require.NoError(t, err)
 
 	client := &http.Client{Transport: roundTripper}
+	t.Cleanup(client.CloseIdleConnections)
 	response, err := client.Get("http://localhost/healthz")
 	require.NoError(t, err)
 	defer func() {

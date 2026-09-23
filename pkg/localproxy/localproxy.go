@@ -26,6 +26,7 @@ import (
 	"github.com/openai/tunnel-client/pkg/controlplane/wiretypes"
 	"github.com/openai/tunnel-client/pkg/health"
 	"github.com/openai/tunnel-client/pkg/mcpclient"
+	"github.com/openai/tunnel-client/pkg/runtimeconfig"
 	"github.com/openai/tunnel-client/pkg/types"
 )
 
@@ -1413,10 +1414,15 @@ func appendMCPResponseHeaders(headers http.Header, responseHeaders http.Header, 
 			continue
 		}
 		for _, value := range values {
+			if !runtimeconfig.ValidHTTPHeader(name, value) {
+				continue
+			}
 			if strings.EqualFold(name, "WWW-Authenticate") {
 				value = rewriteResourceMetadata(value, publicMCPURL)
 			}
-			headers.Add(name, value)
+			if runtimeconfig.ValidHTTPHeader(name, value) {
+				headers.Add(name, value)
+			}
 		}
 	}
 }
@@ -1428,7 +1434,9 @@ func renderOAuthDiscoveryResponse(w http.ResponseWriter, payload wiretypes.Tunne
 			continue
 		}
 		for _, value := range values {
-			w.Header().Add(name, value)
+			if runtimeconfig.ValidHTTPHeader(name, value) {
+				w.Header().Add(name, value)
+			}
 		}
 	}
 	statusCode := payload.ResponseCode
@@ -1501,7 +1509,7 @@ func rewriteResourceMetadata(value string, publicMCPURL string) string {
 
 func acceptsEventStream(headers http.Header) bool {
 	for _, value := range headers.Values("Accept") {
-		for _, mediaType := range strings.Split(value, ",") {
+		for mediaType := range strings.SplitSeq(value, ",") {
 			if strings.EqualFold(strings.TrimSpace(strings.SplitN(mediaType, ";", 2)[0]), "text/event-stream") {
 				return true
 			}
@@ -1540,8 +1548,8 @@ func extractTunnelPath(path string) (string, string, bool) {
 		return "", "", false
 	}
 	for _, suffix := range []string{"/poll", "/response"} {
-		if strings.HasSuffix(rest, suffix) {
-			return strings.TrimSuffix(rest, suffix), suffix, true
+		if tunnelID, ok := strings.CutSuffix(rest, suffix); ok {
+			return tunnelID, suffix, true
 		}
 	}
 	return rest, "", !strings.Contains(rest, "/")
@@ -1602,7 +1610,7 @@ func sanitizeForwardableRequestHeaders(headers http.Header) http.Header {
 			continue
 		}
 		for _, value := range values {
-			if value != "" {
+			if value != "" && runtimeconfig.ValidHTTPHeader(name, value) {
 				out.Add(name, value)
 			}
 		}
@@ -1620,7 +1628,7 @@ func parseConnectionOptions(headers http.Header) map[string]struct{} {
 			continue
 		}
 		for _, value := range values {
-			for _, option := range strings.Split(value, ",") {
+			for option := range strings.SplitSeq(value, ",") {
 				normalizedOption := strings.ToLower(strings.TrimSpace(option))
 				if normalizedOption != "" {
 					connectionOptions[normalizedOption] = struct{}{}

@@ -33,10 +33,38 @@ then read the onboarding guide below.
   [`docs/troubleshooting.md`](docs/troubleshooting.md).
 - **Building a compatible client in another language?** Read
   [`docs/protocol.md`](docs/protocol.md) and use
-  [`docs/openapi.json`](docs/openapi.json).
+  [`docs/openapi.json`](docs/openapi.json). Optional client features use the
+  common [`X-Tunnel-Client-Capabilities` header](docs/protocol.md#tunnel-client-capabilities).
+- **Upgrading for server-directed polling placement?** Read the
+  [routing correction and activation notes](docs/routing-correction.md).
+  Supporting clients work with existing services immediately; corrections are
+  enabled separately after client release. No configuration change is needed.
 - **Embedding an MCP server directly in a Go process?** Use the Go SDK with
   the MCP SDK's in-memory transport; see
   [`examples/go-sdk-inmemory`](examples/go-sdk-inmemory).
+
+## Try the embedded demo
+
+With a runtime API key and tunnel ID, run the built-in `server_info`, `echo`,
+and `uppercase` tools without a separate MCP server:
+
+```bash
+export CONTROL_PLANE_API_KEY="sk-..."
+export CONTROL_PLANE_TUNNEL_ID="tunnel_0123456789abcdef0123456789abcdef"
+tunnel-client run --embedded-stateless-mcp-stub --health.listen-addr 127.0.0.1:0
+```
+
+`--embedded-stateless-mcp-stub` uses stateless MCP handling even when a client
+sends `initialize` and `notifications/initialized`. It issues no MCP session
+ID, and these demo tools do not require MCP session affinity between processes.
+OAuth and application state have separate requirements.
+
+`--embedded-mcp-stub` keeps its existing compatibility behavior: legacy
+initialization and session requests use stateful handling; self-contained
+modern discovery and tool requests use stateless handling. Choose one embedded
+mode per run. Both share the embedded listen-address, Unix-socket, server-name, and
+server-version options; see [embedded demo configuration](docs/configuration.md#embedded-demo-mcp-modes)
+for defaults and target conflicts.
 
 ## Embed as a Go SDK
 
@@ -193,6 +221,21 @@ tunnel-client run --profile local-stdio
 tunnel-client run --profile-file ./profiles/local-stdio.yaml
 ```
 
+**Stdio deployment limit:** run only one active `tunnel-client` instance per
+tunnel ID when using `--mcp.command` / `MCP_COMMAND`. Multiple active instances
+sharing that tunnel ID are **not supported**, including overlap during a
+restart. Each instance launches a separate MCP child, and initialization and
+later requests can reach different children. Stop the old instance before
+starting its replacement, or use distinct tunnel IDs for independent instances.
+See [stdio deployment limits](docs/configuration.md#stdio-deployment-limits).
+
+Stdio initialization is checked automatically. Legacy calls require a successful
+`initialize` exchange followed by `notifications/initialized`; premature calls
+return `mcp_initialization_required` immediately. Self-contained MCP requests
+using protocol version `2026-07-28` or later pass through without a handshake.
+The caller owns initialization, including after child replacement. See
+[configuration](docs/configuration.md#mcp-server) for lifecycle behavior.
+
 If you need the tunnel id or runtime/admin keys first, open the matching URL
 above before running `init`. If your rollout has self-serve tunnel access,
 create the tunnel yourself in Tunnels management or with
@@ -213,6 +256,21 @@ Validate a source checkout with native Go tooling:
 go build ./...
 go test ./...
 ```
+
+Independent tests, subtests, and fuzz seed cases use `t.Parallel()`. Give each
+case its own mutable fixtures, and use `t.Cleanup` for resources shared by
+parallel children. Keep dependent state transitions in one test. Keep tests
+that mutate process-wide globals, environment variables, signals, or stdio
+serial.
+
+Check concurrent execution with the race detector and shuffled test order:
+
+```bash
+go test -race -shuffle=on -count=3 ./...
+```
+
+The E2E and mock-server packages default to two concurrent tests to bound
+resource use. An explicit `-parallel=N` overrides that default.
 
 ## SBOMs
 
@@ -591,11 +649,22 @@ Starter prompts for Codex:
   is reachable.
 - For OAuth auth-server handling, `authorization_servers[0]` from PRMD is the
   only source of truth and metadata fetch target.
+- OAuth discovery trusts the configured MCP origin by default. Before upgrading
+  deployments with separate metadata or authorization hosts, explicitly list
+  those origins with `--mcp.oauth-trusted-origin`, `MCP_OAUTH_TRUSTED_ORIGINS`, or
+  `mcp.oauth_trusted_origins`. See the [configuration reference](docs/configuration.md#mcp-server)
+  for trust boundaries and staged upgrade guidance. Full-client profile editing
+  also requires a [supported editor command](docs/profile-editor.md).
 - Metadata is accepted even when `issuer` differs from
   `authorization_servers[0]` (external IdP issuer URLs are supported), with
   mismatch diagnostics preserved in logs/state.
 - It exposes an **admin/health server** (`/healthz`, `/readyz`, `/metrics`) and
   a lightweight **admin UI** (`/ui`) for operational status.
+- Local `GET /health?details=true` and `GET /health/mcp` expose bounded
+  observations of MCP discovery, polling, response delivery, queues, and active
+  work. Plain `/health` stays compact unless `--health.show-details=true` is
+  set (default false). See the [health reference](docs/health.md) for examples,
+  Unix sockets, and the difference between readiness and observed discovery.
 - The admin UI Overview reports the process-scoped `client_instance_id`,
   channel availability, and reasons when channels are disabled.
 - The admin UI Logs tab can switch the live runtime log level between `debug`,
@@ -606,6 +675,27 @@ Starter prompts for Codex:
   config, and effective config.
 - It embeds the **Harpoon MCP server** to provide a labeled, allowlisted
   outbound HTTP client for internal tooling.
+
+### Harpoon target templates
+
+Opt-in Harpoon templates let callers provide bounded identifiers for an
+operator-configured HTTPS GET, POST, or PUT operation, such as `/cases/{case_id}` or
+`/profiles?session-id={session_id}`. The client fixes the destination, method,
+query names, and authentication headers, validates each identifier, and never
+follows redirects. POST/PUT require an explicit body policy for content types,
+byte limits, required or optional bodies, and validation. GET remains bodyless;
+DELETE is unsupported. Existing exact-URL targets continue to work.
+
+Templates use YAML `config_version: 2` and `template.version: 1`, and execute
+through the shared `call_target` MCP tool without a caller-supplied method.
+Exact targets keep their required method argument. `list_targets` publishes
+each template's complete invocation schema, public parameter descriptions, and
+validated examples when available. Writes require the advertised `operation`
+constant and never automatically replay after an ambiguous failure. Upgrade all
+eligible clients before enabling writes or adding parameter metadata. See the
+[target template guide](docs/harpoon-target-templates.md) for complete
+configuration, discovery and invocation examples, authorization requirements,
+limits, and upgrade behavior.
 
 ## Admin UI build notes
 
@@ -649,13 +739,18 @@ make admin-ui
 - `tunnel-client profiles samples list|show` exposes built-in sample profiles.
 - `sample_mcp_enterprise_proxy` is the built-in starter for outbound proxies
   and private PKI, with env-backed proxy and CA bundle references.
-- Control-plane polls routed through an HTTP proxy start at the configured
-  `--control-plane.poll-timeout` / `CONTROL_PLANE_POLL_TIMEOUT`. If a proxied
-  poll loses its connection before response headers with an EOF-style error while
-  neither deadline has fired, tunnel-client automatically learns a shorter
+- The first control-plane poll attempt requests the shorter of
+  `--control-plane.initial-poll-timeout` (default `30s`) and the configured
+  wait, while retaining its normal client deadline. Both wait settings default
+  to `30s`. A lower initial-poll timeout can shorten the first requested wait.
+  Subsequent polls use `--control-plane.poll-timeout` /
+  `CONTROL_PLANE_POLL_TIMEOUT`, including after an initial failure.
+  If an HTTP-proxied poll loses its connection
+  before response headers with an EOF-style error while neither deadline has
+  fired, tunnel-client automatically learns a shorter
   process-local timeout for future polls. The learned timeout only decreases,
   never below 5 seconds, while the configured poll timeout remains its ceiling.
-  Direct routes and Unix sockets keep the configured timeout.
+  Subsequent direct and Unix-socket polls keep the configured timeout.
 - `tunnel-client admin-profiles list|set|delete` manages saved admin-key
   profiles for native runtime workflows.
 - `tunnel-client runtimes create|connect|list|status|stop|rm` manages native

@@ -2,10 +2,12 @@ package mcpclient
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
 	"sync"
+	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/jsonrpc"
 )
@@ -60,6 +62,33 @@ func NewStdioForwardingTransport(base ForwardingTransport) ForwardingTransport {
 	return newSerializedForwardingTransport(base, true, true, true)
 }
 
+// StdioForwardingOptions selects the optional notification shim for a shared child.
+type StdioForwardingOptions struct {
+	SendInitializedNotification bool
+}
+
+// NewStdioForwardingTransportWithOptions preserves stdio deadline retirement and
+// automatically enforces the request's lifecycle: legacy calls require the
+// caller-owned handshake, while self-contained requests pass through unchanged.
+// It never sends initialize. The initialized-notification shim defaults to false.
+func NewStdioForwardingTransportWithOptions(base ForwardingTransport, options StdioForwardingOptions) ForwardingTransport {
+	transport := newSerializedForwardingTransport(base, true, options.SendInitializedNotification, true)
+	if transport != nil {
+		transport.(*serializedForwardingTransport).requireInitialization = true
+	}
+	return transport
+}
+
+// ObserveStdioForwardingTransport attaches a passive observer while assembling
+// the runtime. It preserves the selected stdio compatibility behavior and adds
+// no connections or protocol messages. Call it before using the transport.
+func ObserveStdioForwardingTransport(transport ForwardingTransport, observation *ProtocolObservation) ForwardingTransport {
+	if stdio, ok := transport.(*serializedForwardingTransport); ok && stdio.aliasRetiredIDs {
+		stdio.observation = observation
+	}
+	return transport
+}
+
 func newSerializedForwardingTransport(base ForwardingTransport, retireOnDeadline, ensureInitialized, aliasRetiredResponseIDs bool) ForwardingTransport {
 	if base == nil {
 		return nil
@@ -86,6 +115,7 @@ type serializedForwardingTransport struct {
 	// rejecting reused IDs because their opaque preserved-error payloads cannot
 	// safely restore a private downstream alias.
 	aliasRetiredIDs bool
+	observation     *ProtocolObservation
 
 	retiredMu          sync.Mutex
 	retiredResponseIDs map[jsonrpc.ID]struct{}
@@ -93,6 +123,11 @@ type serializedForwardingTransport struct {
 
 	initializedMu           sync.Mutex
 	initializedNotification bool
+	// Guard state belongs to this physical child, independently of the optional
+	// shim's duplicate-notification suppression and individual request deadlines.
+	requireInitialization bool
+	initializeSucceeded   bool
+	initializationReady   bool
 }
 
 const maxRetiredResponseIDs = 1024
@@ -110,6 +145,7 @@ func (t *serializedForwardingTransport) Connect(
 
 	conn, err := t.base.Connect(ctx)
 	if err != nil {
+		t.resetInitialization()
 		if conn != nil {
 			_ = conn.Close()
 		}
@@ -118,17 +154,19 @@ func (t *serializedForwardingTransport) Connect(
 	}
 	if err := ctx.Err(); err != nil {
 		if conn != nil && (!t.retireOnDeadline || !hasResponseDeadlineEnforcement(ctx)) {
+			t.resetInitialization()
 			_ = conn.Close()
 		}
 		t.releaseLifecycle()
 		return nil, err
 	}
 	return &serializedForwardingConnection{
-		acquireLifecycle: t.acquireLifecycle,
-		base:             conn,
-		releaseLifecycle: t.releaseLifecycle,
-		transport:        t,
-		lockHeld:         true,
+		acquireLifecycle:      t.acquireLifecycle,
+		base:                  conn,
+		releaseLifecycle:      t.releaseLifecycle,
+		transport:             t,
+		lockHeld:              true,
+		observationGeneration: t.observation.generation(),
 	}, nil
 }
 
@@ -246,16 +284,21 @@ type serializedForwardingConnection struct {
 	acquireLifecycle func(context.Context) error
 	releaseLifecycle func()
 
-	stateMu           sync.Mutex
-	lockHeld          bool
-	writeStarted      bool
-	writeCompleted    bool
-	awaitingResponse  bool
-	callerID          jsonrpc.ID
-	expectedID        jsonrpc.ID
-	requestMethod     string
-	deadlineRetirable bool
-	retired           bool
+	stateMu               sync.Mutex
+	lockHeld              bool
+	writeStarted          bool
+	writeCompleted        bool
+	awaitingResponse      bool
+	callerID              jsonrpc.ID
+	expectedID            jsonrpc.ID
+	requestMethod         string
+	selfContainedRequest  bool
+	deadlineRetirable     bool
+	retired               bool
+	observationGeneration string
+	observationToken      protocolObservationToken
+	observationWriteDone  chan struct{}
+	observationWriteReady bool
 }
 
 func (c *serializedForwardingConnection) Write(
@@ -273,7 +316,40 @@ func (c *serializedForwardingConnection) Write(
 	if err != nil {
 		return ForwardingWriteResult{}, err
 	}
-	if method == "initialize" && c.transport != nil {
+	if c.transport != nil && c.transport.requireInitialization {
+		if err := ctx.Err(); err != nil {
+			// A canceled command that never reached the child cannot restart its
+			// handshake. Leave deadline retirement to the processor as usual.
+			c.completeObservedWrite(msg, false, false)
+			if !c.shouldAwaitDeadlineRetirement(ctx, err) {
+				c.release()
+			}
+			return ForwardingWriteResult{}, err
+		}
+	}
+	selfContained := c.transport != nil && c.transport.requireInitialization && isSelfContainedMCPRequest(msg)
+	c.stateMu.Lock()
+	c.selfContainedRequest = selfContained
+	c.stateMu.Unlock()
+	if c.transport.rejectBeforeInitialization(msg, selfContained) {
+		// No bytes reached the child, so there is no response to read or retire.
+		// Preserve the pipes even if the command deadline races this local reply.
+		c.markDeadlineRetirableWithoutResponse(true)
+		c.release()
+		payload, err := json.Marshal(map[string]any{
+			"jsonrpc": "2.0", "id": callerID.Raw(),
+			"error": map[string]any{
+				"code":    -32002,
+				"message": "MCP server is not initialized; send initialize and notifications/initialized before operational requests",
+				"data":    map[string]string{"origin": "tunnel-client", "error_type": "mcp_initialization_required"},
+			},
+		})
+		if err != nil {
+			return ForwardingWriteResult{}, fmt.Errorf("encode MCP initialization error: %w", err)
+		}
+		return ForwardingWriteResult{StatusCode: http.StatusConflict, PreservedError: NewPreservedMCPError(payload, -32002)}, nil
+	}
+	if method == "initialize" && c.transport != nil && !c.transport.requireInitialization {
 		c.transport.resetInitializedNotification()
 	}
 	if c.shouldSuppressInitializedNotification(msg) {
@@ -284,10 +360,23 @@ func (c *serializedForwardingConnection) Write(
 	}
 
 	result, err := c.base.Write(ctx, header, requestWithResponseID(msg, callerID, expectedID))
-	c.markWriteCompleted(err == nil)
+	accepted := err == nil && result.PreservedError == nil && (result.StatusCode == 0 || result.StatusCode >= http.StatusOK && result.StatusCode < http.StatusMultipleChoices)
+	if accepted && c.transport != nil && c.transport.requireInitialization && !selfContained {
+		if method == "initialize" {
+			// Publish the new handshake before a concurrent reader can observe
+			// its response, but preserve readiness if cancellation prevented writing.
+			c.transport.resetInitializedNotification()
+			c.transport.resetInitialization()
+		} else if !expectResponse && method == initializedNotificationMethod {
+			c.transport.markInitializationReady()
+		}
+	}
+	c.completeObservedWrite(msg, err == nil, result.PreservedError == nil && result.StatusCode < http.StatusBadRequest)
 	awaitDeadlineRetirement := err != nil && c.shouldAwaitDeadlineRetirement(ctx, err)
 	if c.transport != nil && !awaitDeadlineRetirement && (err != nil || result.PreservedError != nil || result.StatusCode >= http.StatusBadRequest) {
 		c.transport.resetInitializedNotification()
+		c.transport.resetInitialization()
+		c.transport.observation.childClosed(c.observationGeneration, "stdio_write_failed")
 	}
 	if awaitDeadlineRetirement {
 		// The processor decides whether this context error is specifically the
@@ -315,14 +404,26 @@ func (c *serializedForwardingConnection) Read(ctx context.Context) (jsonrpc.Mess
 				// slot held until it retires or closes this logical connection.
 				return msg, err
 			}
+			if c.transport != nil && err != nil {
+				c.transport.resetInitialization()
+				c.transport.observation.childClosed(c.observationGeneration, "stdio_read_failed")
+			}
 			c.release()
 			return msg, err
 		}
 		if c.transport != nil && c.transport.shouldDropRetiredMessage(msg) {
 			continue
 		}
+		if c.awaitObservedWrite(ctx) {
+			c.observeRead(msg)
+			if c.successfulInitializeResponse(msg) {
+				c.transport.markInitializeSucceeded()
+			}
+		}
 		if c.shouldEnsureInitializedNotification(msg) {
 			if err := c.writeInitializedNotification(ctx); err != nil {
+				c.transport.resetInitialization()
+				c.transport.observation.childClosed(c.observationGeneration, "stdio_write_failed")
 				c.release()
 				return nil, err
 			}
@@ -332,6 +433,79 @@ func (c *serializedForwardingConnection) Read(ctx context.Context) (jsonrpc.Mess
 			c.release()
 		}
 		return callerMsg, nil
+	}
+}
+
+// Physical reads and writes can overlap. Keep the lifecycle slot until the
+// successful write and its observation token become visible together, without
+// holding stateMu across transport I/O or waiting in a health snapshot.
+func (c *serializedForwardingConnection) awaitObservedWrite(ctx context.Context) bool {
+	c.stateMu.Lock()
+	done := c.observationWriteDone
+	c.stateMu.Unlock()
+	if done == nil {
+		return true
+	}
+	// A response can arrive just as its command deadline expires. An already
+	// completed write still owns that response and must update handshake state.
+	select {
+	case <-done:
+		return true
+	default:
+	}
+	select {
+	case <-done:
+		return true
+	case <-ctx.Done():
+		select {
+		case <-done:
+			return true
+		default:
+			return false
+		}
+	}
+}
+
+func (c *serializedForwardingConnection) completeObservedWrite(msg jsonrpc.Message, completed, accepted bool) {
+	c.stateMu.Lock()
+	defer c.stateMu.Unlock()
+	if !c.lockHeld || !c.writeStarted {
+		return
+	}
+	if completed && accepted && c.transport != nil {
+		if request, ok := msg.(*jsonrpc.Request); ok {
+			c.observationToken = c.transport.observation.requestWritten(c.observationGeneration, request)
+		}
+	}
+	c.writeCompleted = completed
+	c.signalObservedWriteLocked()
+}
+
+func (c *serializedForwardingConnection) signalObservedWriteLocked() {
+	if c.observationWriteDone != nil && !c.observationWriteReady {
+		close(c.observationWriteDone)
+		c.observationWriteReady = true
+	}
+}
+
+func (c *serializedForwardingConnection) observeRead(msg jsonrpc.Message) {
+	if c.transport == nil || c.transport.observation == nil {
+		return
+	}
+	if request, ok := msg.(*jsonrpc.Request); ok && request != nil && !request.ID.IsValid() && request.Method == "notifications/tools/list_changed" {
+		c.transport.observation.listChanged(c.observationGeneration)
+		return
+	}
+	response, ok := msg.(*jsonrpc.Response)
+	if !ok || response == nil {
+		return
+	}
+	c.stateMu.Lock()
+	matched := c.lockHeld && c.awaitingResponse && c.writeCompleted && response.ID.IsValid() && response.ID == c.expectedID
+	token := c.observationToken
+	c.stateMu.Unlock()
+	if matched {
+		c.transport.observation.response(token, response)
 	}
 }
 
@@ -373,6 +547,9 @@ func (c *serializedForwardingConnection) shouldSuppressInitializedNotification(m
 	if c == nil || c.transport == nil || !c.transport.ensureInitialized || !c.transport.initializedNotificationSent() {
 		return false
 	}
+	if c.transport.requireInitialization && isSelfContainedMCPRequest(msg) {
+		return false
+	}
 	request, ok := msg.(*jsonrpc.Request)
 	return ok && request != nil && !request.ID.IsValid() && request.Method == initializedNotificationMethod
 }
@@ -388,7 +565,7 @@ func (c *serializedForwardingConnection) shouldEnsureInitializedNotification(msg
 
 	c.stateMu.Lock()
 	defer c.stateMu.Unlock()
-	return c.lockHeld && c.awaitingResponse && c.requestMethod == "initialize" && c.expectedID.IsValid() && response.ID == c.expectedID
+	return c.lockHeld && c.awaitingResponse && (!c.transport.requireInitialization || !c.selfContainedRequest) && c.requestMethod == "initialize" && c.expectedID.IsValid() && response.ID == c.expectedID
 }
 
 func (c *serializedForwardingConnection) writeInitializedNotification(ctx context.Context) error {
@@ -408,7 +585,88 @@ func (c *serializedForwardingConnection) writeInitializedNotification(ctx contex
 		return fmt.Errorf("send MCP initialized notification after initialize: downstream returned status %d", result.StatusCode)
 	}
 	c.transport.markInitializedNotificationSent()
+	c.transport.markInitializationReady()
 	return nil
+}
+
+// Detect the self-contained protocol without interpreting tool parameters or
+// negotiating a session. The server still validates supported versions and
+// capability contents. Requests in this protocol never initialize a legacy child.
+func isSelfContainedMCPRequest(msg jsonrpc.Message) bool {
+	request, ok := msg.(*jsonrpc.Request)
+	if !ok || request == nil {
+		return false
+	}
+	var params struct {
+		Meta map[string]json.RawMessage `json:"_meta"`
+	}
+	if json.Unmarshal(request.Params, &params) != nil {
+		return false
+	}
+	var version string
+	if json.Unmarshal(params.Meta["io.modelcontextprotocol/protocolVersion"], &version) != nil {
+		return false
+	}
+	if _, err := time.Parse(time.DateOnly, version); err != nil || version < "2026-07-28" {
+		return false
+	}
+	var capabilities map[string]json.RawMessage
+	return json.Unmarshal(params.Meta["io.modelcontextprotocol/clientCapabilities"], &capabilities) == nil && capabilities != nil
+}
+
+func (t *serializedForwardingTransport) rejectBeforeInitialization(msg jsonrpc.Message, selfContained bool) bool {
+	if t == nil || !t.requireInitialization || selfContained {
+		return false
+	}
+	request, ok := msg.(*jsonrpc.Request)
+	if !ok || request == nil || !request.ID.IsValid() {
+		return false
+	}
+	switch request.Method {
+	case "initialize", "ping", "server/discover":
+		return false
+	}
+	t.initializedMu.Lock()
+	defer t.initializedMu.Unlock()
+	return !t.initializationReady
+}
+
+func (c *serializedForwardingConnection) successfulInitializeResponse(msg jsonrpc.Message) bool {
+	if c.transport == nil || !c.transport.requireInitialization {
+		return false
+	}
+	response, ok := msg.(*jsonrpc.Response)
+	if !ok || response == nil || response.Error != nil || !response.ID.IsValid() {
+		return false
+	}
+	c.stateMu.Lock()
+	defer c.stateMu.Unlock()
+	return c.lockHeld && c.awaitingResponse && c.writeCompleted && !c.selfContainedRequest && c.requestMethod == "initialize" && response.ID == c.expectedID
+}
+
+func (t *serializedForwardingTransport) markInitializeSucceeded() {
+	t.initializedMu.Lock()
+	t.initializeSucceeded = true
+	t.initializedMu.Unlock()
+}
+
+func (t *serializedForwardingTransport) markInitializationReady() {
+	if t == nil || !t.requireInitialization {
+		return
+	}
+	t.initializedMu.Lock()
+	t.initializationReady = t.initializeSucceeded
+	t.initializedMu.Unlock()
+}
+
+func (t *serializedForwardingTransport) resetInitialization() {
+	if t == nil || !t.requireInitialization {
+		return
+	}
+	t.initializedMu.Lock()
+	t.initializeSucceeded = false
+	t.initializationReady = false
+	t.initializedMu.Unlock()
 }
 
 func (t *serializedForwardingTransport) initializedNotificationSent() bool {
@@ -448,6 +706,8 @@ func (c *serializedForwardingConnection) Close() error {
 	}
 	if c.transport != nil {
 		c.transport.resetInitializedNotification()
+		c.transport.resetInitialization()
+		c.transport.observation.childClosed(c.observationGeneration, "stdio_connection_closed")
 	}
 	defer c.release()
 	return c.base.Close()
@@ -476,6 +736,12 @@ func (c *serializedForwardingConnection) RetireResponseDeadline() bool {
 	if shouldTrack && !c.transport.retireResponseID(expectedID) {
 		c.cancelDeadlineRetirement()
 		return false
+	}
+	c.stateMu.Lock()
+	token := c.observationToken
+	c.stateMu.Unlock()
+	if token.method == "tools/list" && c.transport.observation != nil {
+		c.transport.observation.failed(token, "discovery_response_deadline", false)
 	}
 	c.releaseRetired()
 	return true
@@ -516,6 +782,10 @@ func (c *serializedForwardingConnection) acquire(ctx context.Context, expectResp
 	c.requestMethod = method
 	c.deadlineRetirable = false
 	c.retired = false
+	if c.transport != nil && (c.transport.observation != nil || c.transport.requireInitialization) {
+		c.observationWriteDone = make(chan struct{})
+		c.observationWriteReady = false
+	}
 	c.stateMu.Unlock()
 	return expectedID, nil
 }
@@ -649,6 +919,7 @@ func (c *serializedForwardingConnection) beginDeadlineRetirement() (jsonrpc.ID, 
 }
 
 func (c *serializedForwardingConnection) clearLifecycleStateLocked() {
+	c.signalObservedWriteLocked()
 	c.lockHeld = false
 	c.writeStarted = false
 	c.writeCompleted = false
@@ -656,6 +927,9 @@ func (c *serializedForwardingConnection) clearLifecycleStateLocked() {
 	c.callerID = jsonrpc.ID{}
 	c.expectedID = jsonrpc.ID{}
 	c.requestMethod = ""
+	c.selfContainedRequest = false
+	c.observationToken = protocolObservationToken{}
+	c.observationWriteDone = nil
 }
 
 func (c *serializedForwardingConnection) isRetired() bool {

@@ -8,11 +8,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net"
 	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"sort"
 	"strconv"
@@ -22,6 +24,7 @@ import (
 
 	"github.com/openai/tunnel-client/pkg/codexplugin/state"
 	"github.com/openai/tunnel-client/pkg/healthurl"
+	"github.com/openai/tunnel-client/pkg/localfiles"
 )
 
 const (
@@ -153,6 +156,15 @@ func DefaultRuntime() Runtime {
 		Terminate:      TerminateProcess,
 		WaitForExit:    WaitForProcessIdentityExit,
 	}
+}
+
+func (rt Runtime) startManagedProcess(args []string, env map[string]string, logPath string, root state.Root) (Process, error) {
+	// Pass the selected state root only to the built-in named starter. Callers
+	// may replace DefaultRuntime().Start; preserve that hook and its arguments.
+	if rt.Start != nil && reflect.ValueOf(rt.Start).Pointer() == reflect.ValueOf(startProcess).Pointer() {
+		return startProcessWithLogRoot(args, env, logPath, &root)
+	}
+	return rt.Start(args, env, logPath)
 }
 
 func (rt Runtime) inspectProcess(pid int) (ProcessIdentity, error) {
@@ -331,7 +343,12 @@ func WriteRuntimeProfile(
 	if err != nil {
 		return "", fmt.Errorf("marshal profile %s: %w", configPath, err)
 	}
-	if err := os.WriteFile(configPath, append(data, '\n'), 0o600); err != nil {
+	profileRoot, err := os.OpenRoot(configRoot)
+	if err != nil {
+		return "", fmt.Errorf("open profile directory %s: %w", configRoot, err)
+	}
+	defer func() { _ = profileRoot.Close() }()
+	if err := localfiles.WriteFile(profileRoot, normalizedProfile+".yaml", append(data, '\n'), true); err != nil {
 		return "", fmt.Errorf("write profile %s: %w", configPath, err)
 	}
 	return configPath, nil
@@ -463,11 +480,40 @@ func StartOrReuseWithExistingRuntime(
 	existing ExistingRuntime,
 	replaceExisting bool,
 ) (LaunchResult, error) {
+	return startOrReuseWithExistingRuntime(
+		rt,
+		alias,
+		profileName,
+		profileDir,
+		tunnelClientBin,
+		root,
+		envOverrides,
+		existing,
+		replaceExisting,
+		os.Getenv,
+	)
+}
+
+func startOrReuseWithExistingRuntime(
+	rt Runtime,
+	alias string,
+	profileName string,
+	profileDir string,
+	tunnelClientBin string,
+	root state.Root,
+	envOverrides map[string]string,
+	existing ExistingRuntime,
+	replaceExisting bool,
+	getenv func(string) string,
+) (LaunchResult, error) {
 	if err := validateTunnelClientBin(tunnelClientBin); err != nil {
 		return LaunchResult{}, err
 	}
 	command, err := currentTunnelClientCommand(profileName, profileDir)
 	if err != nil {
+		return LaunchResult{}, err
+	}
+	if _, err := state.NormalizeAlias(alias); err != nil {
 		return LaunchResult{}, err
 	}
 	logPath := LogPath(alias, root)
@@ -477,7 +523,7 @@ func StartOrReuseWithExistingRuntime(
 		if err != nil {
 			return LaunchResult{}, err
 		}
-		tmuxSocket, hasSession, err := FindOwnedLegacyTmuxSession(rt, sessionName, existing.TmuxSocket)
+		tmuxSocket, hasSession, err := findOwnedLegacyTmuxSession(rt, sessionName, existing.TmuxSocket, getenv)
 		if err != nil {
 			return LaunchResult{}, fmt.Errorf("inspect legacy tmux session: %w", err)
 		}
@@ -520,7 +566,7 @@ func StartOrReuseWithExistingRuntime(
 				PIDStartTime:   identity.StartTime,
 				PIDExecutable:  identity.Executable,
 				LogPath:        logPath,
-				LogTail:        LogTail(logPath, 20),
+				LogTail:        ManagedLogTail(root, logPath, 20),
 			}, nil
 		}
 	}
@@ -530,12 +576,12 @@ func StartOrReuseWithExistingRuntime(
 	if err != nil {
 		return LaunchResult{}, err
 	}
-	process, err := rt.Start(args, childEnv(envOverrides), logPath)
+	process, err := rt.startManagedProcess(args, childEnv(envOverrides), logPath, root)
 	if err != nil {
 		return LaunchResult{}, err
 	}
 	if exitCode := exitCodeAfterLaunch(process); exitCode != nil {
-		return stoppedLaunchResult(command, logPath, process, ProcessIdentity{}, *exitCode), nil
+		return stoppedLaunchResult(root, command, logPath, process, ProcessIdentity{}, *exitCode), nil
 	}
 	identity, err := rt.inspectProcess(process.PID())
 	if err != nil {
@@ -543,7 +589,7 @@ func StartOrReuseWithExistingRuntime(
 		// identity read. Preserve that ordinary launch-failure result instead of
 		// reporting an identity error for a process that is already gone.
 		if exitCode := exitCodeAfterLaunch(process); exitCode != nil {
-			return stoppedLaunchResult(command, logPath, process, ProcessIdentity{}, *exitCode), nil
+			return stoppedLaunchResult(root, command, logPath, process, ProcessIdentity{}, *exitCode), nil
 		}
 		// The default starter retains an exact child handle, so it can abort
 		// without signaling a bare PID. Do not persist or expose an unverified
@@ -558,11 +604,11 @@ func StartOrReuseWithExistingRuntime(
 			Launched: true,
 			Running:  false,
 			LogPath:  logPath,
-			LogTail:  LogTail(logPath, 20),
+			LogTail:  ManagedLogTail(root, logPath, 20),
 		}, fmt.Errorf("capture launched process identity for pid %d; safely aborted launched process before state persistence: %w", process.PID(), err)
 	}
 	if exitCode := exitCodeAfterLaunch(process); exitCode != nil {
-		return stoppedLaunchResult(command, logPath, process, identity, *exitCode), nil
+		return stoppedLaunchResult(root, command, logPath, process, identity, *exitCode), nil
 	}
 	observation := WaitForRuntimeHealthForProcess(rt, alias, root, process.PID(), identity)
 	return LaunchResult{
@@ -579,7 +625,7 @@ func StartOrReuseWithExistingRuntime(
 		PIDStartTime:   identity.StartTime,
 		PIDExecutable:  identity.Executable,
 		LogPath:        logPath,
-		LogTail:        LogTail(logPath, 20),
+		LogTail:        ManagedLogTail(root, logPath, 20),
 	}, nil
 }
 
@@ -606,7 +652,7 @@ func TmuxHasSessionName(rt Runtime, sessionName string) (bool, error) {
 // legacy socket. An empty socket recovers the ambient $TMUX socket when one is
 // available, otherwise it selects tmux's default socket explicitly.
 func TmuxHasSessionNameAt(rt Runtime, sessionName string, socketPath string) (bool, error) {
-	socketPath = resolveLegacyTmuxSocket(socketPath)
+	socketPath = resolveLegacyTmuxSocket(socketPath, os.Getenv)
 	if socketPath != "" {
 		if err := validateTmuxSocketPath(socketPath); err != nil {
 			return false, err
@@ -625,7 +671,7 @@ func TmuxHasSessionNameStrict(rt Runtime, sessionName string) (bool, error) {
 // recorded or recovered tmux socket. An empty socket recovers the ambient
 // $TMUX socket when one is available, otherwise it selects the default.
 func TmuxHasSessionNameStrictAt(rt Runtime, sessionName string, socketPath string) (bool, error) {
-	socketPath = resolveLegacyTmuxSocket(socketPath)
+	socketPath = resolveLegacyTmuxSocket(socketPath, os.Getenv)
 	if socketPath != "" {
 		if err := validateTmuxSocketPath(socketPath); err != nil {
 			return false, err
@@ -639,12 +685,16 @@ func TmuxHasSessionNameStrictAt(rt Runtime, sessionName string, socketPath strin
 // ambient $TMUX socket and then check the default socket. If neither contains
 // the session, fail closed: an older custom socket may still own it.
 func FindOwnedLegacyTmuxSession(rt Runtime, sessionName string, recordedSocket string) (string, bool, error) {
+	return findOwnedLegacyTmuxSession(rt, sessionName, recordedSocket, os.Getenv)
+}
+
+func findOwnedLegacyTmuxSession(rt Runtime, sessionName string, recordedSocket string, getenv func(string) string) (string, bool, error) {
 	if socket := strings.TrimSpace(recordedSocket); socket != "" {
 		running, err := TmuxHasSessionNameStrictAt(rt, sessionName, socket)
 		return socket, running, err
 	}
 	candidates := []string{}
-	if ambient := resolveLegacyTmuxSocket(""); ambient != "" {
+	if ambient := resolveLegacyTmuxSocket("", getenv); ambient != "" {
 		candidates = append(candidates, ambient)
 	}
 	candidates = append(candidates, "")
@@ -687,11 +737,11 @@ func tmuxSessionIsKnownAbsent(result CompletedProcess) bool {
 		(strings.Contains(message, "error connecting to ") && strings.Contains(message, "no such file or directory"))
 }
 
-func resolveLegacyTmuxSocket(recorded string) string {
+func resolveLegacyTmuxSocket(recorded string, getenv func(string) string) string {
 	if socket := strings.TrimSpace(recorded); socket != "" {
 		return socket
 	}
-	value := strings.TrimSpace(os.Getenv("TMUX"))
+	value := strings.TrimSpace(getenv("TMUX"))
 	if value == "" {
 		return ""
 	}
@@ -715,6 +765,10 @@ func OwnedTmuxSessionName(alias string, root state.Root, recorded string) (strin
 	return expected, nil
 }
 
+// StartTmux retains the legacy launch helper for custom runtimes. DefaultRuntime
+// only inspects and stops legacy tmux sessions.
+//
+// Deprecated: use StartOrReuseWithExistingRuntime for managed process launches.
 func StartTmux(rt Runtime, sessionName string, tunnelClientBin string, profileName string, profileDir string, env map[string]string, logPath string) (CompletedProcess, error) {
 	if err := validateTunnelClientBin(tunnelClientBin); err != nil {
 		return CompletedProcess{}, err
@@ -808,7 +862,7 @@ func tmuxFirstPaneID(rt Runtime, sessionName string) (string, error) {
 	if result.ReturnCode != 0 {
 		return "", fmt.Errorf("tmux list-panes failed: %s", strings.TrimSpace(firstNonEmpty(result.Stderr, result.Stdout)))
 	}
-	for _, line := range strings.Split(result.Stdout, "\n") {
+	for line := range strings.SplitSeq(result.Stdout, "\n") {
 		if trimmed := strings.TrimSpace(line); trimmed != "" {
 			if !tmuxPaneIDPattern.MatchString(trimmed) {
 				return "", fmt.Errorf("tmux list-panes returned invalid pane id %q", trimmed)
@@ -827,7 +881,7 @@ func StopTmux(rt Runtime, sessionName string) (CompletedProcess, error) {
 // An empty socket recovers the ambient $TMUX socket when one is available,
 // otherwise it selects tmux's default socket explicitly.
 func StopTmuxAt(rt Runtime, sessionName string, socketPath string) (CompletedProcess, error) {
-	socketPath = resolveLegacyTmuxSocket(socketPath)
+	socketPath = resolveLegacyTmuxSocket(socketPath, os.Getenv)
 	if socketPath != "" {
 		if err := validateTmuxSocketPath(socketPath); err != nil {
 			return CompletedProcess{}, err
@@ -863,50 +917,94 @@ func LogPath(alias string, root state.Root) string {
 	return filepath.Join(root.Path, "logs", mustNormalizeAlias(alias)+".log")
 }
 
+// LogTail reads an explicit caller-selected file, including symlink aliases.
+// Managed callers use ManagedLogTail with their selected state root.
 func LogTail(pathValue string, maxLines int) string {
+	return logTail(pathValue, maxLines, nil)
+}
+
+// ManagedLogTail reads a regular log confined to the selected state root.
+func ManagedLogTail(root state.Root, pathValue string, maxLines int) string {
+	return logTail(pathValue, maxLines, &root)
+}
+
+func logTail(pathValue string, maxLines int, root *state.Root) string {
 	if strings.TrimSpace(pathValue) == "" || maxLines <= 0 {
 		return ""
 	}
-	data, err := os.ReadFile(pathValue)
+	var file *os.File
+	var err error
+	if root != nil {
+		file, err = OpenManagedFile(*root, "logs", pathValue, os.O_RDONLY)
+	} else {
+		file, err = openExplicitRegularFile(pathValue, os.O_RDONLY)
+	}
 	if err != nil {
 		return ""
 	}
-	lines := strings.Split(strings.TrimRight(string(data), "\n"), "\n")
+	defer func() { _ = file.Close() }()
+	data, err := io.ReadAll(file)
+	if err != nil {
+		return ""
+	}
+	lines := strings.Split(strings.TrimRight(strings.ReplaceAll(string(data), "\r\n", "\n"), "\n"), "\n")
 	if len(lines) > maxLines {
 		lines = lines[len(lines)-maxLines:]
 	}
 	return strings.Join(lines, "\n")
 }
 
+func openExplicitRegularFile(pathValue string, flags int) (*os.File, error) {
+	// Explicit file selectors retain arbitrary symlink targets; confinement is
+	// only a policy for managed names under an independently selected root.
+	pathValue, err := filepath.EvalSymlinks(pathValue)
+	if err != nil {
+		return nil, err
+	}
+	root, err := os.OpenRoot(filepath.Dir(pathValue))
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = root.Close() }()
+	return localfiles.OpenRegular(root, filepath.Base(pathValue), flags, 0o600)
+}
+
+func openPrivateLogFile(pathValue string) (*os.File, error) {
+	// StartTmux and direct embedding callers may select an explicit log file.
+	if err := os.MkdirAll(filepath.Dir(pathValue), 0o755); err != nil {
+		return nil, err
+	}
+	root, err := os.OpenRoot(filepath.Dir(pathValue))
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = root.Close() }()
+	name := filepath.Base(pathValue)
+	if info, err := root.Lstat(name); err == nil && info.Mode()&os.ModeSymlink != 0 {
+		return nil, fmt.Errorf("log file %s must not be a symlink", pathValue)
+	} else if err != nil && !os.IsNotExist(err) {
+		return nil, err
+	}
+	file, err := localfiles.OpenRegular(root, name, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+	if err != nil {
+		return nil, err
+	}
+	if err := file.Chmod(0o600); err != nil {
+		_ = file.Close()
+		return nil, err
+	}
+	return file, nil
+}
+
 func ensurePrivateLogFile(pathValue string) error {
 	if strings.TrimSpace(pathValue) == "" {
 		return nil
 	}
-	if err := os.MkdirAll(filepath.Dir(pathValue), 0o755); err != nil {
-		return fmt.Errorf("create log directory %s: %w", filepath.Dir(pathValue), err)
-	}
-	if info, err := os.Lstat(pathValue); err == nil {
-		if info.Mode()&os.ModeSymlink != 0 {
-			return fmt.Errorf("log file %s must not be a symlink", pathValue)
-		}
-		if !info.Mode().IsRegular() {
-			return fmt.Errorf("log file %s must be a regular file", pathValue)
-		}
-		if err := os.Chmod(pathValue, 0o600); err != nil {
-			return fmt.Errorf("secure log file %s: %w", pathValue, err)
-		}
-		return nil
-	} else if !os.IsNotExist(err) {
-		return fmt.Errorf("stat log file %s: %w", pathValue, err)
-	}
-	logFile, err := os.OpenFile(pathValue, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+	file, err := openPrivateLogFile(pathValue)
 	if err != nil {
-		return fmt.Errorf("create log file %s: %w", pathValue, err)
+		return err
 	}
-	if err := logFile.Close(); err != nil {
-		return fmt.Errorf("close log file %s: %w", pathValue, err)
-	}
-	return nil
+	return file.Close()
 }
 
 // WaitForRuntimeHealth is the legacy best-effort observation helper. Process
@@ -926,7 +1024,7 @@ func waitForRuntimeHealth(rt Runtime, alias string, root state.Root, mode string
 	deadline := time.Now().Add(launchHealthTimeout)
 	for {
 		running := runtimeIsRunning(rt, alias, root, mode, pid, sessionName, identity)
-		rawHealthURL := ReadHealthURL(ProfileHealthURLFile(alias, root))
+		rawHealthURL := ReadManagedHealthURL(root, ProfileHealthURLFile(alias, root))
 		probe := ProbeHealthEndpoints(rawHealthURL)
 		observation := RuntimeObservation{
 			Running:     running,
@@ -942,9 +1040,16 @@ func waitForRuntimeHealth(rt Runtime, alias string, root state.Root, mode string
 	}
 }
 
+// ReadHealthURL reads an explicitly selected health file. Managed callers use
+// ReadManagedHealthURL with their selected state root.
 func ReadHealthURL(path string) string {
-	data, err := os.ReadFile(path)
+	file, err := openExplicitRegularFile(path, os.O_RDONLY)
 	if err != nil {
+		return ""
+	}
+	defer func() { _ = file.Close() }()
+	data, err := io.ReadAll(io.LimitReader(file, 8193))
+	if err != nil || len(data) > 8192 {
 		return ""
 	}
 	return strings.TrimSpace(string(data))
@@ -967,7 +1072,7 @@ func NormalizeHealthBaseURL(rawHealthURL string) string {
 }
 
 func ClearHealthURLFile(alias string, root state.Root) {
-	_ = os.Remove(ProfileHealthURLFile(alias, root))
+	_ = RemoveManagedFile(root, "health", ProfileHealthURLFile(alias, root))
 }
 
 func WaitForProcessExit(pid int) bool {
@@ -986,14 +1091,14 @@ func runTmuxCommand(args []string, env map[string]string) (CompletedProcess, err
 }
 
 func runTmuxCommandWithInput(args []string, env map[string]string, stdin string) (CompletedProcess, error) {
+	if stdin != "" {
+		return CompletedProcess{}, fmt.Errorf("default runtime does not accept tmux script input")
+	}
 	tmuxArgs, err := validatedTmuxArgs(args)
 	if err != nil {
 		return CompletedProcess{}, err
 	}
 	cmd := exec.Command("tmux", tmuxArgs...)
-	if stdin != "" {
-		cmd.Stdin = strings.NewReader(stdin)
-	}
 	if env != nil {
 		cmd.Env = envList(env)
 	}
@@ -1014,164 +1119,47 @@ func runTmuxCommandWithInput(args []string, env map[string]string, stdin string)
 	return result, err
 }
 
+// The default runner is only used to inspect and stop legacy sessions. Keep
+// launch and script operations out of this boundary; new runtimes use self-exec.
 func validatedTmuxArgs(args []string) ([]string, error) {
-	if len(args) == 0 || args[0] != "tmux" {
-		return nil, fmt.Errorf("default runtime only supports tmux commands")
-	}
-	if len(args) < 2 {
+	if len(args) < 2 || args[0] != "tmux" {
 		return nil, fmt.Errorf("default runtime only supports managed tmux commands")
 	}
-	if len(args) >= 4 && args[1] == "-S" {
-		if err := validateTmuxSocketPath(args[2]); err != nil {
-			return nil, err
-		}
-		switch args[3] {
-		case "has-session":
-			if len(args) == 6 && args[4] == "-t" {
-				if err := validateTmuxTarget(args[5]); err != nil {
-					return nil, err
-				}
-				return []string{"-S", args[2], "has-session", "-t", args[5]}, nil
-			}
-		case "kill-session":
-			if len(args) == 6 && args[4] == "-t" {
-				if err := validateTmuxTarget(args[5]); err != nil {
-					return nil, err
-				}
-				return []string{"-S", args[2], "kill-session", "-t", args[5]}, nil
-			}
-		}
-		return nil, fmt.Errorf("default runtime only supports managed tmux commands")
+	if len(args) == 2 && args[1] == "-V" {
+		return []string{"-V"}, nil
 	}
-	if len(args) >= 4 && args[1] == "-L" {
-		if args[2] != legacyTmuxSocketName {
-			return nil, fmt.Errorf("default runtime only supports the legacy tmux socket")
+	var selector []string
+	command := args[1:]
+	if len(command) >= 2 {
+		switch command[0] {
+		case "-S":
+			if err := validateTmuxSocketPath(command[1]); err != nil {
+				return nil, err
+			}
+			selector = []string{"-S", command[1]}
+			command = command[2:]
+		case "-L":
+			if command[1] != legacyTmuxSocketName {
+				return nil, fmt.Errorf("default runtime only supports the legacy tmux socket")
+			}
+			selector = []string{"-L", legacyTmuxSocketName}
+			command = command[2:]
 		}
-		switch args[3] {
-		case "has-session":
-			if len(args) == 6 && args[4] == "-t" {
-				if err := validateTmuxTarget(args[5]); err != nil {
-					return nil, err
-				}
-				return []string{"-L", legacyTmuxSocketName, "has-session", "-t", args[5]}, nil
-			}
-		case "kill-session":
-			if len(args) == 6 && args[4] == "-t" {
-				if err := validateTmuxTarget(args[5]); err != nil {
-					return nil, err
-				}
-				return []string{"-L", legacyTmuxSocketName, "kill-session", "-t", args[5]}, nil
-			}
-		case "new-session":
-			if len(args) >= 7 && args[4] == "-d" && args[5] == "-s" {
-				if err := validateTmuxSessionName(args[6]); err != nil {
-					return nil, err
-				}
-				if len(args) == 7 {
-					return []string{"-L", legacyTmuxSocketName, "new-session", "-d", "-s", args[6]}, nil
-				}
-				if len(args) == 13 {
-					profileName, profileDir, err := fixedTunnelClientRunArgs(args[7:])
-					if err != nil {
-						return nil, err
-					}
-					invocation, err := currentTunnelClientInvocation(profileName, profileDir)
-					if err != nil {
-						return nil, err
-					}
-					return append([]string{"-L", legacyTmuxSocketName, "new-session", "-d", "-s", args[6]}, invocation...), nil
-				}
-			}
-		case "list-panes":
-			if len(args) == 8 && args[4] == "-t" && args[6] == "-F" && args[7] == "#{pane_id}" {
-				if err := validateTmuxTarget(args[5]); err != nil {
-					return nil, err
-				}
-				return []string{"-L", legacyTmuxSocketName, "list-panes", "-t", args[5], "-F", "#{pane_id}"}, nil
-			}
-		case "source-file":
-			if len(args) == 5 && args[4] == "-" {
-				return []string{"-L", legacyTmuxSocketName, "source-file", "-"}, nil
-			}
-		case "respawn-pane":
-			if len(args) == 13 && args[4] == "-k" && args[5] == "-t" && tmuxPaneIDPattern.MatchString(args[6]) {
-				profileName, profileDir, err := fixedTunnelClientRunArgs(args[7:])
-				if err != nil {
-					return nil, err
-				}
-				invocation, err := currentTunnelClientInvocation(profileName, profileDir)
-				if err != nil {
-					return nil, err
-				}
-				return append([]string{"-L", legacyTmuxSocketName, "respawn-pane", "-k", "-t", args[6]}, invocation...), nil
-			}
-		}
-		return nil, fmt.Errorf("default runtime only supports managed tmux commands")
 	}
-	switch args[1] {
-	case "-V":
-		if len(args) == 2 {
-			return []string{"-V"}, nil
-		}
+	if len(command) != 3 || command[1] != "-t" {
+		return nil, fmt.Errorf("default runtime only supports legacy tmux inspection and stop")
+	}
+	if err := validateTmuxTarget(command[2]); err != nil {
+		return nil, err
+	}
+	switch command[0] {
 	case "has-session":
-		if len(args) == 4 && args[2] == "-t" {
-			if err := validateTmuxTarget(args[3]); err != nil {
-				return nil, err
-			}
-			return []string{"has-session", "-t", args[3]}, nil
-		}
-	case "new-session":
-		if len(args) >= 5 && args[2] == "-d" && args[3] == "-s" {
-			if err := validateTmuxSessionName(args[4]); err != nil {
-				return nil, err
-			}
-			if len(args) == 5 {
-				return []string{"new-session", "-d", "-s", args[4]}, nil
-			}
-			if len(args) == 11 {
-				profileName, profileDir, err := fixedTunnelClientRunArgs(args[5:])
-				if err != nil {
-					return nil, err
-				}
-				invocation, err := currentTunnelClientInvocation(profileName, profileDir)
-				if err != nil {
-					return nil, err
-				}
-				return append([]string{"new-session", "-d", "-s", args[4]}, invocation...), nil
-			}
-		}
-	case "list-panes":
-		if len(args) == 6 && args[2] == "-t" && args[4] == "-F" && args[5] == "#{pane_id}" {
-			if err := validateTmuxTarget(args[3]); err != nil {
-				return nil, err
-			}
-			return []string{"list-panes", "-t", args[3], "-F", "#{pane_id}"}, nil
-		}
+		return append(selector, "has-session", "-t", command[2]), nil
 	case "kill-session":
-		if len(args) == 4 && args[2] == "-t" {
-			if err := validateTmuxTarget(args[3]); err != nil {
-				return nil, err
-			}
-			return []string{"kill-session", "-t", args[3]}, nil
-		}
-	case "source-file":
-		if len(args) == 3 && args[2] == "-" {
-			return []string{"source-file", "-"}, nil
-		}
-	case "respawn-pane":
-		if len(args) == 11 && args[2] == "-k" && args[3] == "-t" && tmuxPaneIDPattern.MatchString(args[4]) {
-			profileName, profileDir, err := fixedTunnelClientRunArgs(args[5:])
-			if err != nil {
-				return nil, err
-			}
-			invocation, err := currentTunnelClientInvocation(profileName, profileDir)
-			if err != nil {
-				return nil, err
-			}
-			return append([]string{"respawn-pane", "-k", "-t", args[4]}, invocation...), nil
-		}
+		return append(selector, "kill-session", "-t", command[2]), nil
+	default:
+		return nil, fmt.Errorf("default runtime only supports legacy tmux inspection and stop")
 	}
-	return nil, fmt.Errorf("default runtime only supports managed tmux commands")
 }
 
 func validateTmuxTarget(target string) error {
@@ -1244,6 +1232,10 @@ func (p *osProcess) finish(exitCode int) {
 }
 
 func startProcess(args []string, env map[string]string, logPath string) (Process, error) {
+	return startProcessWithLogRoot(args, env, logPath, nil)
+}
+
+func startProcessWithLogRoot(args []string, env map[string]string, logPath string, root *state.Root) (Process, error) {
 	profileName, profileDir, err := fixedTunnelClientRunArgs(args)
 	if err != nil {
 		return nil, err
@@ -1252,14 +1244,18 @@ func startProcess(args []string, env map[string]string, logPath string) (Process
 	if err != nil {
 		return nil, fmt.Errorf("resolve current tunnel-client executable: %w", err)
 	}
-	if err := ensurePrivateLogFile(logPath); err != nil {
-		return nil, err
+	var logFile *os.File
+	if root != nil {
+		logFile, err = OpenManagedFile(*root, "logs", logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY)
+	} else {
+		logFile, err = openPrivateLogFile(logPath)
 	}
-	logFile, err := os.OpenFile(logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
 	if err != nil {
 		return nil, fmt.Errorf("open log file %s: %w", logPath, err)
 	}
-	cmd := exec.Command(executable, "run", "--profile-dir", profileDir, "--profile", profileName)
+	// The parent owns the log handle. Override the profile's file destination so
+	// the child logger uses stdout instead of reopening the pathname.
+	cmd := exec.Command(executable, "run", "--profile-dir", profileDir, "--profile", profileName, "--log.file", "")
 	cmd.Stdout = logFile
 	cmd.Stderr = logFile
 	cmd.Stdin = nil
@@ -1319,7 +1315,7 @@ func exitCodeAfterLaunch(process Process) *int {
 	return process.Poll()
 }
 
-func stoppedLaunchResult(command string, logPath string, process Process, identity ProcessIdentity, exitCode int) LaunchResult {
+func stoppedLaunchResult(root state.Root, command string, logPath string, process Process, identity ProcessIdentity, exitCode int) LaunchResult {
 	result := LaunchResult{
 		Mode:           "process",
 		Command:        command,
@@ -1331,7 +1327,7 @@ func stoppedLaunchResult(command string, logPath string, process Process, identi
 		AlreadyRunning: false,
 		LogPath:        logPath,
 		ExitCode:       &exitCode,
-		LogTail:        LogTail(logPath, 20),
+		LogTail:        ManagedLogTail(root, logPath, 20),
 	}
 	// An exited process does not need later signaling. Preserve its PID only
 	// when we also captured the stable identity that makes that record safe.
@@ -1424,9 +1420,7 @@ func childEnv(overrides map[string]string) map[string]string {
 			env[parts[0]] = parts[1]
 		}
 	}
-	for key, value := range overrides {
-		env[key] = value
-	}
+	maps.Copy(env, overrides)
 	return env
 }
 
@@ -1465,8 +1459,7 @@ func AsExitError(err error, target **exec.ExitError) bool {
 	if err == nil {
 		return false
 	}
-	var exitErr *exec.ExitError
-	if errors.As(err, &exitErr) {
+	if exitErr, ok := errors.AsType[*exec.ExitError](err); ok {
 		*target = exitErr
 		return true
 	}
@@ -1477,8 +1470,7 @@ func AsExecError(err error, target **exec.Error) bool {
 	if err == nil {
 		return false
 	}
-	var execErr *exec.Error
-	if errors.As(err, &execErr) {
+	if execErr, ok := errors.AsType[*exec.Error](err); ok {
 		*target = execErr
 		return true
 	}

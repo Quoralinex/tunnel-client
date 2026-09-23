@@ -138,6 +138,8 @@ func newRedundantToolCommand(
 	deliverAfter <-chan struct{},
 	afterResponse func(testing.TB),
 ) mocktunnelservice.CommandResponse {
+	// Each poller owns a separate child, so redundant requests use the modern
+	// self-contained protocol and need no initialization affinity.
 	return mocktunnelservice.CommandResponse{
 		Command: mocktunnelservice.NewCommand(
 			requestID,
@@ -146,6 +148,11 @@ func newRedundantToolCommand(
 				"id":"call-%s",
 				"method":"tools/call",
 				"params":{
+					"_meta":{
+						"io.modelcontextprotocol/protocolVersion":"2026-07-28",
+						"io.modelcontextprotocol/clientCapabilities":{},
+						"io.modelcontextprotocol/clientInfo":{"name":"redundant-poller-e2e","version":"1"}
+					},
 					"name":"%s",
 					"arguments":{"name":"%s","request_id":"%s"}
 				}

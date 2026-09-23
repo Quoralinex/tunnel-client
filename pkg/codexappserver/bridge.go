@@ -204,7 +204,13 @@ type Bridge struct {
 }
 
 func NewBridge(lifecycle fx.Lifecycle, logger *slog.Logger) *Bridge {
-	cfg := defaultCommandConfig()
+	return NewBridgeWithLookupEnv(lifecycle, logger, os.LookupEnv)
+}
+
+// NewBridgeWithLookupEnv reads command configuration through lookupEnv.
+// A nil lookupEnv uses the process environment; child processes still inherit it.
+func NewBridgeWithLookupEnv(lifecycle fx.Lifecycle, logger *slog.Logger, lookupEnv func(string) (string, bool)) *Bridge {
+	cfg := defaultCommandConfig(lookupEnv)
 	if logger == nil {
 		logger = slog.New(slog.NewTextHandler(io.Discard, nil))
 	}
@@ -233,23 +239,32 @@ func NewBridge(lifecycle fx.Lifecycle, logger *slog.Logger) *Bridge {
 	return b
 }
 
-func defaultCommandConfig() commandConfig {
+func defaultCommandConfig(lookupEnv func(string) (string, bool)) commandConfig {
+	if lookupEnv == nil {
+		lookupEnv = os.LookupEnv
+	}
+	getenv := func(key string) string {
+		if value, ok := lookupEnv(key); ok {
+			return value
+		}
+		return ""
+	}
 	cwd, _ := os.Getwd()
-	if envCWD := strings.TrimSpace(os.Getenv("TUNNEL_CLIENT_CODEX_APP_SERVER_CWD")); envCWD != "" {
+	if envCWD := strings.TrimSpace(getenv("TUNNEL_CLIENT_CODEX_APP_SERVER_CWD")); envCWD != "" {
 		cwd = envCWD
 	}
-	if envCommand := strings.TrimSpace(os.Getenv("TUNNEL_CLIENT_CODEX_APP_SERVER_COMMAND")); envCommand != "" {
+	if envCommand := strings.TrimSpace(getenv("TUNNEL_CLIENT_CODEX_APP_SERVER_COMMAND")); envCommand != "" {
 		return commandConfig{
 			command: "zsh",
 			args:    []string{"-lc", envCommand},
 			cwd:     cwd,
 		}
 	}
-	cmdName := strings.TrimSpace(os.Getenv("TUNNEL_CLIENT_CODEX_APP_SERVER_CMD"))
+	cmdName := strings.TrimSpace(getenv("TUNNEL_CLIENT_CODEX_APP_SERVER_CMD"))
 	if cmdName == "" {
 		cmdName = "codex"
 	}
-	args := strings.Fields(strings.TrimSpace(os.Getenv("TUNNEL_CLIENT_CODEX_APP_SERVER_ARGS")))
+	args := strings.Fields(strings.TrimSpace(getenv("TUNNEL_CLIENT_CODEX_APP_SERVER_ARGS")))
 	if len(args) == 0 {
 		args = []string{"app-server"}
 	}

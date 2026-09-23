@@ -8,9 +8,11 @@ import (
 )
 
 func TestCallBufferOrdersNewestFirst(t *testing.T) {
+	t.Parallel()
+
 	buffer := NewCallBuffer()
 
-	for i := 0; i < 12; i++ {
+	for i := range 12 {
 		buffer.RecordCall(CallEntry{
 			Timestamp: time.Unix(int64(i), 0).UTC(),
 			Label:     "svc",
@@ -27,6 +29,8 @@ func TestCallBufferOrdersNewestFirst(t *testing.T) {
 }
 
 func TestCallBufferFiltersByLabel(t *testing.T) {
+	t.Parallel()
+
 	buffer := NewCallBuffer()
 	buffer.RecordCall(CallEntry{Label: "auth", Method: "GET", Timestamp: time.Unix(1, 0).UTC()})
 	buffer.RecordCall(CallEntry{Label: "billing", Method: "GET", Timestamp: time.Unix(2, 0).UTC()})

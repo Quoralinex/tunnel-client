@@ -14,7 +14,10 @@ import (
 )
 
 func TestLoadClientCertificate(t *testing.T) {
+	t.Parallel()
+
 	t.Run("empty returns nil", func(t *testing.T) {
+		t.Parallel()
 		got, err := LoadClientCertificate("", "")
 		if err != nil {
 			t.Fatalf("LoadClientCertificate returned error: %v", err)
@@ -25,6 +28,7 @@ func TestLoadClientCertificate(t *testing.T) {
 	})
 
 	t.Run("missing certificate path", func(t *testing.T) {
+		t.Parallel()
 		_, err := LoadClientCertificate("", "/tmp/key.pem")
 		if err == nil {
 			t.Fatalf("expected error for missing certificate path")
@@ -32,6 +36,7 @@ func TestLoadClientCertificate(t *testing.T) {
 	})
 
 	t.Run("missing key path", func(t *testing.T) {
+		t.Parallel()
 		_, err := LoadClientCertificate("/tmp/cert.pem", "")
 		if err == nil {
 			t.Fatalf("expected error for missing key path")
@@ -39,6 +44,7 @@ func TestLoadClientCertificate(t *testing.T) {
 	})
 
 	t.Run("invalid paths", func(t *testing.T) {
+		t.Parallel()
 		_, err := LoadClientCertificate("/tmp/no-cert.pem", "/tmp/no-key.pem")
 		if err == nil {
 			t.Fatalf("expected error for invalid certificate paths")
@@ -46,6 +52,7 @@ func TestLoadClientCertificate(t *testing.T) {
 	})
 
 	t.Run("valid certificate", func(t *testing.T) {
+		t.Parallel()
 		certPath, keyPath := writeClientCertPair(t)
 		got, err := LoadClientCertificate(certPath, keyPath)
 		if err != nil {

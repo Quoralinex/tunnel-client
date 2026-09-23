@@ -19,6 +19,8 @@ import (
 )
 
 func TestForwardingConnectionPropagatesHeaders(t *testing.T) {
+	t.Parallel()
+
 	respHeaders := http.Header{"X-Response": {"ok"}, "Another": {"value"}}
 	const wantStatus = http.StatusAccepted
 	sortStrings := cmpopts.SortSlices(func(a, b string) bool { return a < b })
@@ -140,7 +142,6 @@ func TestForwardingConnectionPreservesRecognizedNonSuccessMCPError(t *testing.T)
 	}
 
 	for _, tc := range testCases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
@@ -253,7 +254,6 @@ func TestForwardingConnectionReturnsTypedNonProtocolResponse(t *testing.T) {
 	}
 
 	for _, tc := range testCases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 

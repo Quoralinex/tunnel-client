@@ -8,7 +8,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/openai/tunnel-client/pkg/clientcapabilities"
 	"github.com/openai/tunnel-client/pkg/clientinstance"
+	"github.com/openai/tunnel-client/pkg/controlplane/wiretypes"
 	"github.com/openai/tunnel-client/pkg/mcpserverinfo"
 	tctransport "github.com/openai/tunnel-client/pkg/transport"
 	"github.com/openai/tunnel-client/pkg/version"
@@ -105,6 +107,7 @@ func (c *controlPlaneRoundTripper) RoundTrip(req *http.Request) (*http.Response,
 	req.Header.Set(headerTunnelClientVersion, version.Version)
 	req.Header.Set(version.WireProtocolHeaderName, version.WireProtocolVersion)
 	req.Header.Set(clientinstance.HeaderName, clientinstance.ID())
+	req.Header.Set(clientcapabilities.HeaderName, clientcapabilities.Advertised())
 	if c.mcpServerInfo != nil {
 		mcpServerInfo, err := c.mcpServerInfo()
 		if err != nil {
@@ -152,7 +155,7 @@ func isProtectedControlPlaneHeader(key string) bool {
 		return true
 	}
 	switch http.CanonicalHeaderKey(key) {
-	case "Authorization", "Accept", "User-Agent", headerTunnelClientName, headerTunnelClientVersion, version.WireProtocolHeaderName, clientinstance.HeaderName:
+	case "Authorization", "Accept", "User-Agent", headerTunnelClientName, headerTunnelClientVersion, version.WireProtocolHeaderName, clientinstance.HeaderName, wiretypes.ShardTokenHeader, clientcapabilities.HeaderName:
 		return true
 	default:
 		return false

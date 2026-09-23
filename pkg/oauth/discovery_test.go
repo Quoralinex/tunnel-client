@@ -86,6 +86,7 @@ func TestFetchOAuthMetadataRejectsCrossOriginRedirectBeforeDial(t *testing.T) {
 		origin.Client(),
 		[]DiscoveryCandidate{{URL: candidateURL, Source: DiscoverySourceWellKnownRoot}},
 		testLogger(),
+		candidateURL,
 	)
 	require.Error(t, fetchErr)
 	require.Contains(t, fetchErr.Error(), "redirect blocked")
@@ -95,16 +96,17 @@ func TestFetchOAuthMetadataRejectsCrossOriginRedirectBeforeDial(t *testing.T) {
 }
 
 func TestFetchOAuthMetadataRedactsCandidateURLFromLogsAndErrors(t *testing.T) {
+	t.Parallel()
+
 	candidateURL, err := url.Parse(
 		"https://userinfo-value:credential-value@auth.internal/token-path-value?client_id=query-value#state=fragment-value",
 	)
 	require.NoError(t, err)
 	original := candidateURL.String()
-	dialErr := errors.New("dial failed")
-
 	client := &http.Client{
 		Transport: roundTripperFunc(func(*http.Request) (*http.Response, error) {
-			return nil, dialErr
+			t.Fatal("metadata URLs with credentials or fragments must not reach the transport")
+			return nil, nil
 		}),
 	}
 	var logBuffer bytes.Buffer
@@ -117,7 +119,7 @@ func TestFetchOAuthMetadataRedactsCandidateURLFromLogsAndErrors(t *testing.T) {
 		logger,
 	)
 	require.Error(t, fetchErr)
-	require.ErrorIs(t, fetchErr, dialErr)
+	require.ErrorContains(t, fetchErr, "invalid metadata URL")
 	require.Len(t, attempts, 1)
 	require.Equal(t, original, candidateURL.String())
 
@@ -140,6 +142,8 @@ func TestFetchOAuthMetadataRedactsCandidateURLFromLogsAndErrors(t *testing.T) {
 }
 
 func TestFetchOAuthMetadataRedactsRequestConstructionError(t *testing.T) {
+	t.Parallel()
+
 	candidateURL := &url.URL{
 		Scheme: "https",
 		Host:   "auth.internal",
@@ -275,6 +279,7 @@ func TestFetchOAuthMetadataRejectsOversizedBody(t *testing.T) {
 		server.Client(),
 		[]DiscoveryCandidate{{URL: candidateURL, Source: DiscoverySourceWWWAuthenticate}},
 		nil,
+		candidateURL,
 	)
 	require.Error(t, fetchErr)
 	require.Nil(t, resp)
@@ -321,6 +326,7 @@ func TestFetchOAuthMetadataFallsBackOnEmpty404Or5xxBody(t *testing.T) {
 
 	for _, fallbackStatus := range []int{http.StatusNotFound, http.StatusInternalServerError} {
 		t.Run(http.StatusText(fallbackStatus), func(t *testing.T) {
+			t.Parallel()
 			var calls int
 			var expectedResource string
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -570,6 +576,7 @@ func TestFetchOAuthMetadataRetriesTimeoutWithIncreasingRequestTimeout(t *testing
 		client,
 		[]DiscoveryCandidate{{URL: targetURL, Source: DiscoverySourceWellKnownRoot}},
 		nil,
+		targetURL,
 	)
 	require.Error(t, fetchErr)
 	require.Equal(t, 1+oauthMetadataRequestRetryCount, calls)
@@ -600,6 +607,7 @@ func TestFetchOAuthMetadataTimeoutRetriesPreserveDiscoveryContext(t *testing.T) 
 		client,
 		[]DiscoveryCandidate{{URL: targetURL, Source: DiscoverySourceWellKnownRoot}},
 		nil,
+		targetURL,
 	)
 	require.Error(t, fetchErr)
 	require.Len(t, discoveryContexts, 1+oauthMetadataRequestRetryCount)

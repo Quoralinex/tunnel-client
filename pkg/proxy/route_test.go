@@ -9,6 +9,8 @@ import (
 )
 
 func TestResolveRouteDirect(t *testing.T) {
+	t.Parallel()
+
 	target := mustParseURL(t, "https://example.com")
 	route := ResolveRoute(RouteKindControlPlane, "control-plane", target, nil, config.ProxySourceNone, lookupEnvMap(nil))
 	if route.RouteMode != RouteModeDirect {
@@ -138,7 +140,6 @@ func TestProxyBypassHost(t *testing.T) {
 	}
 
 	for _, tc := range testCases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			if got := proxyBypassHost(tc.noProxy, target); got != tc.want {
@@ -210,7 +211,6 @@ func TestHostPortForURL(t *testing.T) {
 		{name: "explicit port", raw: "https://example.com:8443", want: "example.com:8443"},
 	}
 	for _, tc := range testCases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			target := mustParseURL(t, tc.raw)

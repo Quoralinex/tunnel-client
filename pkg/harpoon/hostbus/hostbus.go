@@ -7,6 +7,8 @@ import (
 	runtimehostbus "github.com/openai/tunnel-client/pkg/runtimeharpoon/hostbus"
 )
 
+// URLBundle carries URLs for host registration.
+//
 // Full-client Harpoon keeps these aliases for source compatibility while the
 // runtime-owned bus lives in runtimeharpoon.
 type URLBundle = runtimehostbus.URLBundle

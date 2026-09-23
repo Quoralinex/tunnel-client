@@ -1,13 +1,16 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 	"time"
 
@@ -21,16 +24,19 @@ const (
 )
 
 type devMCPStubOptions struct {
+	Stateless     bool
 	ListenAddr    string
+	UnixSocket    string
 	ServerName    string
 	ServerVersion string
 }
 
 type devMCPStubInstance struct {
-	BaseURL  *url.URL
-	listener net.Listener
-	server   *http.Server
-	errCh    chan error
+	BaseURL    *url.URL
+	UnixSocket string
+	listener   net.Listener
+	server     *http.Server
+	errCh      chan error
 }
 
 type devStubEchoArgs struct {
@@ -70,19 +76,31 @@ func startDevMCPStub(opts devMCPStubOptions) (*devMCPStubInstance, error) {
 		serverVersion = defaultDevMCPStubVersion
 	}
 
-	listener, err := net.Listen("tcp", listenAddr)
+	network := "tcp"
+	unixSocket := strings.TrimSpace(opts.UnixSocket)
+	if unixSocket != "" {
+		network = "unix"
+		listenAddr = unixSocket
+	}
+	listener, err := net.Listen(network, listenAddr)
 	if err != nil {
 		return nil, err
+	}
+	host := listener.Addr().String()
+	if unixSocket != "" {
+		// HTTP keeps a logical origin while the client dials the owned socket.
+		host = "localhost"
 	}
 
 	instance := &devMCPStubInstance{
 		BaseURL: &url.URL{
 			Scheme: "http",
-			Host:   listener.Addr().String(),
+			Host:   host,
 		},
-		listener: listener,
+		UnixSocket: unixSocket,
+		listener:   listener,
 		server: &http.Server{
-			Handler:           newDevMCPStubHandler(serverName, serverVersion),
+			Handler:           newDevMCPStubHandler(serverName, serverVersion, opts.Stateless),
 			ReadHeaderTimeout: 5 * time.Second,
 		},
 		errCh: make(chan error, 1),
@@ -139,7 +157,7 @@ func (s *devMCPStubInstance) AuthorizationServerMetadataURL() string {
 	return s.BaseURL.ResolveReference(&url.URL{Path: "/.well-known/oauth-authorization-server"}).String()
 }
 
-func newDevMCPStubHandler(serverName string, serverVersion string) http.Handler {
+func newDevMCPStubHandler(serverName string, serverVersion string, stateless bool) http.Handler {
 	mux := http.NewServeMux()
 	server := mcp.NewServer(&mcp.Implementation{
 		Name:    serverName,
@@ -189,11 +207,7 @@ func newDevMCPStubHandler(serverName string, serverVersion string) http.Handler 
 		}, result, nil
 	})
 
-	streamableHandler := mcp.NewStreamableHTTPHandler(func(_ *http.Request) *mcp.Server {
-		return server
-	}, nil)
-
-	mux.Handle("/mcp", streamableHandler)
+	mux.Handle("/mcp", newDevMCPStubStreamableHandler(server, stateless))
 	mux.HandleFunc("/.well-known/oauth-protected-resource", func(w http.ResponseWriter, r *http.Request) {
 		writeDevMCPStubProtectedResourceMetadata(w, r)
 	})
@@ -207,6 +221,79 @@ func newDevMCPStubHandler(serverName string, serverVersion string) http.Handler 
 		writeDevMCPStubJSON(w, map[string]any{"keys": []any{}})
 	})
 	return mux
+}
+
+func newDevMCPStubStreamableHandler(server *mcp.Server, stateless bool) http.Handler {
+	getServer := func(*http.Request) *mcp.Server { return server }
+	handler := mcp.NewStreamableHTTPHandler(getServer, &mcp.StreamableHTTPOptions{
+		Stateless: stateless,
+	})
+	if stateless {
+		return handler
+	}
+	// Preserve the default stub's legacy session lifecycle while dispatching
+	// self-contained modern MCP requests to the stateless handler.
+	statelessHandler := mcp.NewStreamableHTTPHandler(getServer, &mcp.StreamableHTTPOptions{
+		Stateless: true,
+	})
+	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		legacy, err := isLegacyDevMCPStubRequest(req)
+		if err != nil {
+			if _, ok := errors.AsType[*http.MaxBytesError](err); ok {
+				http.Error(w, "request body too large", http.StatusRequestEntityTooLarge)
+				return
+			}
+			http.Error(w, "failed to read request body", http.StatusBadRequest)
+			return
+		}
+		if legacy {
+			handler.ServeHTTP(w, req)
+			return
+		}
+		statelessHandler.ServeHTTP(w, req)
+	})
+}
+
+func isLegacyDevMCPStubRequest(req *http.Request) (bool, error) {
+	if req.Method != http.MethodPost || req.Header.Get("Mcp-Session-Id") != "" {
+		return true, nil
+	}
+	// Only explicit modern protocol requests opt into the new handler. The
+	// SDK still validates the version against the unchanged request metadata.
+	if req.Header.Get("Mcp-Protocol-Version") < "2026-07-28" {
+		return true, nil
+	}
+
+	// Inspect the method within the same body limit used by the SDK handlers,
+	// then restore the body for the selected handler to validate and process.
+	body, readErr := io.ReadAll(io.LimitReader(req.Body, mcp.DefaultMaxRequestBodyBytes+1))
+	closeErr := req.Body.Close()
+	if readErr != nil {
+		return false, readErr
+	}
+	if len(body) > mcp.DefaultMaxRequestBodyBytes {
+		return false, &http.MaxBytesError{Limit: mcp.DefaultMaxRequestBodyBytes}
+	}
+	if closeErr != nil {
+		return false, closeErr
+	}
+	req.Body = io.NopCloser(bytes.NewReader(body))
+
+	type methodEnvelope struct {
+		Method string `json:"method"`
+	}
+	isLegacy := func(request methodEnvelope) bool {
+		return request.Method == "initialize" || request.Method == "notifications/initialized"
+	}
+	var request methodEnvelope
+	if err := json.Unmarshal(body, &request); err == nil {
+		return isLegacy(request), nil
+	}
+	var batch []methodEnvelope
+	if err := json.Unmarshal(body, &batch); err == nil {
+		return slices.ContainsFunc(batch, isLegacy), nil
+	}
+	return false, nil
 }
 
 func writeDevMCPStubProtectedResourceMetadata(w http.ResponseWriter, r *http.Request) {

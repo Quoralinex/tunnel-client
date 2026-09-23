@@ -11,12 +11,14 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/require"
 
 	"github.com/openai/tunnel-client/pkg/controlplane/wiretypes"
@@ -43,6 +45,8 @@ func (b *lockedBuffer) String() string {
 }
 
 func TestStartFrontsHTTPMCPServerWithoutHealthListener(t *testing.T) {
+	t.Parallel()
+
 	mcpServer := mockmcpserver.NewMockMCPServer(
 		mockmcpserver.WithToolListChangedNotificationsDisabled(),
 		mockmcpserver.WithCalls(mockmcpserver.Call{
@@ -93,6 +97,8 @@ func TestStartFrontsHTTPMCPServerWithoutHealthListener(t *testing.T) {
 }
 
 func TestStartFrontsHTTPMCPServerOverUnixIngress(t *testing.T) {
+	t.Parallel()
+
 	if runtime.GOOS == "windows" {
 		t.Skip("Unix sockets are unavailable on Windows")
 	}
@@ -135,6 +141,8 @@ func TestStartFrontsHTTPMCPServerOverUnixIngress(t *testing.T) {
 }
 
 func TestStartRejectsOccupiedUnixIngressPath(t *testing.T) {
+	t.Parallel()
+
 	if runtime.GOOS == "windows" {
 		t.Skip("Unix sockets are unavailable on Windows")
 	}
@@ -152,11 +160,18 @@ func TestStartRejectsOccupiedUnixIngressPath(t *testing.T) {
 }
 
 func TestStartFrontsStdioMCPServer(t *testing.T) {
-	invocationLog := t.TempDir() + "/stdio-invocations.log"
-	t.Setenv("MOCK_MCP_INVOCATION_LOG", invocationLog)
+	t.Parallel()
+
+	invocationLog := filepath.Join(t.TempDir(), "stdio invocation's.log")
+	commandArgs := []string{os.Args[0], "-test.run=^TestLocalProxyStdioHelper$", "--", invocationLog}
+	for i, arg := range commandArgs {
+		// The command parser uses shell quoting on every platform. Single quotes
+		// preserve Windows backslashes as well as spaces in executable paths.
+		commandArgs[i] = "'" + strings.ReplaceAll(arg, "'", "'\"'\"'") + "'"
+	}
 
 	proxy, err := Start(context.Background(), Options{
-		MCPCommands: []string{strings.Join(mockmcpserver.StdioServerCommand(t), " ")},
+		MCPCommands: []string{strings.Join(commandArgs, " ")},
 	})
 	require.NoError(t, err)
 	t.Cleanup(func() {
@@ -170,10 +185,36 @@ func TestStartFrontsStdioMCPServer(t *testing.T) {
 
 	data, err := os.ReadFile(invocationLog)
 	require.NoError(t, err)
-	require.NotEmpty(t, data)
+	require.Equal(t, "Ada", string(data))
+}
+
+func TestLocalProxyStdioHelper(t *testing.T) {
+	t.Parallel()
+
+	if len(os.Args) != 4 || os.Args[2] != "--" {
+		return
+	}
+	invocationLog := os.Args[3]
+	server := mcp.NewServer(&mcp.Implementation{Name: "local-proxy-test", Version: "1.0.0"}, nil)
+	mcp.AddTool(server, &mcp.Tool{Name: "echo"}, func(_ context.Context, _ *mcp.CallToolRequest, args struct {
+		Name string `json:"name"`
+	}) (*mcp.CallToolResult, map[string]any, error) {
+		if err := os.WriteFile(invocationLog, []byte(args.Name), 0o600); err != nil {
+			return nil, nil, err
+		}
+		return nil, map[string]any{"message": "hello " + args.Name}, nil
+	})
+	if err := server.Run(context.Background(), &mcp.StdioTransport{}); err != nil {
+		_, _ = fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	// Keep the test harness's PASS line out of the MCP protocol stream.
+	os.Exit(0)
 }
 
 func TestStartSupportsChannelRouteAndHeaderFiltering(t *testing.T) {
+	t.Parallel()
+
 	mcpServer := mockmcpserver.NewMockMCPServer(
 		mockmcpserver.WithToolListChangedNotificationsDisabled(),
 		mockmcpserver.WithCalls(mockmcpserver.Call{
@@ -213,6 +254,8 @@ func TestStartSupportsChannelRouteAndHeaderFiltering(t *testing.T) {
 }
 
 func TestStartStreamsMultipleProgressNotificationsBeforeFinalResponse(t *testing.T) {
+	t.Parallel()
+
 	mcpServer := mockmcpserver.NewMockMCPServer(
 		mockmcpserver.WithToolListChangedNotificationsDisabled(),
 		mockmcpserver.WithCalls(mockmcpserver.Call{
@@ -259,6 +302,8 @@ func TestStartStreamsMultipleProgressNotificationsBeforeFinalResponse(t *testing
 }
 
 func TestHandleMCPBuffersProgressUntilFinalJSONForNonSSEClient(t *testing.T) {
+	t.Parallel()
+
 	server := &localServer{
 		tunnelID:        types.TunnelID("tunnel_jsonfallbackaaaaaaaaaaaaaaaaaa"),
 		responseTimeout: time.Second,
@@ -307,6 +352,8 @@ func TestHandleMCPBuffersProgressUntilFinalJSONForNonSSEClient(t *testing.T) {
 }
 
 func TestHandleMCPDropsConnectionNominatedResponseHeadersAndUsesJSON(t *testing.T) {
+	t.Parallel()
+
 	server := &localServer{
 		tunnelID:        types.TunnelID("tunnel_connectionoptionsaaaaaaaaaaaaaa"),
 		responseTimeout: time.Second,
@@ -359,6 +406,8 @@ func TestHandleMCPDropsConnectionNominatedResponseHeadersAndUsesJSON(t *testing.
 }
 
 func TestHandleResponsePreservesFinalWhenNotificationBufferIsFull(t *testing.T) {
+	t.Parallel()
+
 	request := &localRequest{
 		id:         "local-1",
 		responseCh: make(chan localResponse, 1),
@@ -396,6 +445,8 @@ func TestHandleResponsePreservesFinalWhenNotificationBufferIsFull(t *testing.T) 
 }
 
 func TestHandleTunnelRequiresExactBearerAuthorization(t *testing.T) {
+	t.Parallel()
+
 	const tunnelID = "tunnel_authboundaryaaaaaaaaaaaaaaaaaa"
 	server := &localServer{
 		tunnelID: types.TunnelID(tunnelID),
@@ -416,6 +467,7 @@ func TestHandleTunnelRequiresExactBearerAuthorization(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			recorder := httptest.NewRecorder()
 			request := httptest.NewRequest(http.MethodGet, "/v1/tunnels/"+tunnelID, nil)
 			if tt.authorization != "" {
@@ -439,6 +491,8 @@ func TestHandleTunnelRequiresExactBearerAuthorization(t *testing.T) {
 }
 
 func TestSanitizeForwardableRequestHeadersKeepsConnectorAuthorizationBoundary(t *testing.T) {
+	t.Parallel()
+
 	input := http.Header{
 		"Authorization":                  {"Bearer connector-user-token"},
 		"Mcp-Session-Id":                 {"session-123"},
@@ -521,6 +575,8 @@ func TestSanitizeForwardableRequestHeadersKeepsConnectorAuthorizationBoundary(t 
 }
 
 func TestHandleOAuthDiscoveryDoesNotForwardConnectorAuthorization(t *testing.T) {
+	t.Parallel()
+
 	server := &localServer{
 		tunnelID:        types.TunnelID("tunnel_oauthdiscoveryaaaaaaaaaaaaaaa"),
 		responseTimeout: time.Second,
@@ -567,6 +623,8 @@ func TestHandleOAuthDiscoveryDoesNotForwardConnectorAuthorization(t *testing.T) 
 }
 
 func TestRenderOAuthDiscoveryResponseDropsConnectionNominatedHeaders(t *testing.T) {
+	t.Parallel()
+
 	recorder := httptest.NewRecorder()
 	renderOAuthDiscoveryResponse(recorder, wiretypes.TunnelResponsePayload{
 		JSONResponse: json.RawMessage(`{"authorization_servers":["https://auth.example"]}`),
@@ -594,6 +652,8 @@ func TestRenderOAuthDiscoveryResponseDropsConnectionNominatedHeaders(t *testing.
 }
 
 func TestWaitForMCPProbeAllowsOAuthRequiredProbeError(t *testing.T) {
+	t.Parallel()
+
 	probeState := mcpclient.NewProbeState()
 	probeState.Set(errors.New("401 unauthorized"))
 
@@ -601,6 +661,8 @@ func TestWaitForMCPProbeAllowsOAuthRequiredProbeError(t *testing.T) {
 }
 
 func TestStartWritesProxyInfoFile(t *testing.T) {
+	t.Parallel()
+
 	mcpServer := mockmcpserver.NewMockMCPServer(mockmcpserver.WithToolListChangedNotificationsDisabled())
 	mcpServer.Start(t)
 	path := t.TempDir() + "/proxy.json"
@@ -622,6 +684,8 @@ func TestStartWritesProxyInfoFile(t *testing.T) {
 }
 
 func TestStartEnablesEphemeralHealthListenerWhenURLFileRequested(t *testing.T) {
+	t.Parallel()
+
 	mcpServer := mockmcpserver.NewMockMCPServer(mockmcpserver.WithToolListChangedNotificationsDisabled())
 	mcpServer.Start(t)
 	path := t.TempDir() + "/health.url"
@@ -652,11 +716,15 @@ func TestStartEnablesEphemeralHealthListenerWhenURLFileRequested(t *testing.T) {
 }
 
 func TestStartRejectsMissingMCPConfiguration(t *testing.T) {
+	t.Parallel()
+
 	_, err := Start(context.Background(), Options{})
 	require.ErrorContains(t, err, "set --mcp-server-url, --mcp-command, --profile, or --profile-file")
 }
 
 func TestStartRejectsUnavailableRustBackend(t *testing.T) {
+	t.Parallel()
+
 	_, err := Start(context.Background(), Options{
 		MCPServerURLs: []string{"http://127.0.0.1:1/mcp"},
 		Backend:       BackendRust,
@@ -665,12 +733,16 @@ func TestStartRejectsUnavailableRustBackend(t *testing.T) {
 }
 
 func TestResolveBackendAutoFallsBackToGo(t *testing.T) {
+	t.Parallel()
+
 	factory, err := resolveBackendFactory(BackendAuto, QueueBackendInMemory, nil)
 	require.NoError(t, err)
 	require.Equal(t, BackendGo, factory.Name())
 }
 
 func TestResolveBackendAutoPrefersRegisteredRust(t *testing.T) {
+	t.Parallel()
+
 	factory, err := resolveBackendFactory(BackendAuto, QueueBackendInMemory, []BackendFactory{
 		fakeBackendFactory{name: BackendRust},
 	})
@@ -679,26 +751,36 @@ func TestResolveBackendAutoPrefersRegisteredRust(t *testing.T) {
 }
 
 func TestResolveBackendRejectsUnavailableRust(t *testing.T) {
+	t.Parallel()
+
 	_, err := resolveBackendFactory(BackendRust, QueueBackendInMemory, nil)
 	require.ErrorContains(t, err, "rust local proxy backend is unavailable in this build")
 }
 
 func TestResolveBackendRejectsUnknownBackend(t *testing.T) {
+	t.Parallel()
+
 	_, err := resolveBackendFactory(BackendName("python"), QueueBackendInMemory, nil)
 	require.ErrorContains(t, err, `unknown local proxy backend "python"`)
 }
 
 func TestResolveRedisQueueRequiresRust(t *testing.T) {
+	t.Parallel()
+
 	_, err := resolveBackendFactory(BackendAuto, QueueBackendRedis, nil)
 	require.ErrorContains(t, err, "redis engine queue backend requires the rust local proxy backend")
 }
 
 func TestResolveRedisQueueRejectsGo(t *testing.T) {
+	t.Parallel()
+
 	_, err := resolveBackendFactory(BackendGo, QueueBackendRedis, nil)
 	require.ErrorContains(t, err, "go local proxy backend does not support redis engine queue backend")
 }
 
 func TestResolveRedisQueueUsesRegisteredRust(t *testing.T) {
+	t.Parallel()
+
 	factory, err := resolveBackendFactory(BackendAuto, QueueBackendRedis, []BackendFactory{
 		fakeBackendFactory{name: BackendRust},
 	})
@@ -707,6 +789,8 @@ func TestResolveRedisQueueUsesRegisteredRust(t *testing.T) {
 }
 
 func TestLocalServerStopClosesActivePollCombinedTCP(t *testing.T) {
+	t.Parallel()
+
 	const tunnelID = "tunnel_22222222222222222222222222222222"
 	server, err := startLocalServer(localServerOptions{
 		TunnelID: tunnelID,
@@ -732,6 +816,8 @@ func TestLocalServerStopClosesActivePollCombinedTCP(t *testing.T) {
 }
 
 func TestLocalServerStopClosesActiveRequestsWithUnixControlPlane(t *testing.T) {
+	t.Parallel()
+
 	if runtime.GOOS == "windows" {
 		t.Skip("Unix control-plane listener is unavailable on Windows")
 	}
@@ -751,6 +837,8 @@ func TestLocalServerStopClosesActiveRequestsWithUnixControlPlane(t *testing.T) {
 }
 
 func TestLocalServerStopClosesActiveRequestsWithUnixIngress(t *testing.T) {
+	t.Parallel()
+
 	if runtime.GOOS == "windows" {
 		t.Skip("Unix ingress listener is unavailable on Windows")
 	}
@@ -1020,8 +1108,7 @@ func jsonRPCResponseBody(body []byte) []byte {
 
 func jsonRPCEventBodies(body []byte) [][]byte {
 	var events [][]byte
-	lines := bytes.Split(body, []byte("\n"))
-	for _, rawLine := range lines {
+	for rawLine := range bytes.SplitSeq(body, []byte("\n")) {
 		line := bytes.TrimSpace(rawLine)
 		if payload, ok := bytes.CutPrefix(line, []byte("data: ")); ok {
 			events = append(events, payload)

@@ -5,7 +5,8 @@ config file, or a named YAML profile.
 
 - **Precedence**: flags > environment variables > YAML config > defaults.
 - **Requirement**: you must provide a control-plane API key, a tunnel ID, and a
-  `main` MCP channel binding (via `--mcp.server-url` or `--mcp.command`).
+  `main` MCP channel binding (via `--mcp.server-url`, `--mcp.command`, or one of
+  the [embedded demo modes](#embedded-demo-mcp-modes)).
 
 ## Agent-first commands
 
@@ -62,6 +63,72 @@ Starter prompts for Codex:
 - `Install the Codex plugin from the tunnel-client binary, connect the provided tunnel id, and tell me whether the runtime is launched, healthy, or ready.`
 - `Use tunnel-client runtimes to attach a local MCP server to an existing tunnel id and report the ui_url.`
 
+## Embedded demo MCP modes
+
+Both optional `run` flags start the same demo MCP tools (`server_info`, `echo`,
+and `uppercase`) and OAuth metadata endpoints inside the tunnel-client process,
+then bind its `main` MCP channel to that process's stub:
+
+| Flag | MCP compatibility behavior |
+| --- | --- |
+| `--embedded-mcp-stub` | Preserves stateful handling for legacy initialization and session requests, including `initialize` and `notifications/initialized`. Self-contained modern discovery and tool requests use stateless handling. |
+| `--embedded-stateless-mcp-stub` | Uses stateless handling for every MCP request, including `initialize` and `notifications/initialized`, without issuing `Mcp-Session-Id`. |
+
+For example, after replacing the runtime key and tunnel ID:
+
+```bash
+export CONTROL_PLANE_API_KEY="sk-..."
+export CONTROL_PLANE_TUNNEL_ID="tunnel_0123456789abcdef0123456789abcdef"
+tunnel-client run \
+  --embedded-stateless-mcp-stub \
+  --embedded-mcp-listen-addr 127.0.0.1:0 \
+  --embedded-mcp-server-name stateless-demo \
+  --embedded-mcp-server-version 1.0.0 \
+  --health.listen-addr 127.0.0.1:0
+```
+
+The modes are mutually exclusive. Neither can be combined with an explicit
+`--mcp.server-url` or `--mcp.command` flag, including the aliases
+`--mcp-server-url` and `--mcp-command`. Mode selection and embedded options are
+CLI flags for `run`; they have no environment-variable or YAML equivalents.
+Without either mode, the configured MCP target and existing defaults apply.
+
+`--embedded-stateless-mcp-stub` replaces a `main` target resolved from the
+environment, YAML config, or profile, and adds one if none is configured. It
+retains other MCP channels. Its main binding does not inherit configured MCP or
+global HTTP proxies. Replacing the target does not bypass validation of
+configured targets or duplicate-channel checks. This behavior applies only to
+the stateless flag; `--embedded-mcp-stub` keeps its existing configuration
+behavior.
+
+The stateless mode advertises `main` as stateless in v2 server-info metadata.
+Other configured channels retain their own affinity requirements. The compatible
+embedded mode retains its existing declaration.
+
+Shared options:
+
+| Option | Default | Meaning |
+| --- | --- | --- |
+| `--embedded-mcp-listen-addr` | `127.0.0.1:0` | Stub listen address; port `0` chooses an available port for each process. |
+| `--embedded-mcp-unix-socket` | Empty | Bind the stub to a Unix socket instead of TCP; cannot be combined with an explicit `--embedded-mcp-listen-addr`. |
+| `--embedded-mcp-server-name` | `mcp-stub` | Server name advertised by the demo. |
+| `--embedded-mcp-server-version` | `0.1.0` | Server version advertised by the demo. |
+
+For local socket-only MCP, add `--embedded-mcp-unix-socket /tmp/my-demo-mcp.sock`
+to either mode. The parent directory must exist and the socket path must be
+unused. The main channel and its OAuth discovery use the socket; the displayed
+`http://localhost/mcp` URL is its logical HTTP address. The listener removes its
+socket on shutdown. Combine this with `--health.unix-socket` to serve health and
+admin endpoints over a separate socket. Existing TCP defaults remain available.
+
+The stateless demo tools need no MCP session affinity: completed requests in
+one interaction can be followed by requests to another process's embedded
+stub. Clients do not need a session DELETE on exit; the stateless endpoint
+returns HTTP 405 for session DELETE and standalone GET streams. This does not
+provide replay of interrupted requests, shared OAuth state, or shared
+application state. Authentication and any state used by other applications
+must be handled separately.
+
 ## YAML config file
 
 Pass a config file with `--config /path/to/tunnel-client.yaml` or set
@@ -85,6 +152,8 @@ Profile lookup uses this precedence:
 2. `TUNNEL_CLIENT_PROFILE_DIR=/path/to/profiles`
 3. `$XDG_CONFIG_HOME/tunnel-client`
 4. `~/.config/tunnel-client`
+
+The selected profile directory may itself be a symlink; named profile symlinks must use relative targets within that directory, while `--profile-file` and `--from-file` accept explicit file paths.
 
 For example, with the default XDG fallback, the command above loads:
 
@@ -153,6 +222,9 @@ mcp:
     X-Internal-Auth: env:MCP_RUNTIME_HEADER_VALUE
   discovery_extra_headers:
     X-Discovery-Auth: file:/run/secrets/mcp-discovery-header
+  # Optional. Explicitly trust separate OAuth metadata/authorization origins.
+  oauth_trusted_origins:
+    - https://auth.example.com
   # Optional. Wait for a sidecar/local HTTP listener before the first poll.
   startup_wait_timeout: 60s
   connection_max_ttl: 10m
@@ -214,7 +286,9 @@ secrets are redacted before export.
 - `profiles add <name>`: create a profile from `--from-file` or a built-in
   sample such as `--sample sample_mcp_with_dcr`.
 - `profiles edit <name>`: open a profile in `$VISUAL` or `$EDITOR`, validate it,
-  and only save it when the edited YAML parses.
+  and only save it when the edited YAML parses. Only [supported editors and
+  safe options](profile-editor.md) are accepted; shell wrappers and evaluation
+  commands are rejected.
 - `codex assistant [prompt...]`: run a terminal assistant session through the
   supervised `codex app-server`; prompt args give one-shot mode and TTY stdin
   enters REPL mode. The default reasoning effort is `medium`, and the REPL
@@ -314,23 +388,38 @@ tunnel-client profiles add corp-proxy --sample sample_mcp_enterprise_proxy --tun
   - Flag: `--control-plane.poll-timeout`
   - Env: `CONTROL_PLANE_POLL_TIMEOUT`
   - Default: `30000ms`
-  - Behavior: tunnel-client sends this as the requested `/poll?timeout_ms=...`
+  - Behavior: tunnel-client sends this as the usual `/poll?timeout_ms=...`
     empty-poll wait budget. Together with `poll_deadline_guardrail`, the client
     poll HTTP/context deadline must stay at or below `600000ms`.
-  - For an HTTP-proxied route, tunnel-client starts with this configured wait.
-    If a poll loses its connection before response headers with an EOF-style error
+  - The first poll attempt with a positive command limit also applies the
+    initial-poll timeout below. Later attempts use the usual wait, including
+    after an initial failure.
+  - On HTTP-proxied routes, if a poll loses its connection before response
+    headers with an EOF-style error
     while neither deadline has fired, the process automatically learns a
     shorter wait for future proxied polls. The learned value only decreases,
     never below `5000ms`; configured `poll_timeout` remains the ceiling.
-    Direct routes and Unix sockets keep the configured value.
+    Subsequent direct and Unix-socket polls keep the configured value.
+- **Initial poll timeout**
+  - Flag: `--control-plane.initial-poll-timeout`
+  - Env: `CONTROL_PLANE_INITIAL_POLL_TIMEOUT`
+  - Default: `30s`, matching the normal poll default; must be positive.
+  - Behavior: the first poll attempt requests the shorter of this value and the
+    normal poll wait. Set a lower value for a shorter first wait. With the
+    default initial setting, a normal wait above `30s` is capped at `30s` on
+    the first attempt. Its full normal client deadline is retained for services
+    that clamp or ignore the requested wait.
+    Local test services can allow a lower minimum to exercise shorter initial
+    waits; the service's own minimum still determines the effective wait.
 - **Poll deadline guardrail**
   - Flag: `--control-plane.poll-deadline-guardrail`
   - Env: `CONTROL_PLANE_POLL_DEADLINE_GUARDRAIL`
   - Default: `5000ms`
   - Max: less than `60000ms`
-  - Behavior: tunnel-client adds this after the requested service wait when
-    setting the HTTP/context deadline so a normal `204 No Content` empty poll
-    can complete without being classified as a client timeout. Test profiles
+  - Behavior: tunnel-client adds this to the configured or proxy-learned wait
+    when setting the HTTP/context deadline, including on the first poll attempt,
+    so a normal `204 No Content` empty poll can complete without being classified
+    as a client timeout. Test profiles
     can override it with a smaller millisecond duration such as `500ms`.
 - **Poll channels (optional)**
   - Flag (repeatable): `--control-plane.poll-channel=main`
@@ -448,9 +537,31 @@ routing, streaming, OAuth discovery, and common setup pitfalls, see
   - Legacy form: `--mcp.command="npx -y @org/main-mcp"` (defaults to `main`)
   - Channel-qualified form: `--mcp.command="channel=bar,command=npx -y @org/bar-mcp"`
   - Behavior: spawns the command once and uses the child process stdin/stdout for MCP frames
-  - Note: stdio transport does not support MCP sessions
+  - Deployment limit: multiple active `tunnel-client` instances sharing a
+    tunnel ID with stdio bindings are **not supported**. See
+    [stdio deployment limits](#stdio-deployment-limits).
   - Note: when using `MCP_COMMAND` with multiple entries, separate entries with
     newlines so semicolons remain part of the command.
+- **Automatic stdio initialization guard**
+  - Each request selects its protocol lifecycle automatically; no configuration
+    is required. This applies to stdio channels only.
+  - Reject legacy requests such as `tools/call`
+    before the shared child completes a successful `initialize` exchange and
+    receives `notifications/initialized`. This prevents requests from reaching
+    a stateful stdio server before it is ready.
+  - The caller owns initialization and recovery. The guard does not synthesize
+    `initialize`, replay rejected requests, or initialize a replacement child.
+    The notification shim below can supply `notifications/initialized` after
+    the caller's successful `initialize` response.
+  - The client reports rejected calls with `status_code: 409`, JSON-RPC code `-32002`, and
+    `error.data.error_type: "mcp_initialization_required"`; it is not written
+    to the child. Send the handshake before retrying the call.
+  - Self-contained requests with a protocol date of `2026-07-28` or later and
+    a client-capabilities object in `params._meta` bypass this guard. The server
+    validates the requested version and capabilities. These requests do not
+    mark the legacy handshake complete.
+  - Legacy callers must complete the handshake even if their server previously
+    tolerated calls before initialization. Stateless HTTP targets are unaffected.
 - **Stdio initialized notification shim (optional)**
   - Flag: `--mcp.stdio-send-initialized-notification`
   - Env: `MCP_STDIO_SEND_INITIALIZED_NOTIFICATION`
@@ -460,7 +571,7 @@ routing, streaming, OAuth discovery, and common setup pitfalls, see
     successful forwarded stdio `initialize` response and suppresses a later
     duplicate from the caller. Enable it only for stdio servers that implement
     the MCP lifecycle notification and callers that can omit it; leaving it
-    disabled preserves legacy verbatim forwarding.
+    disabled forwards the caller's notifications without generating one.
 - **Multiple entries**
   - Flags are repeatable; each entry can target a different channel.
   - Environment variables accept newline-delimited entries.
@@ -543,6 +654,48 @@ routing, streaming, OAuth discovery, and common setup pitfalls, see
 
 **OAuth-protected MCP notes:**
 
+- OAuth discovery trusts the configured MCP server origin by default. Any
+  additional origin advertised through `WWW-Authenticate resource_metadata`,
+  or protected-resource metadata `authorization_servers` must be explicitly
+  trusted. Redirects remain restricted to the selected metadata origin even
+  when other origins are trusted. Trust is matched by scheme, host, and port;
+  trusting a host does not trust its subdomains or other ports.
+- Configure additional origins with repeated
+  `--mcp.oauth-trusted-origin https://auth.example.com` flags, the newline-separated
+  `MCP_OAUTH_TRUSTED_ORIGINS` environment variable, or the YAML
+  `mcp.oauth_trusted_origins` list. Flags replace the environment or YAML list;
+  the environment replaces the YAML list. Entries must be absolute `http://`
+  or `https://` origins without credentials, a path (except an optional `/`),
+  a query, or a fragment. Explicitly trusted private origins are supported.
+  This setting authorizes discovery requests only; it does not add forwarding
+  targets or expand the scope of configured credentials.
+- When upgrading a configuration that discovers metadata or an authorization
+  server on a separate origin, add each expected origin to this list before
+  starting the client. For example, an MCP server at
+  `https://mcp.example.com/mcp` whose metadata advertises
+  `https://auth.example.com/tenant` needs `https://auth.example.com` in
+  `mcp.oauth_trusted_origins`. An untrusted server cannot expand this list by
+  advertising more origins.
+- For a mixed-version rollout, first set `MCP_OAUTH_TRUSTED_ORIGINS` in the
+  process environment and leave existing YAML and flags unchanged. Older
+  releases ignore this environment variable; updated binaries enforce it.
+  For the example above, use
+  `MCP_OAUTH_TRUSTED_ORIGINS=https://auth.example.com`. Separate multiple origins
+  with newlines. This single configuration supports both binary versions.
+- Keep the environment setting throughout the mixed-version rollout and
+  rollback window. Canary the new binary, validate discovery and authenticated
+  MCP requests, then upgrade the remaining deployments independently. Only
+  switch to the new YAML key or flag after no older binary needs to read that
+  configuration: older releases reject those new settings. No coordinated
+  tunnel-service upgrade is required. Updated binaries enforce explicit trust
+  immediately; the compatibility window does not enable permissive discovery.
+- Before promoting the upgrade, validate OAuth discovery and an authenticated
+  MCP request using the deployment's configured transport. Retain the previous
+  binary and compatible configuration until validation completes. Prefer
+  correcting missing trusted origins. If a rollback is approved, restore the
+  previous binary with the unchanged legacy YAML/flags and pre-staged environment
+  variable, or restore its matching configuration if new YAML/flags were adopted.
+  Running the previous binary temporarily removes the new protection.
 - Forwards inbound `Authorization` headers and protected-resource discovery
   GETs through the tunnel client. Discovery payload `resource` values and
   `WWW-Authenticate resource_metadata` values are rewritten to tunnel-service
@@ -575,6 +728,34 @@ routing, streaming, OAuth discovery, and common setup pitfalls, see
 
 All response payloads posted to `/v1/tunnels/{tunnel_id}/response` include the
 resolved `channel` value.
+
+### Stdio deployment limits
+
+Run only **one active `tunnel-client` instance per tunnel ID** when using
+`--mcp.command` / `MCP_COMMAND`. Multiple active instances sharing that tunnel
+ID are **not supported**, whether they run on the same host, on different
+hosts, in containers, or in Kubernetes Pods. This also includes temporary
+overlap during a rolling restart or upgrade.
+
+Each instance starts a separate stdio MCP child with its own initialization
+and session state. Tunnel requests are not pinned to the instance that
+handled initialization: `initialize` can reach one child and a later
+`tools/call` another. Calls can therefore time out even when every instance
+reports healthy and ready. Setting `--mcp.max-concurrent-requests=1` limits
+work within each instance; it does not provide routing between instances.
+
+Stop the old instance before starting its replacement. For a Kubernetes
+Deployment using stdio, use `replicas: 1` and `strategy.type: Recreate` to avoid
+overlap during updates; `replicas: 1` alone can still permit a rolling-update
+surge. To run independent instances, give each a distinct tunnel ID. Multiple
+stdio bindings on different channels within one instance remain supported.
+
+Stdio uses one shared child connection per channel, without independent MCP
+session isolation. The `proc_affinity` capability declares a need for process
+affinity; it does not implement routing affinity. The
+`--mcp.stdio-send-initialized-notification` option only sends the notification
+after a successful forwarded `initialize` response. It does not initialize
+every replica or make multiple stdio instances safe.
 
 ## Harpoon MCP (outbound HTTP allowlist)
 
@@ -697,6 +878,23 @@ later OAuth discovery commands or registry mutations.
   - Warning: may log sensitive headers/bodies; enable only for controlled debugging.
 
 ## Health/admin server
+
+See [local health and component details](health.md) for the route contract,
+HTTP and Unix examples, and component meanings. Existing `/healthz`, `/readyz`,
+and `/metrics` behavior is unchanged.
+
+- **Show component details by default**
+  - Flag: `--health.show-details`
+  - Env: `HEALTH_SHOW_DETAILS`
+  - YAML: `health.show_details`
+  - Default: `false`, in all three binary flavors.
+  - Precedence: explicit flag, environment, YAML/profile, default. Explicit
+    false overrides true from a lower-precedence source.
+  - `/health?details=true` and `/health?details=false` override the default for
+    one request. `/health/mcp` always returns component details.
+  - All new `/health` routes require loopback TCP or the configured Unix
+    socket. This setting controls output only; it does not initiate probes or
+    expand access, including when `--allow-remote-ui` is set.
 
 - **Listen address**
   - Flag: `--health.listen-addr`

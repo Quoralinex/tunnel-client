@@ -8,6 +8,8 @@ import (
 )
 
 func TestHostClassifierDefaultsPrivateIPs(t *testing.T) {
+	t.Parallel()
+
 	classifier := NewHostClassifier(runtimeconfig.HarpoonHostClassifierConfig{
 		IncludeLoopback: true,
 		IncludePrivate:  true,
@@ -36,7 +38,6 @@ func TestHostClassifierTreatsLocalhostAsLoopback(t *testing.T) {
 		IncludePrivate:  false,
 	})
 	for _, host := range []string{"localhost", "LOCALHOST", "localhost."} {
-		host := host
 		t.Run(host, func(t *testing.T) {
 			t.Parallel()
 
@@ -68,6 +69,8 @@ func TestHostClassifierTreatsLocalhostAsLoopback(t *testing.T) {
 }
 
 func TestHostClassifierSuffixAndRegex(t *testing.T) {
+	t.Parallel()
+
 	classifier := NewHostClassifier(runtimeconfig.HarpoonHostClassifierConfig{
 		IncludeLoopback: false,
 		IncludePrivate:  false,
@@ -93,6 +96,8 @@ func TestHostClassifierSuffixAndRegex(t *testing.T) {
 }
 
 func TestHostClassifierDisableRanges(t *testing.T) {
+	t.Parallel()
+
 	classifier := NewHostClassifier(runtimeconfig.HarpoonHostClassifierConfig{
 		IncludeLoopback: false,
 		IncludePrivate:  false,
@@ -107,6 +112,8 @@ func TestHostClassifierDisableRanges(t *testing.T) {
 }
 
 func TestHostClassifierURLHostname(t *testing.T) {
+	t.Parallel()
+
 	classifier := NewHostClassifier(runtimeconfig.HarpoonHostClassifierConfig{
 		IncludeSuffix:  []string{"internal"},
 		IncludePrivate: false,
@@ -123,6 +130,8 @@ func TestHostClassifierURLHostname(t *testing.T) {
 }
 
 func TestHostClassifierRejectsUnsupportedScheme(t *testing.T) {
+	t.Parallel()
+
 	classifier := NewHostClassifier(runtimeconfig.HarpoonHostClassifierConfig{
 		IncludeSuffix: []string{"internal"},
 	})

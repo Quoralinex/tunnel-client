@@ -14,6 +14,8 @@ import (
 )
 
 func TestComputeEndToEndLatency(t *testing.T) {
+	t.Parallel()
+
 	t.Helper()
 
 	if _, ok := computeEndToEndLatency(time.Time{}); ok {
@@ -68,6 +70,8 @@ func dataPointsByLatencyTypeForMetricsTest(t *testing.T, dps []metricdata.Histog
 }
 
 func TestProcessorMetricsRecordCommandLatenciesOnlyRecordsOnce(t *testing.T) {
+	t.Parallel()
+
 	t.Helper()
 
 	reader := sdkmetric.NewManualReader()
@@ -100,6 +104,8 @@ func TestProcessorMetricsRecordCommandLatenciesOnlyRecordsOnce(t *testing.T) {
 }
 
 func TestProcessorMetricsRecordCommandLatenciesSkipsEnqueueLatencyWhenMissing(t *testing.T) {
+	t.Parallel()
+
 	t.Helper()
 
 	reader := sdkmetric.NewManualReader()

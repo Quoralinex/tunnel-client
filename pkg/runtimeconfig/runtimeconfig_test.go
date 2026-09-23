@@ -17,6 +17,8 @@ const (
 )
 
 func TestRegisterFlagsRuntimeOmitsFullOnlyAndCloudflared(t *testing.T) {
+	t.Parallel()
+
 	fs := pflag.NewFlagSet("runtime", pflag.ContinueOnError)
 	RegisterFlags(fs, FlavorRuntime)
 
@@ -33,6 +35,8 @@ func TestRegisterFlagsRuntimeOmitsFullOnlyAndCloudflared(t *testing.T) {
 }
 
 func TestRegisterFlagsCloudflaredAddsApprovedCompanionFlags(t *testing.T) {
+	t.Parallel()
+
 	fs := pflag.NewFlagSet("runtime-cloudflared", pflag.ContinueOnError)
 	RegisterFlags(fs, FlavorRuntimeCloudflared)
 
@@ -49,6 +53,8 @@ func TestRegisterFlagsCloudflaredAddsApprovedCompanionFlags(t *testing.T) {
 }
 
 func TestRuntimeSettingAllowlistsStayExplicitAndCurrent(t *testing.T) {
+	t.Parallel()
+
 	assertExactRuntimeSettingList(t, "full-only flags", fullOnlyFlags, []string{
 		"admin-ui.log-buffer-events",
 		"allow-remote-ui",
@@ -82,6 +88,8 @@ func TestRuntimeSettingAllowlistsStayExplicitAndCurrent(t *testing.T) {
 }
 
 func TestLoadFromFlagSetPreservesFlagsEnvYAMLDefaultsPrecedence(t *testing.T) {
+	t.Parallel()
+
 	configPath := writeRuntimeConfig(t, `
 config_version: 1
 control_plane:
@@ -128,6 +136,8 @@ health:
 }
 
 func TestRuntimeAcceptsDisabledGeneratedProfileAdminUICompatibilityField(t *testing.T) {
+	t.Parallel()
+
 	configPath := writeRuntimeConfig(t, `
 config_version: 1
 control_plane:
@@ -146,8 +156,11 @@ admin_ui:
 }
 
 func TestRuntimeRejectsNonDefaultAdminUIKeys(t *testing.T) {
+	t.Parallel()
+
 	for key, value := range map[string]string{"allow_remote": "true", "log_buffer_events": "2001"} {
 		t.Run(key, func(t *testing.T) {
+			t.Parallel()
 			configPath := writeRuntimeConfig(t, `
 config_version: 1
 control_plane:
@@ -169,6 +182,8 @@ admin_ui:
 }
 
 func TestRuntimeAcceptsDefaultEquivalentFullOnlyEnvironment(t *testing.T) {
+	t.Parallel()
+
 	cases := []struct {
 		name  string
 		value string
@@ -183,6 +198,7 @@ func TestRuntimeAcceptsDefaultEquivalentFullOnlyEnvironment(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name+"="+tc.value, func(t *testing.T) {
+			t.Parallel()
 			fs := runtimeFlagSet(t, FlavorRuntime,
 				"--control-plane.tunnel-id", testTunnelID,
 				"--mcp.server-url", "https://mcp.example.invalid/mcp",
@@ -196,6 +212,8 @@ func TestRuntimeAcceptsDefaultEquivalentFullOnlyEnvironment(t *testing.T) {
 }
 
 func TestRuntimeRejectsNonDefaultFullOnlyEnvironment(t *testing.T) {
+	t.Parallel()
+
 	nonDefaultValue := map[string]string{
 		"ALLOW_REMOTE_UI":            "true",
 		"OPEN_WEB_UI":                "true",
@@ -206,6 +224,7 @@ func TestRuntimeRejectsNonDefaultFullOnlyEnvironment(t *testing.T) {
 	for _, setting := range fullOnlyEnv {
 		name := setting.name
 		t.Run(name, func(t *testing.T) {
+			t.Parallel()
 			fs := runtimeFlagSet(t, FlavorRuntime,
 				"--control-plane.tunnel-id", testTunnelID,
 				"--mcp.server-url", "https://mcp.example.invalid/mcp",
@@ -220,6 +239,8 @@ func TestRuntimeRejectsNonDefaultFullOnlyEnvironment(t *testing.T) {
 }
 
 func TestRuntimeIgnoresUnrelatedEnvironment(t *testing.T) {
+	t.Parallel()
+
 	fs := runtimeFlagSet(t, FlavorRuntime,
 		"--control-plane.tunnel-id", testTunnelID,
 		"--mcp.server-url", "https://mcp.example.invalid/mcp",
@@ -234,7 +255,10 @@ func TestRuntimeIgnoresUnrelatedEnvironment(t *testing.T) {
 }
 
 func TestRuntimeRejectsHarpoonPayloadCaptureSurface(t *testing.T) {
+	t.Parallel()
+
 	t.Run("flag", func(t *testing.T) {
+		t.Parallel()
 		fs := pflag.NewFlagSet("runtime", pflag.ContinueOnError)
 		RegisterFlags(fs, FlavorRuntime)
 		if err := fs.Parse([]string{"--harpoon.capture-payloads"}); err == nil {
@@ -242,6 +266,7 @@ func TestRuntimeRejectsHarpoonPayloadCaptureSurface(t *testing.T) {
 		}
 	})
 	t.Run("yaml", func(t *testing.T) {
+		t.Parallel()
 		configPath := writeRuntimeConfig(t, `
 config_version: 1
 control_plane:
@@ -262,6 +287,8 @@ harpoon:
 }
 
 func TestNormalRuntimeRejectsCloudflaredConfiguration(t *testing.T) {
+	t.Parallel()
+
 	fs := runtimeFlagSet(t, FlavorRuntimeCloudflared,
 		"--control-plane.tunnel-id", testTunnelID,
 		"--mcp.server-url", "https://mcp.example.invalid/mcp",
@@ -274,6 +301,8 @@ func TestNormalRuntimeRejectsCloudflaredConfiguration(t *testing.T) {
 }
 
 func TestNormalRuntimeRejectsCloudflaredYAML(t *testing.T) {
+	t.Parallel()
+
 	configPath := writeRuntimeConfig(t, `
 config_version: 1
 control_plane:
@@ -293,6 +322,8 @@ cloudflared:
 }
 
 func TestCloudflaredLoaderAcceptsOnlyApprovedCompanionSettings(t *testing.T) {
+	t.Parallel()
+
 	fs := runtimeFlagSet(t, FlavorRuntimeCloudflared,
 		"--control-plane.tunnel-id", testTunnelID,
 		"--mcp.server-url", "https://mcp.example.invalid/mcp",
@@ -313,13 +344,17 @@ func TestCloudflaredLoaderAcceptsOnlyApprovedCompanionSettings(t *testing.T) {
 }
 
 func TestRuntimeHarpoonConfigHasNoCapturePayloadsField(t *testing.T) {
-	if _, ok := reflect.TypeOf(HarpoonConfig{}).FieldByName("CapturePayloads"); ok {
+	t.Parallel()
+
+	if _, ok := reflect.TypeFor[HarpoonConfig]().FieldByName("CapturePayloads"); ok {
 		t.Fatal("runtime HarpoonConfig unexpectedly exposes CapturePayloads")
 	}
 }
 
 func TestRuntimeConfigHasNoFullOnlyFields(t *testing.T) {
-	typ := reflect.TypeOf(Config{})
+	t.Parallel()
+
+	typ := reflect.TypeFor[Config]()
 	for _, name := range []string{"AdminUI", "Cloudflared", "ProxyHealth"} {
 		if _, ok := typ.FieldByName(name); ok {
 			t.Fatalf("runtime Config unexpectedly exposes full-only field %q", name)

@@ -30,6 +30,8 @@ func (s stubStdioRuntimeInfoProvider) StdioRuntimeInfo(channel types.Channel) (m
 }
 
 func TestBuildStatusIncludesChannels(t *testing.T) {
+	t.Parallel()
+
 	buffer := NewLogBufferWithCapacity(1)
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 
@@ -78,6 +80,8 @@ func TestBuildStatusIncludesChannels(t *testing.T) {
 }
 
 func TestBuildStatusIncludesStdioChannelDetails(t *testing.T) {
+	t.Parallel()
+
 	buffer := NewLogBufferWithCapacity(1)
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 
@@ -126,6 +130,8 @@ func TestBuildStatusIncludesStdioChannelDetails(t *testing.T) {
 }
 
 func TestBuildStatusIncludesMainChannelProbeFailure(t *testing.T) {
+	t.Parallel()
+
 	buffer := NewLogBufferWithCapacity(1)
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 
@@ -162,6 +168,8 @@ func TestBuildStatusIncludesMainChannelProbeFailure(t *testing.T) {
 }
 
 func TestBuildStatusIncludesMainChannelProbeTimeoutWithoutDisablingChannel(t *testing.T) {
+	t.Parallel()
+
 	buffer := NewLogBufferWithCapacity(1)
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 

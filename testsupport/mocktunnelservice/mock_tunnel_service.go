@@ -55,6 +55,15 @@ func WithPollWaitLimit(limit time.Duration) Option {
 	}
 }
 
+// WithPollHandler installs test-only behavior after authentication and before
+// queue access. Returning true means the handler wrote the complete response;
+// false continues normal command delivery. The handler must be concurrency-safe.
+func WithPollHandler(handler func(http.ResponseWriter, *http.Request) bool) Option {
+	return func(mock *MockTunnelService) {
+		mock.pollHandler = handler
+	}
+}
+
 // WithSessionHeaderPropagation enables automatic propagation of MCP session headers between
 // responses and subsequent commands.
 func WithSessionHeaderPropagation() Option {
@@ -239,6 +248,7 @@ type MockTunnelService struct {
 	allowPending        bool
 	pollStatus          int
 	pollFailures        int
+	pollHandler         func(http.ResponseWriter, *http.Request) bool
 
 	tb atomic.Value // testing.TB
 }
@@ -858,6 +868,9 @@ func (m *MockTunnelService) handlePoll(w http.ResponseWriter, r *http.Request) {
 	m.assertAuthHeaders(r)
 	if got := m.extractTunnelID(r.URL.Path, "/poll"); got != m.tunnelID {
 		m.failf("unexpected tunnel_id %q in poll path", got)
+	}
+	if m.pollHandler != nil && m.pollHandler(w, r) {
+		return
 	}
 	m.mu.Lock()
 	pollStatus := m.pollStatus

@@ -12,6 +12,8 @@ type stubTransport struct{}
 func (stubTransport) Connect(context.Context) (mcp.Connection, error) { return nil, nil }
 
 func TestNewForwardingTransportNilBaseReturnsNil(t *testing.T) {
+	t.Parallel()
+
 	t.Helper()
 
 	if got := NewForwardingTransport(nil); got != nil {
@@ -20,6 +22,8 @@ func TestNewForwardingTransportNilBaseReturnsNil(t *testing.T) {
 }
 
 func TestNewForwardingTransportWrapsBase(t *testing.T) {
+	t.Parallel()
+
 	t.Helper()
 
 	if got := NewForwardingTransport(stubTransport{}); got == nil {

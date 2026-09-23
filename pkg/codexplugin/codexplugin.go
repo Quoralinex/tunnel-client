@@ -470,11 +470,8 @@ func (version semverLikeVersion) compare(other semverLikeVersion) int {
 func compareSemverPrerelease(left string, right string) int {
 	leftParts := strings.Split(left, ".")
 	rightParts := strings.Split(right, ".")
-	limit := len(leftParts)
-	if len(rightParts) < limit {
-		limit = len(rightParts)
-	}
-	for i := 0; i < limit; i++ {
+	limit := min(len(leftParts), len(rightParts))
+	for i := range limit {
 		if cmp := compareSemverPrereleaseIdentifier(leftParts[i], rightParts[i]); cmp != 0 {
 			return cmp
 		}
@@ -529,7 +526,7 @@ type tomlSection struct {
 
 func splitSections(text string) []tomlSection {
 	sections := []tomlSection{{}}
-	for _, line := range strings.Split(text, "\n") {
+	for line := range strings.SplitSeq(text, "\n") {
 		if strings.HasPrefix(line, "[") && strings.HasSuffix(line, "]") {
 			sections = append(sections, tomlSection{
 				name:  strings.TrimSuffix(strings.TrimPrefix(line, "["), "]"),

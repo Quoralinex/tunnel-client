@@ -29,7 +29,7 @@ func parseProxyReference(flagName, raw string, lookupEnv func(string) (string, b
 	if envReference, ok := strings.CutPrefix(trimmed, envPrefix); ok {
 		envVar := strings.TrimSpace(envReference)
 		if envVar == "" {
-			return nil, "", fmt.Errorf("invalid %s proxy: environment variable name is required after env:", flagName)
+			return nil, "", fmt.Errorf("invalid %s proxy: environment variable name is required after the env: prefix", flagName)
 		}
 		value, ok := lookupEnv(envVar)
 		if !ok {

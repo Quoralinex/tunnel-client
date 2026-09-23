@@ -37,6 +37,8 @@ func TestStatusReconcilesStaleAliasHealthURLWithLiveRuntimeAndPollHealth(t *test
 		case "/api/status":
 			w.Header().Set("content-type", "application/json")
 			_, _ = w.Write([]byte(`{"control_plane_tunnel_id":"tunnel_123","control_plane_route":{"kind":"control_plane","route_mode":"proxy"}}`))
+		case "/health/mcp":
+			_, _ = w.Write([]byte(`{"schema_version":1,"component":"mcp"}`))
 		case "/api/system":
 			w.Header().Set("content-type", "application/json")
 			_, _ = w.Write([]byte(`{"proxy_health":[{"health_state":"failed","route":{"kind":"control_plane","route_mode":"proxy","proxy_url":"http://127.0.0.1:9"},"last_check":"2026-05-08T00:00:00Z"}]}`))
@@ -71,6 +73,8 @@ func TestStatusReconcilesStaleAliasHealthURLWithLiveRuntimeAndPollHealth(t *test
 
 	require.Equal(t, true, payload["healthy"])
 	require.Equal(t, true, payload["ready"])
+	require.Equal(t, server.URL+"/health?details=true", payload["health_details_url"])
+	require.Equal(t, server.URL+"/health/mcp", payload["mcp_health_url"])
 	require.Equal(t, "failed", payload["control_plane_poll_health"].(map[string]any)["state"])
 	local := payload["local"].(map[string]any)
 	require.Equal(t, true, local["live_admin_ui"].(map[string]any)["found"])
@@ -246,7 +250,7 @@ func TestConcurrentConnectSameAliasStartsOnlyOneProcess(t *testing.T) {
 
 	launched := 0
 	reused := 0
-	for i := 0; i < 2; i++ {
+	for range 2 {
 		select {
 		case result := <-results:
 			require.NoError(t, result.err)

@@ -19,15 +19,16 @@ import (
 )
 
 const (
-	defaultCodexAssistantApprovalPolicy = "never"
-	defaultCodexAssistantSandboxType    = "workspace-write"
-	defaultCodexAssistantEffort         = "medium"
-	defaultCodexAssistantLoginTimeout   = 5 * time.Minute
+	defaultCodexAssistantApprovalPolicy  = "never"
+	defaultCodexAssistantSandboxType     = "workspace-write"
+	defaultCodexAssistantEffort          = "medium"
+	defaultCodexAssistantLoginTimeout    = 5 * time.Minute
+	defaultCodexAssistantTurnIdleTimeout = 2 * time.Minute
 )
 
-var codexAssistantTurnIdleTimeout = 2 * time.Minute
-
 type codexAssistantOptions struct {
+	lookupEnv             func(string) (string, bool)
+	turnIdleTimeout       time.Duration
 	CWD                   string
 	Model                 string
 	ModelProvider         string
@@ -48,12 +49,14 @@ type codexAssistantWaitingRenderer struct {
 	promptShown bool
 }
 
-func newCodexAssistantCommand(stdout io.Writer, stderr io.Writer) *cobra.Command {
+func newCodexAssistantCommand(lookupEnv func(string) (string, bool), stdout io.Writer, stderr io.Writer, turnIdleTimeout time.Duration) *cobra.Command {
 	options := codexAssistantOptions{
-		ApprovalPolicy: defaultCodexAssistantApprovalPolicy,
-		SandboxType:    defaultCodexAssistantSandboxType,
-		Effort:         defaultCodexAssistantEffort,
-		LoginTimeout:   defaultCodexAssistantLoginTimeout,
+		lookupEnv:       lookupEnv,
+		turnIdleTimeout: turnIdleTimeout,
+		ApprovalPolicy:  defaultCodexAssistantApprovalPolicy,
+		SandboxType:     defaultCodexAssistantSandboxType,
+		Effort:          defaultCodexAssistantEffort,
+		LoginTimeout:    defaultCodexAssistantLoginTimeout,
 	}
 	cmd := &cobra.Command{
 		Use:   "assistant [prompt...]",
@@ -96,7 +99,7 @@ func runCodexAssistant(
 		ctx = context.Background()
 	}
 
-	bridge := codexappserver.NewBridge(nil, nil)
+	bridge := codexappserver.NewBridgeWithLookupEnv(nil, nil, options.lookupEnv)
 	defer func() {
 		stopCtx, stopCancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer stopCancel()
@@ -145,7 +148,7 @@ func ensureCodexAssistantLogin(
 		return nil
 	}
 	if !interactive {
-		return errors.New("Codex is logged out; rerun `tunnel-client codex assistant` in a terminal to complete device-code login")
+		return errors.New("the Codex session is logged out; rerun `tunnel-client codex assistant` in a terminal to complete device-code login")
 	}
 
 	login, err := bridge.StartDeviceCodeLogin(ctx)
@@ -173,7 +176,7 @@ func ensureCodexAssistantLogin(
 			return nil
 		}
 		if current.Login != nil && !current.Login.Pending && strings.TrimSpace(current.Login.LastError) != "" {
-			return fmt.Errorf("Codex login failed: %s", current.Login.LastError)
+			return fmt.Errorf("the Codex login failed: %s", current.Login.LastError)
 		}
 		select {
 		case <-waitCtx.Done():
@@ -255,7 +258,7 @@ func startCodexAssistantThread(
 	bridge *codexappserver.Bridge,
 	options codexAssistantOptions,
 ) (string, error) {
-	workingDir := assistantWorkingDirectory(options.CWD)
+	workingDir := assistantWorkingDirectoryWithLookupEnv(options.CWD, options.lookupEnv)
 	result, err := bridge.StartThread(ctx, codexappserver.ThreadStartParams{
 		CWD:                   workingDir,
 		Model:                 strings.TrimSpace(options.Model),
@@ -358,7 +361,7 @@ func runCodexAssistantPrompt(
 	if prompt == "" {
 		return errors.New("assistant prompt is required")
 	}
-	workingDir := assistantWorkingDirectory(options.CWD)
+	workingDir := assistantWorkingDirectoryWithLookupEnv(options.CWD, options.lookupEnv)
 	if item := buildCodexAssistantKnowledgeItem(prompt); item != nil {
 		if err := bridge.InjectThreadItems(ctx, threadID, []map[string]any{item}); err != nil {
 			return fmt.Errorf("inject assistant knowledge base context: %w", err)
@@ -384,7 +387,7 @@ func runCodexAssistantPrompt(
 	}
 
 	waiting := newCodexAssistantWaitingRenderer(stderr)
-	return waitForCodexAssistantTurn(ctx, bridge, stdout, result.TurnID, events, waiting)
+	return waitForCodexAssistantTurn(ctx, bridge, stdout, result.TurnID, events, waiting, options.turnIdleTimeout)
 }
 
 func waitForCodexAssistantTurn(
@@ -394,11 +397,12 @@ func waitForCodexAssistantTurn(
 	turnID string,
 	events <-chan codexappserver.Event,
 	waiting *codexAssistantWaitingRenderer,
+	idleTimeout time.Duration,
 ) error {
 	if waiting != nil {
 		defer waiting.Finish()
 	}
-	stallTimer := time.NewTimer(codexAssistantTurnIdleTimeout)
+	stallTimer := time.NewTimer(idleTimeout)
 	defer stallTimer.Stop()
 	resetStallTimer := func() {
 		if !stallTimer.Stop() {
@@ -407,7 +411,7 @@ func waitForCodexAssistantTurn(
 			default:
 			}
 		}
-		stallTimer.Reset(codexAssistantTurnIdleTimeout)
+		stallTimer.Reset(idleTimeout)
 	}
 	streamed := false
 	finalMessage := ""
@@ -419,7 +423,7 @@ func waitForCodexAssistantTurn(
 			return codexAssistantWaitError(
 				"assistant turn stalled after turn/start",
 				bridge,
-				fmt.Sprintf("turn %s produced no completion or output for %s", turnID, codexAssistantTurnIdleTimeout),
+				fmt.Sprintf("turn %s produced no completion or output for %s", turnID, idleTimeout),
 			)
 		case event, ok := <-events:
 			if !ok {
@@ -628,11 +632,18 @@ func buildCodexCLITextInput(prompt string) map[string]any {
 }
 
 func assistantWorkingDirectory(raw string) string {
+	return assistantWorkingDirectoryWithLookupEnv(raw, os.LookupEnv)
+}
+
+func assistantWorkingDirectoryWithLookupEnv(raw string, lookupEnv func(string) (string, bool)) string {
 	raw = strings.TrimSpace(raw)
 	if raw != "" {
 		return raw
 	}
-	if bazelCWD := strings.TrimSpace(os.Getenv("BUILD_WORKING_DIRECTORY")); bazelCWD != "" {
+	if lookupEnv == nil {
+		lookupEnv = os.LookupEnv
+	}
+	if bazelCWD, ok := lookupEnv("BUILD_WORKING_DIRECTORY"); ok && strings.TrimSpace(bazelCWD) != "" {
 		return inferTunnelClientWorkspace(bazelCWD)
 	}
 	cwd, err := os.Getwd()

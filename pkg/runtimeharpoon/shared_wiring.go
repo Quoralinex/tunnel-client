@@ -55,6 +55,7 @@ type SharedServiceParams struct {
 	Logger                   *slog.Logger
 	MeterProvider            *sdkmetric.MeterProvider
 	Config                   *runtimeconfig.HarpoonConfig
+	ControlPlane             *runtimeconfig.ControlPlaneConfig
 	Health                   *runtimeconfig.HealthConfig
 	HealthSvc                runtimehealth.Service
 	TLSBundle                *tlsconfig.Bundle
@@ -98,8 +99,19 @@ func NewSharedService(p SharedServiceParams) (SharedServiceOutputs, error) {
 			return SharedServiceOutputs{}, err
 		}
 	}
+	// Programmatic targets are absent from the config loader's policy scan.
+	// Both Fx adapters publish this registry before the control-plane client
+	// is constructed, so finish deriving its privacy policy here as well.
+	if p.ControlPlane != nil {
+		for _, target := range registry.Targets() {
+			if target.template.HasRichHeaderRules() {
+				p.ControlPlane.SuppressRawHTTPLogging = true
+				break
+			}
+		}
+	}
 
-	serverOptions := make([]ServerOption, 0, 2)
+	serverOptions := []ServerOption{WithPolicyBinding(p.ControlPlane)}
 	if p.MeterProvider != nil {
 		serverOptions = append(serverOptions, WithMeter(p.MeterProvider.Meter("harpoon")))
 	}
@@ -147,6 +159,9 @@ func NewSharedService(p SharedServiceParams) (SharedServiceOutputs, error) {
 			}
 			p.Logger.Info("harpoon enabled", logFields...)
 			for _, target := range targets {
+				if target.IsTemplate() {
+					continue
+				}
 				route := proxy.ResolveRoute(proxy.RouteKindHarpoon, target.Label, target.BaseURL, p.Config.HTTPProxy, p.Config.HTTPProxySource, os.LookupEnv)
 				if target.UnixSocketPath != "" {
 					route = proxy.ResolveRoute(proxy.RouteKindHarpoon, target.Label, target.BaseURL, nil, runtimeconfig.ProxySourceIgnored, func(string) (string, bool) {
@@ -224,8 +239,7 @@ func RegisterAdditionalTransport(p AdditionalTransportParams) error {
 	var handler http.Handler = http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		legacy, err := isLegacyHarpoonStreamableRequest(req)
 		if err != nil {
-			var maxBytesErr *http.MaxBytesError
-			if errors.As(err, &maxBytesErr) {
+			if _, ok := errors.AsType[*http.MaxBytesError](err); ok {
 				http.Error(w, "request body too large", http.StatusRequestEntityTooLarge)
 				return
 			}
@@ -337,6 +351,7 @@ func ConvertTargets(targets []runtimeconfig.HarpoonTarget) []Target {
 			Tags:           nil,
 			BaseURL:        target.BaseURL,
 			UnixSocketPath: target.UnixSocketPath,
+			Template:       target.Template,
 		})
 	}
 	return out

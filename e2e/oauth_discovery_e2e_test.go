@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -24,6 +25,7 @@ import (
 )
 
 func TestHarnessHandlesOAuthDiscoveryCommand(t *testing.T) {
+	t.Parallel()
 
 	const requestID = "cmd-oauth"
 
@@ -81,6 +83,7 @@ func TestHarnessHandlesOAuthDiscoveryCommand(t *testing.T) {
 }
 
 func TestHarnessHandlesOAuthDiscoveryCommandWithWWWAuthenticateProbe(t *testing.T) {
+	t.Parallel()
 
 	const requestID = "cmd-oauth-www-auth"
 
@@ -139,6 +142,8 @@ func TestHarnessHandlesOAuthDiscoveryCommandWithWWWAuthenticateProbe(t *testing.
 }
 
 func TestOAuthDiscoveryRegistersCustomerHostRegistrationEndpointE2E(t *testing.T) {
+	t.Parallel()
+
 	const (
 		customerHost     = "location-mcp.internal.preproduction.smp.bigco-example.com"
 		idpIssuer        = "http://idp.bigco-example.com/oauth2/aus2jrb9zi4O8hseE0h8"
@@ -481,6 +486,8 @@ func TestOAuthDiscoveryRegistersCustomerHostRegistrationEndpointE2E(t *testing.T
 }
 
 func TestOAuthDiscoveredHarpoonTargetsHandoverAcrossRedundantClientsE2E(t *testing.T) {
+	t.Parallel()
+
 	const (
 		customerHost = "active-active-mcp.internal.preproduction.smp.bigco-example.com"
 	)
@@ -567,14 +574,7 @@ func TestOAuthDiscoveredHarpoonTargetsHandoverAcrossRedundantClientsE2E(t *testi
 		}
 		sort.Strings(labels)
 		for _, want := range requiredOAuthLabels {
-			found := false
-			for _, got := range labels {
-				if got == want {
-					found = true
-					break
-				}
-			}
-			if !found {
+			if !slices.Contains(labels, want) {
 				target.Fatalf("list_targets missing OAuth label %q: %v", want, labels)
 			}
 		}
@@ -810,6 +810,8 @@ func TestOAuthDiscoveredHarpoonTargetsHandoverAcrossRedundantClientsE2E(t *testi
 }
 
 func TestOAuthDiscoveredHarpoonTargetIsUnavailableAfterSecondaryDiscoveryMissE2E(t *testing.T) {
+	t.Parallel()
+
 	// Characterize the current proc-affinity boundary. Once dynamic Harpoon
 	// targets become replica-safe, this test should flip from rejection to success.
 	const (
@@ -992,6 +994,8 @@ func TestOAuthDiscoveredHarpoonTargetIsUnavailableAfterSecondaryDiscoveryMissE2E
 }
 
 func TestOAuthDiscoveryRejectsOffOriginPrivateMetadataEndpointsE2E(t *testing.T) {
+	t.Parallel()
+
 	testCases := []struct {
 		name                 string
 		issuerMismatch       bool
@@ -1015,8 +1019,8 @@ func TestOAuthDiscoveryRejectsOffOriginPrivateMetadataEndpointsE2E(t *testing.T)
 	}
 
 	for _, testCase := range testCases {
-		testCase := testCase
 		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
 			const customerHost = "location-mcp.internal.preproduction.smp.bigco-example.com"
 			customerBase := "http://" + customerHost
 			targetsReady := make(chan struct{})
@@ -1329,6 +1333,8 @@ func TestOAuthDiscoveryRejectsOffOriginPrivateMetadataEndpointsE2E(t *testing.T)
 }
 
 func TestHarpoonOnlyDisabledMainDoesNotBootstrapOAuthE2E(t *testing.T) {
+	t.Parallel()
+
 	requestSeen := make(chan struct{}, 1)
 	disabledMain := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		select {

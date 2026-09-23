@@ -2,53 +2,172 @@ package e2e_test
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
+	"maps"
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/openai/tunnel-client/pkg/healthurl"
 	"github.com/openai/tunnel-client/testsupport/mockmcpserver"
 	"github.com/openai/tunnel-client/testsupport/mockproxy"
 )
 
+// TestRuntimeComponentHealthConfigurationCompatibility applies the same profile
+// configuration, environment, flags and requests to each real shipped flavor.
+// The existing scenario assertions also protect legacy probes and wire traffic.
+func TestRuntimeComponentHealthConfigurationCompatibility(t *testing.T) {
+	runtimeSkipUnixSignals(t)
+	t.Parallel()
+	subjects := runtimeSubjectsWithBinaries(t, runtimeFullSubject(), runtimeCustomerSubject(), runtimeCloudflaredSubject())
+	for _, tc := range []struct {
+		name string
+		yaml string
+		env  string
+		flag string
+		want bool
+	}{
+		{name: "default"},
+		{name: "yaml_true", yaml: "true", want: true},
+		{name: "env_false_over_yaml_true", yaml: "true", env: "false"},
+		{name: "env_true_over_yaml_false", yaml: "false", env: "true", want: true},
+		{name: "flag_false_over_true", yaml: "true", env: "true", flag: "false"},
+		{name: "flag_true_over_false", yaml: "false", env: "false", flag: "true", want: true},
+	} {
+		for _, unix := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/unix_%t", tc.name, unix), func(t *testing.T) {
+				t.Parallel()
+				observations := runRuntimeScenario(t, subjects, func(t *testing.T) runtimeScenario {
+					profile, healthFile, pidFile := writeRuntimeCompatibilityProfile(t)
+					data, err := os.ReadFile(profile)
+					require.NoError(t, err)
+					if tc.yaml != "" {
+						data = []byte(strings.Replace(string(data), "health:\n", "health:\n  show_details: "+tc.yaml+"\n", 1))
+					}
+					require.NoError(t, os.WriteFile(profile, data, 0o600))
+					return runtimeScenario{
+						name: "component-health", profilePath: profile, healthURLFile: healthFile, pidFile: pidFile,
+						options: runtimeRunOptions{
+							configure: func(t *testing.T, run *runtimeSubjectRun) {
+								if tc.env != "" {
+									run.env["HEALTH_SHOW_DETAILS"] = tc.env
+								}
+								if tc.flag != "" {
+									run.args = append(run.args, "--health.show-details="+tc.flag)
+								}
+								if unix {
+									// Unix sockets must fit the macOS path limit regardless of TMPDIR.
+									dir, err := os.MkdirTemp("/tmp", "runtime-health-")
+									require.NoError(t, err)
+									t.Cleanup(func() { require.NoError(t, os.RemoveAll(dir)) })
+									run.args = append(run.args, "--health.unix-socket", filepath.Join(dir, "health.sock"))
+								}
+							},
+							afterReady: func(t *testing.T, run *runtimeSubjectRun) {
+								data, err := os.ReadFile(run.healthURLFile)
+								require.NoError(t, err)
+								target, err := healthurl.Parse(strings.TrimSpace(string(data)))
+								require.NoError(t, err)
+								client, err := target.HTTPClient(2 * time.Second)
+								require.NoError(t, err)
+								defer client.CloseIdleConnections()
+								read := func(path string) map[string]any {
+									status, body := runtimeArtifactResponse(t, client, target.RequestURL(path))
+									require.Equal(t, http.StatusOK, status, body)
+									var payload map[string]any
+									require.NoError(t, json.Unmarshal([]byte(body), &payload))
+									require.Equal(t, float64(1), payload["schema_version"])
+									return payload
+								}
+								plain := read("/health")
+								_, hasComponents := plain["components"]
+								require.Equal(t, tc.want, hasComponents)
+								require.Equal(t, true, plain["live"])
+								require.Equal(t, true, plain["ready"])
+								detailed := read("/health?details=true")
+								components, ok := detailed["components"].(map[string]any)
+								require.True(t, ok)
+								for _, component := range []string{"mcp", "control-plane", "response-delivery", "queue", "dispatcher", "oauth", "harpoon"} {
+									require.Contains(t, components, component)
+								}
+								if run.subject.flavor == "full" {
+									require.Contains(t, components, "proxy")
+								} else {
+									require.NotContains(t, components, "proxy")
+									status, _ := runtimeArtifactResponse(t, client, target.RequestURL("/health/proxy"))
+									require.Equal(t, http.StatusNotFound, status)
+								}
+								if run.subject.flavor == "runtime" {
+									require.NotContains(t, components, "cloudflared")
+									status, _ := runtimeArtifactResponse(t, client, target.RequestURL("/health/cloudflared"))
+									require.Equal(t, http.StatusNotFound, status)
+								} else {
+									require.Contains(t, components, "cloudflared")
+									require.Equal(t, "disabled", read("/health/cloudflared")["status"])
+								}
+								require.NotContains(t, read("/health?details=false"), "components")
+								require.Equal(t, "mcp", read("/health/mcp")["component"])
+								require.Equal(t, "control-plane", read("/health/control-plane")["component"])
+								for _, path := range []string{"/health?details=1", "/health?details=true&details=false", "/health?unknown=true", "/health/mcp?details=true"} {
+									status, _ := runtimeArtifactResponse(t, client, target.RequestURL(path))
+									require.Equal(t, http.StatusBadRequest, status, path)
+								}
+							},
+						},
+					}
+				})
+				for _, flavor := range []string{"runtime", "runtime-cloudflared"} {
+					assertRuntimeParity(t, map[string]runtimeObservation{"full": observations["full"], flavor: observations[flavor]}, flavor)
+				}
+			})
+		}
+	}
+}
+
 // TestRuntimeCompatibilityMatchesFullClientSharedSurface launches the real
-// complete client and customer runtime through the same profile-file and
-// environment path. It compares only behavior that the runtime promises to
+// complete client and customer runtime through equivalent isolated profiles and
+// the same environment path. It compares only behavior that the runtime promises to
 // retain; /ui remains a deliberate full-client-only surface.
 func TestRuntimeCompatibilityMatchesFullClientSharedSurface(t *testing.T) {
 	runtimeSkipUnixSignals(t)
+	t.Parallel()
 
 	subjects := runtimeSubjectsWithBinaries(t, runtimeFullSubject(), runtimeCustomerSubject())
-	profilePath, healthURLFile, pidFile := writeRuntimeCompatibilityProfile(t)
-	observations := runRuntimeScenario(t, runtimeScenario{
-		name:          "shared-surface",
-		subjects:      subjects,
-		profilePath:   profilePath,
-		healthURLFile: healthURLFile,
-		pidFile:       pidFile,
+	observations := runRuntimeScenario(t, subjects, func(t *testing.T) runtimeScenario {
+		profilePath, healthURLFile, pidFile := writeRuntimeCompatibilityProfile(t)
+		return runtimeScenario{
+			name:          "shared-surface",
+			profilePath:   profilePath,
+			healthURLFile: healthURLFile,
+			pidFile:       pidFile,
+		}
 	})
 	assertRuntimeParity(t, observations, "runtime")
 }
 
 // TestRuntimeCloudflaredCompatibilityMatchesFullClientSharedSurface applies
-// the same production profile bytes to the full client and approved companion
+// the same profile configuration to the full client and approved companion
 // runtime while enabling the same deterministic bundled-cloudflared wrapper.
 func TestRuntimeCloudflaredCompatibilityMatchesFullClientSharedSurface(t *testing.T) {
 	runtimeSkipUnixSignals(t)
+	t.Parallel()
 
-	profilePath, healthURLFile, pidFile := writeRuntimeCompatibilityProfile(t)
 	subjects := runtimeSubjectsWithBinaries(t, runtimeFullSubject(), runtimeCloudflaredSubject())
-	scenario := withRuntimeCloudflaredCompanion(t, runtimeScenario{
-		name:          "cloudflared-companion",
-		subjects:      subjects,
-		profilePath:   profilePath,
-		healthURLFile: healthURLFile,
-		pidFile:       pidFile,
+	observations := runRuntimeScenario(t, subjects, func(t *testing.T) runtimeScenario {
+		profilePath, healthURLFile, pidFile := writeRuntimeCompatibilityProfile(t)
+		return withRuntimeCloudflaredCompanion(t, runtimeScenario{
+			name:          "cloudflared-companion",
+			profilePath:   profilePath,
+			healthURLFile: healthURLFile,
+			pidFile:       pidFile,
+		})
 	})
-	observations := runRuntimeScenario(t, scenario)
 	assertRuntimeParity(t, observations, "runtime-cloudflared")
 }
 
@@ -72,7 +191,7 @@ func withRuntimeCloudflaredCompanion(t *testing.T, scenario runtimeScenario) run
 
 	options := &scenario.options
 	options.env = copyRuntimeEnvironment(options.env)
-	for key, value := range map[string]string{
+	maps.Copy(options.env, map[string]string{
 		"CLOUDFLARED_PATH":                   cloudflaredPath,
 		"CLOUDFLARED_TUNNEL_TOKEN":           "runtime-artifact-cloudflared-token",
 		"GO_WANT_RUNTIME_CLOUDFLARED_HELPER": "1",
@@ -80,9 +199,7 @@ func withRuntimeCloudflaredCompanion(t *testing.T, scenario runtimeScenario) run
 		"RUNTIME_CLOUDFLARED_SIGNAL_FILE":    signalFile,
 		"RUNTIME_CLOUDFLARED_STARTED_FILE":   startedFile,
 		"RUNTIME_E2E_HELPER_BINARY":          os.Args[0],
-	} {
-		options.env[key] = value
-	}
+	})
 
 	if options.readinessSignals == nil {
 		options.readinessSignals = []string{
@@ -129,6 +246,7 @@ func withRuntimeCloudflaredCompanion(t *testing.T, scenario runtimeScenario) run
 // does not require another process runner or cloudflared-only corpus copy.
 func TestRuntimeCompatibilityParityScenarios(t *testing.T) {
 	runtimeSkipUnixSignals(t)
+	t.Parallel()
 
 	subjects := runtimeSubjectsWithBinaries(
 		t,
@@ -375,19 +493,20 @@ func TestRuntimeCompatibilityParityScenarios(t *testing.T) {
 	}
 
 	for _, testCase := range testCases {
-		testCase := testCase
 		t.Run(testCase.name, func(t *testing.T) {
 			t.Parallel()
 
 			for _, target := range targets {
-				target := target
 				t.Run(target.subject.name, func(t *testing.T) {
-					scenario := testCase.scenario(t)
-					scenario.subjects = []runtimeSubject{fullSubject, target.subject}
-					if target.decorate != nil {
-						scenario = target.decorate(t, scenario)
-					}
-					observations := runRuntimeScenario(t, scenario)
+					t.Parallel()
+					subjects := []runtimeSubject{fullSubject, target.subject}
+					observations := runRuntimeScenario(t, subjects, func(t *testing.T) runtimeScenario {
+						scenario := testCase.scenario(t)
+						if target.decorate != nil {
+							scenario = target.decorate(t, scenario)
+						}
+						return scenario
+					})
 					assertRuntimeParity(t, observations, target.subject.name)
 					if testCase.assert != nil {
 						testCase.assert(t, observations, target.subject.name)

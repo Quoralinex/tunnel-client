@@ -1,10 +1,12 @@
 package e2e_test
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -16,6 +18,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -39,6 +42,8 @@ const (
 )
 
 func TestRuntimeHTTPMCP(t *testing.T) {
+	t.Parallel()
+
 	controlPlane, mcpServer := newRuntimeArtifactMocks(t)
 	binary := buildRuntimeArtifact(t, "./cmd/client-runtime", "tunnel-client-runtime", "runtime")
 	healthURLFile := filepath.Join(t.TempDir(), "health.url")
@@ -58,10 +63,228 @@ func TestRuntimeHTTPMCP(t *testing.T) {
 	_ = proc.stop()
 }
 
+func TestRuntimeEmbeddedMCPStubModernDiscovery(t *testing.T) {
+	t.Parallel()
+
+	testRuntimeEmbeddedMCPStub(t, "--embedded-mcp-stub", false)
+}
+
+func TestRuntimeEmbeddedStatelessMCPStub(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name       string
+		initialize bool
+	}{
+		{name: "modern_discovery"},
+		{name: "initialization", initialize: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			testRuntimeEmbeddedMCPStub(t, "--embedded-stateless-mcp-stub", tc.initialize)
+		})
+	}
+}
+
+func testRuntimeEmbeddedMCPStub(t *testing.T, embeddedFlag string, initialize bool) {
+	t.Helper()
+
+	protocolVersion := "2026-07-28"
+	if initialize {
+		protocolVersion = "2025-06-18"
+	}
+	type requestStep struct {
+		requestID string
+		method    string
+		params    map[string]any
+		wantText  string
+	}
+	steps := []requestStep{
+		{requestID: "openai-mcp-discover", method: "server/discover"},
+		{requestID: "embedded-tools-list", method: "tools/list"},
+		{
+			requestID: "embedded-server-info",
+			method:    "tools/call",
+			params:    map[string]any{"name": "server_info", "arguments": map[string]any{}},
+			wantText:  "embedded-e2e 1.0.0 demo tools: server_info, echo, uppercase",
+		},
+		{
+			requestID: "embedded-echo",
+			method:    "tools/call",
+			params:    map[string]any{"name": "echo", "arguments": map[string]any{"input": "hello through the tunnel"}},
+			wantText:  "hello through the tunnel",
+		},
+		{
+			requestID: "embedded-uppercase",
+			method:    "tools/call",
+			params:    map[string]any{"name": "uppercase", "arguments": map[string]any{"input": "openai tunnel"}},
+			wantText:  "OPENAI TUNNEL",
+		},
+	}
+	if initialize {
+		steps = append([]requestStep{
+			{
+				requestID: "embedded-initialize",
+				method:    "initialize",
+				params: map[string]any{
+					"protocolVersion": protocolVersion,
+					"capabilities":    map[string]any{},
+					"clientInfo":      map[string]any{"name": "embedded-stub-e2e", "version": "1.0.0"},
+				},
+			},
+			{requestID: "embedded-initialized", method: "notifications/initialized"},
+		}, steps[1:]...)
+	}
+	ready := make(chan struct{})
+	commands := make([]mocktunnelservice.CommandResponse, 0, len(steps))
+	for _, step := range steps {
+		params := map[string]any{}
+		if !initialize {
+			params["_meta"] = map[string]any{
+				"io.modelcontextprotocol/protocolVersion":    protocolVersion,
+				"io.modelcontextprotocol/clientInfo":         map[string]any{"name": "embedded-stub-e2e", "version": "1.0.0"},
+				"io.modelcontextprotocol/clientCapabilities": map[string]any{},
+			}
+		}
+		maps.Copy(params, step.params)
+		request := map[string]any{
+			"jsonrpc": "2.0",
+			"id":      step.requestID,
+			"method":  step.method,
+			"params":  params,
+		}
+		if step.method == "notifications/initialized" {
+			delete(request, "id")
+		}
+		payload, err := json.Marshal(request)
+		require.NoError(t, err)
+		headers := http.Header{
+			"Accept":               {"application/json, text/event-stream"},
+			"Content-Type":         {"application/json"},
+			"Mcp-Protocol-Version": {protocolVersion},
+			"Mcp-Method":           {step.method},
+		}
+		if name, ok := step.params["name"].(string); ok {
+			headers.Set("Mcp-Name", name)
+		}
+		commands = append(commands, mocktunnelservice.CommandResponse{
+			Command:      mocktunnelservice.NewCommand(step.requestID, payload, headers),
+			DeliverAfter: ready,
+			ExpectedResponses: []mocktunnelservice.ExpectedResponse{{
+				RequestID: step.requestID,
+			}},
+		})
+	}
+	// No step propagates session headers. The initialization case exercises a
+	// complete legacy handshake; the discovery case starts with modern metadata.
+	controlPlane := mocktunnelservice.NewMockTunnelService(
+		mocktunnelservice.WithAPIKey(runtimeArtifactAPIKey),
+		mocktunnelservice.WithTunnelID(runtimeArtifactTunnelID),
+		mocktunnelservice.WithCommandResponses(commands...),
+	)
+	controlPlane.Start(t)
+	binary := buildRuntimeArtifact(t, "./cmd/client", "tunnel-client", "full")
+	healthURLFile := filepath.Join(t.TempDir(), "health.url")
+	inheritedMainCommand := ""
+	if embeddedFlag == "--embedded-stateless-mcp-stub" {
+		inheritedMainCommand = "command=embedded-ignored-stdio-target,channel=main"
+	}
+	proc := startRuntimeArtifactWithEnv(t, binary, map[string]string{
+		"MCP_COMMAND":    inheritedMainCommand,
+		"MCP_SERVER_URL": "",
+	},
+		"run",
+		embeddedFlag,
+		"--embedded-mcp-listen-addr", "127.0.0.1:0",
+		"--embedded-mcp-server-name", "embedded-e2e",
+		"--embedded-mcp-server-version", "1.0.0",
+		"--control-plane.base-url", controlPlane.BaseURL().String(),
+		"--control-plane.tunnel-id", runtimeArtifactTunnelID,
+		"--health.listen-addr", "127.0.0.1:0",
+		"--health.url-file", healthURLFile,
+		"--log.level", "info",
+		"--log.format", "struct-text",
+	)
+	healthBaseURL := waitForRuntimeArtifactHealthURL(t, proc, healthURLFile)
+	waitForRuntimeArtifactOutput(t, proc, "embedded MCP readiness", runtimeArtifactMCPReadySignal, runtimeArtifactOAuthReadySignal)
+	close(ready)
+	waitForRuntimeArtifactIdle(t, proc, controlPlane)
+
+	wantServerInfo := `{"version":1,"channels":[{"name":"main"}]}`
+	if embeddedFlag == "--embedded-stateless-mcp-stub" {
+		wantServerInfo = `{"version":2,"channels":[{"name":"main","stateless":true}]}`
+	}
+	pollCount := 0
+	for _, request := range controlPlane.ReceivedHTTPRequests() {
+		if request.Method == http.MethodGet && strings.HasSuffix(request.Path, "/poll") {
+			pollCount++
+			require.Equal(t, wantServerInfo, request.Headers.Get("X-Tunnel-MCP-Server-Info"))
+		}
+	}
+	require.Positive(t, pollCount, "expected actual-binary control-plane polls")
+
+	responses := controlPlane.ReceivedResponses(mocktunnelservice.ResponseMatchMatched)
+	require.Len(t, responses, len(steps))
+	require.Len(t, controlPlane.DeliveredCommands(), len(steps))
+	for i, response := range responses {
+		step := steps[i]
+		require.Equal(t, step.requestID, response.RequestID)
+		require.Empty(t, response.ResponseHeaders.Get("Mcp-Session-Id"), step.method)
+		if step.method == "notifications/initialized" {
+			require.Equal(t, string(wiretypes.ResponsePayloadNotifyAck), response.ResponseType)
+			require.GreaterOrEqual(t, response.ResponseCode, http.StatusOK)
+			require.Less(t, response.ResponseCode, http.StatusMultipleChoices)
+			require.Empty(t, response.JSONResponse)
+			continue
+		}
+		require.Equal(t, string(wiretypes.ResponsePayloadJSONRPC), response.ResponseType)
+		require.Equal(t, http.StatusOK, response.ResponseCode, string(response.JSONResponse))
+		var envelope struct {
+			JSONRPC string          `json:"jsonrpc"`
+			ID      string          `json:"id"`
+			Result  map[string]any  `json:"result"`
+			Error   json.RawMessage `json:"error"`
+		}
+		require.NoError(t, json.Unmarshal(response.JSONResponse, &envelope))
+		require.Equal(t, "2.0", envelope.JSONRPC)
+		require.Equal(t, step.requestID, envelope.ID)
+		require.Empty(t, envelope.Error, string(response.JSONResponse))
+		if !initialize {
+			require.Equal(t, "complete", envelope.Result["resultType"], step.method)
+		}
+		switch step.method {
+		case "initialize":
+			require.Equal(t, protocolVersion, envelope.Result["protocolVersion"])
+			require.Equal(t, map[string]any{"name": "embedded-e2e", "version": "1.0.0"}, envelope.Result["serverInfo"])
+		case "server/discover":
+			require.Contains(t, envelope.Result["supportedVersions"], protocolVersion)
+		case "tools/list":
+			tools, ok := envelope.Result["tools"].([]any)
+			require.True(t, ok)
+			names := make([]string, 0, len(tools))
+			for _, tool := range tools {
+				entry, ok := tool.(map[string]any)
+				require.True(t, ok)
+				name, ok := entry["name"].(string)
+				require.True(t, ok)
+				names = append(names, name)
+			}
+			require.ElementsMatch(t, []string{"server_info", "echo", "uppercase"}, names)
+		case "tools/call":
+			require.NotEqual(t, true, envelope.Result["isError"])
+			require.Equal(t, []any{map[string]any{"type": "text", "text": step.wantText}}, envelope.Result["content"])
+		}
+	}
+	status, body := runtimeArtifactResponse(t, &http.Client{Timeout: 2 * time.Second}, healthBaseURL+"/readyz")
+	require.Equalf(t, http.StatusOK, status, "embedded client readiness: %s\n%s", body, proc.output.String())
+	_ = proc.stop()
+}
+
 func TestRuntimeOAuthStdioHarpoonMultiChannelConfigProfilePID(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("stdio test helper uses bash")
 	}
+	t.Parallel()
 
 	targetCalled := make(chan struct{}, 1)
 	targetServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -224,6 +447,7 @@ func TestRuntimeStdioCommandKeepsShellMetacharactersLiteral(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("stdio test helper uses bash")
 	}
+	t.Parallel()
 
 	controlPlane := newRuntimeArtifactStdioControlPlane(t)
 	binary := buildRuntimeArtifact(t, "./cmd/client-runtime", "tunnel-client-runtime", "runtime")
@@ -253,6 +477,7 @@ func TestRuntimeCloudflared(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("fake cloudflared wrapper uses a POSIX shell")
 	}
+	t.Parallel()
 
 	controlPlane, mcpServer := newRuntimeArtifactMocks(t)
 	binary := buildRuntimeArtifact(t, "./cmd/client-runtime-cloudflared", "tunnel-client-runtime-cloudflared", "runtime-cloudflared")
@@ -570,7 +795,7 @@ func runtimeArtifactBazelBinary(t *testing.T, packagePath string) string {
 	}
 
 	targetName := map[string]string{
-		"./cmd/client":                     "client",
+		"./cmd/client":                     "client_public",
 		"./cmd/client-runtime":             "client_runtime",
 		"./cmd/client-runtime-cloudflared": "client_runtime_cloudflared",
 	}[packagePath]
@@ -626,6 +851,21 @@ func startRuntimeArtifact(t *testing.T, binary string, args ...string) *runtimeA
 func startRuntimeArtifactWithEnv(t *testing.T, binary string, overrides map[string]string, args ...string) *runtimeArtifactProcess {
 	t.Helper()
 
+	// The full client warms up its Codex bridge on startup. Give every process
+	// its own protocol fixture instead of launching a developer's installed
+	// Codex against shared configuration while compatibility tests run in parallel.
+	overrides = copyRuntimeEnvironment(overrides)
+	_, explicitCommand := overrides["TUNNEL_CLIENT_CODEX_APP_SERVER_COMMAND"]
+	_, explicitExecutable := overrides["TUNNEL_CLIENT_CODEX_APP_SERVER_CMD"]
+	if !explicitCommand && !explicitExecutable {
+		helper, err := os.Executable()
+		require.NoError(t, err)
+		overrides["TUNNEL_CLIENT_CODEX_APP_SERVER_CMD"] = helper
+		overrides["TUNNEL_CLIENT_CODEX_APP_SERVER_ARGS"] = "-test.run=^TestRuntimeCodexAppServerHelperProcess$"
+		overrides["TUNNEL_CLIENT_CODEX_APP_SERVER_CWD"] = t.TempDir()
+		overrides["GO_WANT_RUNTIME_CODEX_APP_SERVER_HELPER"] = "1"
+	}
+
 	output := newRuntimeArtifactOutput()
 	cmd := exec.Command(binary, args...)
 	cmd.Env = runtimeArtifactEnvironment(overrides)
@@ -653,33 +893,37 @@ func startRuntimeArtifactWithEnv(t *testing.T, binary string, overrides map[stri
 
 func runtimeArtifactEnvironment(overrides map[string]string) []string {
 	blocked := map[string]struct{}{
-		"ADMIN_UI_LOG_BUFFER_EVENTS":       {},
-		"ALLOW_REMOTE_UI":                  {},
-		"CLOUDFLARED_MANAGED":              {},
-		"CLOUDFLARED_PATH":                 {},
-		"CLOUDFLARED_READY_TIMEOUT":        {},
-		"CLOUDFLARED_TUNNEL_TOKEN":         {},
-		"CONTROL_PLANE_API_KEY":            {},
-		"HARPOON_CAPTURE_PAYLOADS":         {},
-		"LOG_FILE":                         {},
-		"LOG_FORMAT":                       {},
-		"LOG_LEVEL":                        {},
-		"OPEN_WEB_UI":                      {},
-		"OPENAI_API_KEY":                   {},
-		"ALL_PROXY":                        {},
-		"all_proxy":                        {},
-		"HTTP_PROXY":                       {},
-		"http_proxy":                       {},
-		"HTTPS_PROXY":                      {},
-		"https_proxy":                      {},
-		"NO_PROXY":                         {},
-		"no_proxy":                         {},
-		"PROXY_CHECK_INTERVAL":             {},
-		"RUNTIME_COMPAT_CONTROL_PLANE_URL": {},
-		"RUNTIME_COMPAT_MCP_URL":           {},
-		"TUNNEL_CLIENT_CONFIG":             {},
-		"TUNNEL_CLIENT_PROFILE":            {},
-		"TUNNEL_CLIENT_PROFILE_FILE":       {},
+		"ADMIN_UI_LOG_BUFFER_EVENTS":             {},
+		"ALLOW_REMOTE_UI":                        {},
+		"CLOUDFLARED_MANAGED":                    {},
+		"CLOUDFLARED_PATH":                       {},
+		"CLOUDFLARED_READY_TIMEOUT":              {},
+		"CLOUDFLARED_TUNNEL_TOKEN":               {},
+		"CONTROL_PLANE_API_KEY":                  {},
+		"HARPOON_CAPTURE_PAYLOADS":               {},
+		"LOG_FILE":                               {},
+		"LOG_FORMAT":                             {},
+		"LOG_LEVEL":                              {},
+		"OPEN_WEB_UI":                            {},
+		"OPENAI_API_KEY":                         {},
+		"ALL_PROXY":                              {},
+		"all_proxy":                              {},
+		"HTTP_PROXY":                             {},
+		"http_proxy":                             {},
+		"HTTPS_PROXY":                            {},
+		"https_proxy":                            {},
+		"NO_PROXY":                               {},
+		"no_proxy":                               {},
+		"PROXY_CHECK_INTERVAL":                   {},
+		"RUNTIME_COMPAT_CONTROL_PLANE_URL":       {},
+		"RUNTIME_COMPAT_MCP_URL":                 {},
+		"TUNNEL_CLIENT_CONFIG":                   {},
+		"TUNNEL_CLIENT_CODEX_APP_SERVER_COMMAND": {},
+		"TUNNEL_CLIENT_CODEX_APP_SERVER_CMD":     {},
+		"TUNNEL_CLIENT_CODEX_APP_SERVER_ARGS":    {},
+		"TUNNEL_CLIENT_CODEX_APP_SERVER_CWD":     {},
+		"TUNNEL_CLIENT_PROFILE":                  {},
+		"TUNNEL_CLIENT_PROFILE_FILE":             {},
 	}
 	for key := range overrides {
 		blocked[key] = struct{}{}
@@ -916,7 +1160,66 @@ func writeRuntimeArtifactCloudflaredWrapper(t *testing.T) string {
 	return path
 }
 
+// TestRuntimeCodexAppServerHelperProcess implements the startup protocol needed
+// by the full client's admin UI. It owns no files, user configuration or network
+// listeners, and exits when the bridge closes stdin or signals shutdown.
+func TestRuntimeCodexAppServerHelperProcess(t *testing.T) {
+	t.Parallel()
+	if os.Getenv("GO_WANT_RUNTIME_CODEX_APP_SERVER_HELPER") != "1" {
+		return
+	}
+
+	signals := make(chan os.Signal, 1)
+	signal.Notify(signals, os.Interrupt, syscall.SIGTERM)
+	done := make(chan error, 1)
+	go func() {
+		scanner := bufio.NewScanner(os.Stdin)
+		encoder := json.NewEncoder(os.Stdout)
+		for scanner.Scan() {
+			var request struct {
+				ID     json.RawMessage `json:"id"`
+				Method string          `json:"method"`
+			}
+			if err := json.Unmarshal(scanner.Bytes(), &request); err != nil {
+				done <- err
+				return
+			}
+			if len(request.ID) == 0 {
+				continue
+			}
+			var result any
+			switch request.Method {
+			case "initialize":
+				result = map[string]any{"userAgent": "runtime-e2e-codex-fixture"}
+			case "getAuthStatus":
+				result = map[string]any{"requiresOpenaiAuth": false}
+			case "account/read":
+				result = map[string]any{"account": nil, "requiresOpenaiAuth": false}
+			default:
+				done <- fmt.Errorf("unexpected Codex fixture method %q", request.Method)
+				return
+			}
+			if err := encoder.Encode(map[string]any{"id": request.ID, "result": result}); err != nil {
+				done <- err
+				return
+			}
+		}
+		done <- scanner.Err()
+	}()
+	select {
+	case <-signals:
+	case err := <-done:
+		if err != nil {
+			_, _ = fmt.Fprintln(os.Stderr, err)
+			os.Exit(2)
+		}
+	}
+	os.Exit(0)
+}
+
 func TestRuntimeCloudflaredHelperProcess(t *testing.T) {
+	t.Parallel()
+
 	if os.Getenv("GO_WANT_RUNTIME_CLOUDFLARED_HELPER") != "1" {
 		return
 	}

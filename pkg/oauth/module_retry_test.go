@@ -20,6 +20,8 @@ import (
 )
 
 func TestOAuthDiscoveryRetriesAfterTransientTimeout(t *testing.T) {
+	t.Parallel()
+
 	var recovered atomic.Bool
 	enteredRetry := make(chan time.Duration, 1)
 	allowRetry := make(chan struct{})
@@ -76,6 +78,8 @@ func TestOAuthDiscoveryRetriesAfterTransientTimeout(t *testing.T) {
 }
 
 func TestOAuthDiscoveryRetriesAfterTransientMetadataBodyTimeout(t *testing.T) {
+	t.Parallel()
+
 	var recovered atomic.Bool
 	enteredRetry := make(chan time.Duration, 1)
 	allowRetry := make(chan struct{})
@@ -141,6 +145,8 @@ func TestOAuthDiscoveryRetriesAfterTransientMetadataBodyTimeout(t *testing.T) {
 }
 
 func TestOAuthDiscoveryPreservesFailFastForNonTimeoutFailure(t *testing.T) {
+	t.Parallel()
+
 	transportErr := errors.New("dial failed")
 	state := startOAuthDiscoveryTestApp(t, &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
 		return nil, transportErr
@@ -156,6 +162,8 @@ func TestOAuthDiscoveryPreservesFailFastForNonTimeoutFailure(t *testing.T) {
 }
 
 func TestOAuthDiscoveryPreservesFailFastForMixedFailureCycle(t *testing.T) {
+	t.Parallel()
+
 	permanentErr := errors.New("permanent transport failure")
 	enteredRetry := make(chan time.Duration, 1)
 	httpClient := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
@@ -210,6 +218,8 @@ func TestOAuthDiscoveryPreservesFailFastForMixedFailureCycle(t *testing.T) {
 }
 
 func TestWaitForOAuthDiscoveryRetryStopsWhenContextIsCanceled(t *testing.T) {
+	t.Parallel()
+
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 

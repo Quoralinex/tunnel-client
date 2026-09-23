@@ -6,6 +6,8 @@ import (
 	"github.com/openai/tunnel-client/pkg/runtimeconfig"
 )
 
+// ConfigSource identifies the selected configuration source.
+//
 // Profile selection and validation are shared production behavior. Keep this
 // package as a source-compatible forwarding surface for full-client callers.
 type ConfigSource = runtimeconfig.ConfigSource

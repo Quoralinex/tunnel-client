@@ -248,10 +248,10 @@ func newTunnelUpdateCmd(lookupEnv func(string) (string, bool)) *cobra.Command {
 
 			updateReq := admin.TunnelUpdateRequest{}
 			if cmd.Flags().Changed("name") {
-				updateReq.Name = strPtr(strings.TrimSpace(name))
+				updateReq.Name = new(strings.TrimSpace(name))
 			}
 			if cmd.Flags().Changed("description") {
-				updateReq.Description = strPtr(description)
+				updateReq.Description = new(description)
 			}
 			if cmd.Flags().Changed("organization-id") {
 				orgs := make([]string, 0, len(cfg.OrganizationIDs))
@@ -477,10 +477,6 @@ func first(items []string) string {
 	return items[0]
 }
 
-func strPtr(s string) *string {
-	return &s
-}
-
 func requireOrgsOrWorkspaces(cmd *cobra.Command) {
 	cmd.Flags().StringSlice("organization-id", nil, "Organization identifier(s) used for scope and tunnel attachment (repeatable)")
 	cmd.Flags().StringSlice("workspace-id", nil, "Workspace identifier(s) used for scope and tunnel attachment (repeatable)")
@@ -507,8 +503,7 @@ func maybeWriteAdminJSONError(cmd *cobra.Command, err error) error {
 		},
 	}
 
-	var requestErr *admin.RequestError
-	if errors.As(err, &requestErr) {
+	if requestErr, ok := errors.AsType[*admin.RequestError](err); ok {
 		errorPayload := payload["error"].(map[string]any)
 		errorPayload["method"] = requestErr.Method
 		errorPayload["path"] = requestErr.Path

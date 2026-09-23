@@ -34,11 +34,12 @@ type serverMetrics struct {
 }
 
 type serverOptions struct {
-	meter         metric.Meter
-	httpTransport http.RoundTripper
-	instructions  string
-	registrars    []ToolRegistrar
-	observers     []CallObserver
+	meter            metric.Meter
+	httpTransport    http.RoundTripper
+	instructions     string
+	registrars       []ToolRegistrar
+	observers        []CallObserver
+	policyBindingKey []byte
 }
 
 // ServerOption configures optional server behavior.
@@ -186,10 +187,7 @@ func (s *Server) recordCallMetrics(
 	if startedAt.IsZero() {
 		startedAt = time.Now()
 	}
-	latency := time.Since(startedAt)
-	if latency < 0 {
-		latency = 0
-	}
+	latency := max(time.Since(startedAt), 0)
 	s.metrics.recordCall(ctx, label, statusCode, outcome, responseBytes, latency)
 }
 

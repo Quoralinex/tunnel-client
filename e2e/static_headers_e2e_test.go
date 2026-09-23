@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"sync"
 	"testing"
 	"time"
@@ -21,6 +22,8 @@ import (
 )
 
 func TestMCPStaticHeadersE2E(t *testing.T) {
+	t.Parallel()
+
 	t.Run("fails without configured static headers", func(t *testing.T) {
 		t.Parallel()
 
@@ -55,7 +58,6 @@ func TestMCPStaticHeadersE2E(t *testing.T) {
 		{name: "http"},
 		{name: "unix_socket", useUnixMCP: true},
 	} {
-		tc := tc
 		t.Run("sends scoped runtime and discovery static headers over "+tc.name, func(t *testing.T) {
 			t.Parallel()
 			runStaticHeadersTransportCase(t, tc.useUnixMCP)
@@ -172,6 +174,7 @@ func runStaticHeadersTransportCase(t *testing.T, useUnixMCP bool) {
 	harnessOptions := []harnesspkg.HarnessOption{
 		harnesspkg.WithClientConfig(func(cfg *config.Config) {
 			cfg.Logging.Level = slog.LevelDebug
+			cfg.MCP.OAuthTrustedOrigins = []*url.URL{mustParseURL(t, authServerURL)}
 			cfg.MCP.ExtraHeaders = map[string]string{
 				"Authorization":   "Bearer static-service-token",
 				"X-MCP-Static":    "mcp-static",

@@ -13,6 +13,8 @@ import (
 )
 
 func TestBuildHarpoonStatusDisabledWithoutTargets(t *testing.T) {
+	t.Parallel()
+
 	registry, err := harpoon.NewRegistry(newHarpoonTestLogger(), true, nil)
 	require.NoError(t, err)
 
@@ -26,6 +28,8 @@ func TestBuildHarpoonStatusDisabledWithoutTargets(t *testing.T) {
 }
 
 func TestBuildHarpoonStatusIncludesPolicy(t *testing.T) {
+	t.Parallel()
+
 	registry, err := harpoon.NewRegistry(newHarpoonTestLogger(), true, []harpoon.Target{{
 		Label:   "auth",
 		BaseURL: mustParseURL(t, "http://example.com/base"),
@@ -48,6 +52,8 @@ func TestBuildHarpoonStatusIncludesPolicy(t *testing.T) {
 }
 
 func TestBuildHarpoonTargetsIncludesTargetFields(t *testing.T) {
+	t.Parallel()
+
 	registry, err := harpoon.NewRegistry(newHarpoonTestLogger(), true, []harpoon.Target{{
 		Label:           "auth",
 		Description:     "Auth service",
@@ -70,6 +76,8 @@ func TestBuildHarpoonTargetsIncludesTargetFields(t *testing.T) {
 }
 
 func TestBuildHarpoonCallsIncludesPayloadsWhenEnabled(t *testing.T) {
+	t.Parallel()
+
 	buffer := harpoon.NewCallBuffer()
 	buffer.RecordCall(harpoon.CallEntry{
 		Timestamp:    time.Unix(10, 0).UTC(),
@@ -94,6 +102,8 @@ func TestBuildHarpoonCallsIncludesPayloadsWhenEnabled(t *testing.T) {
 }
 
 func TestBuildHarpoonCallsOmitsPayloadsWhenDisabled(t *testing.T) {
+	t.Parallel()
+
 	buffer := harpoon.NewCallBuffer()
 	buffer.RecordCall(harpoon.CallEntry{
 		Timestamp: time.Unix(10, 0).UTC(),

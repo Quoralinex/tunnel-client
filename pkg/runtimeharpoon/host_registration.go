@@ -477,7 +477,7 @@ func resolveAutoLabelCollision(baseLabel string, registry *Registry) (string, in
 		return "", 0
 	}
 
-	for i := 0; i < 10_000; i++ {
+	for i := range 10_000 {
 		candidate := baseLabel
 		if i > 0 {
 			candidate = labelWithNumericSuffix(baseLabel, i)

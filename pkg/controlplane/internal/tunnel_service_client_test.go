@@ -17,9 +17,11 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/http/httptrace"
 	"net/url"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -329,13 +331,20 @@ func TestTunnelServiceClientPollSuccessWithControlPlaneURLPath(t *testing.T) {
 }
 
 func TestTunnelServiceClientPollUsesConfiguredUnixSocketPath(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Unix sockets are unavailable on Windows")
+	}
 	t.Parallel()
 
-	socketPath := filepath.Join(t.TempDir(), "control.sock")
+	// Keep the socket path below Unix limits even when the test temp root is long.
+	socketDir, err := os.MkdirTemp("/tmp", "tc-control-")
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, os.RemoveAll(socketDir))
+	})
+	socketPath := filepath.Join(socketDir, "control.sock")
 	listener, err := net.Listen("unix", socketPath)
-	if err != nil {
-		t.Skipf("skipping test: unable to bind unix listener: %v", err)
-	}
+	require.NoError(t, err, "bind Unix control-plane listener")
 	server := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "/v1/tunnels/cli-tunnel/poll", r.URL.Path)
 		w.Header().Set("Content-Type", "application/json")
@@ -476,6 +485,88 @@ func TestNewTunnelServiceClientUsesConfiguredPollDeadlineGuardrail(t *testing.T)
 	require.Equal(t, pollTimeout+pollGuardrail, client.client.Timeout)
 }
 
+func TestTunnelServiceClientOnlyShortensFirstPollWait(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name               string
+		pollTimeout        time.Duration
+		initialPollTimeout time.Duration
+		firstTimeoutMS     string
+		firstFails         bool
+	}{
+		{"default normal wait", 30 * time.Second, 0, "30000", false},
+		{"default initial wait caps a longer normal wait", 35 * time.Second, 0, "30000", false},
+		{"short timeout succeeds", 100 * time.Millisecond, 0, "100", false},
+		{"short timeout fails", 100 * time.Millisecond, 0, "100", true},
+		{"long timeout succeeds", 35 * time.Second, 500 * time.Millisecond, "500", false},
+		{"long timeout fails", 35 * time.Second, 500 * time.Millisecond, "500", true},
+		{"configured first wait succeeds", 35 * time.Second, 100 * time.Millisecond, "100", false},
+		{"configured first wait fails", 35 * time.Second, 100 * time.Millisecond, "100", true},
+		{"configured first wait keeps shorter normal wait", 100 * time.Millisecond, time.Second, "100", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			client, err := NewTunnelServiceClient(context.Background(), &config.ControlPlaneConfig{
+				BaseURL:               mustParseURL(t, "https://api.openai.com"),
+				TunnelID:              types.TunnelID("cli-tunnel"),
+				APIKey:                "test-api-key",
+				PollTimeout:           tc.pollTimeout,
+				InitialPollTimeout:    tc.initialPollTimeout,
+				PollDeadlineGuardrail: 5 * time.Second,
+				HTTPProxy:             mustParseURL(t, "http://proxy.example:8080"),
+			}, nil, newDiscardLogger(), &config.LoggingConfig{}, testMeterProvider)
+			require.NoError(t, err)
+			require.True(t, client.usesProxy)
+			require.Equal(t, tc.pollTimeout+5*time.Second, client.client.Timeout)
+
+			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+			defer cancel()
+			parentDeadline, _ := ctx.Deadline()
+			var observedTimeouts []string
+			client.client.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+				observedTimeouts = append(observedTimeouts, req.URL.Query().Get("timeout_ms"))
+				if tc.pollTimeout == 35*time.Second {
+					// Older servers can clamp the requested wait upward. Keep the
+					// full HTTP budget, bounded here by the parent's earlier deadline.
+					deadline, ok := req.Context().Deadline()
+					require.True(t, ok)
+					require.Equal(t, parentDeadline, deadline)
+				}
+				trace := httptrace.ContextClientTrace(req.Context())
+				require.NotNil(t, trace)
+				require.NotNil(t, trace.WroteRequest)
+				trace.WroteRequest(httptrace.WroteRequestInfo{})
+				if tc.firstFails && len(observedTimeouts) == 1 {
+					return nil, io.ErrUnexpectedEOF
+				}
+				return &http.Response{StatusCode: http.StatusNoContent, Body: http.NoBody, Header: make(http.Header)}, nil
+			})
+			client.pollElapsedSince = func(time.Time) time.Duration { return 30 * time.Second }
+
+			commands, _, err := client.Poll(ctx, 0)
+			require.NoError(t, err)
+			require.Nil(t, commands)
+			require.Empty(t, observedTimeouts, "an invalid limit must not consume the first poll")
+
+			_, _, err = client.Poll(ctx, 1)
+			if tc.firstFails {
+				require.ErrorIs(t, err, io.ErrUnexpectedEOF)
+			} else {
+				require.NoError(t, err)
+			}
+			require.Equal(t, tc.pollTimeout, client.effectivePollTimeout(), "a startup failure must not teach a proxy idle cutoff")
+
+			commands, _, err = client.Poll(ctx, 1)
+			require.NoError(t, err)
+			require.Nil(t, commands)
+			require.Equal(t, []string{tc.firstTimeoutMS, strconv.FormatInt(tc.pollTimeout.Milliseconds(), 10)}, observedTimeouts)
+			require.Equal(t, tc.pollTimeout+5*time.Second, client.client.Timeout)
+		})
+	}
+}
+
 func TestControlPlaneUsesProxy(t *testing.T) {
 	t.Parallel()
 
@@ -532,7 +623,6 @@ func TestControlPlaneUsesProxy(t *testing.T) {
 	}
 
 	for _, tc := range testCases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
@@ -615,7 +705,6 @@ func TestLearnedProxyPollTimeoutFromDisconnect(t *testing.T) {
 	}
 
 	for _, tc := range testCases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			require.Equal(t, tc.want, learnedProxyPollTimeoutFromDisconnect(tc.elapsed, tc.attemptedTimeout, tc.guardrail))
@@ -708,7 +797,6 @@ func TestTunnelServiceClientMaybeLearnsProxyPollTimeout(t *testing.T) {
 	}
 
 	for _, tc := range testCases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
@@ -1128,6 +1216,7 @@ func TestTunnelServiceClientPostResponseSanitizesResponseHeaders(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			var seenBody []byte
 			server := newHTTPTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				var err error
@@ -2039,7 +2128,6 @@ func TestPopulateAPIStatusErrorDefensiveParsing(t *testing.T) {
 	}
 
 	for _, testCase := range tests {
-		testCase := testCase
 		t.Run(testCase.name, func(t *testing.T) {
 			t.Parallel()
 
@@ -2385,11 +2473,12 @@ func TestTunnelServiceClientLearnsProxyIdleCutoffForHTTPSPoll(t *testing.T) {
 	}))
 
 	client, err := NewTunnelServiceClient(context.Background(), &config.ControlPlaneConfig{
-		BaseURL:     controlPlaneURL,
-		TunnelID:    types.TunnelID(tunnelID),
-		APIKey:      apiKey,
-		PollTimeout: requestedPollWait,
-		HTTPProxy:   mustParseURL(t, proxyServer.URL),
+		BaseURL:            controlPlaneURL,
+		TunnelID:           types.TunnelID(tunnelID),
+		APIKey:             apiKey,
+		PollTimeout:        requestedPollWait,
+		InitialPollTimeout: requestedPollWait,
+		HTTPProxy:          mustParseURL(t, proxyServer.URL),
 	}, &tlsconfig.Bundle{RootCAs: material.caPool}, newDiscardLogger(), &config.LoggingConfig{}, testMeterProvider)
 	require.NoError(t, err)
 	require.Equal(t, requestedPollWait, client.pollTimeout)
@@ -3010,4 +3099,44 @@ func generateControlPlaneSignedClientCertificate(t *testing.T, caCert *x509.Cert
 		t.Fatalf("write client key: %v", err)
 	}
 	return clientPair, clientCertPath, clientKeyPath
+}
+
+func TestControlPlaneRichHeaderPrivacySuppressesBothRawDirections(t *testing.T) {
+	t.Parallel()
+	const requestSecret = "synthetic-rich-request-secret"
+	const responseSecret = "synthetic-rich-response-secret"
+	for _, suppress := range []bool{false, true} {
+		t.Run(strconv.FormatBool(suppress), func(t *testing.T) {
+			t.Parallel()
+			server := newHTTPTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				body, err := io.ReadAll(r.Body)
+				require.NoError(t, err)
+				require.Contains(t, string(body), requestSecret)
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(`{"nested_result":"` + responseSecret + `"}`))
+			}))
+			var logs bytes.Buffer
+			logger := slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
+			transport, err := buildControlPlaneHTTPTransport(&config.ControlPlaneConfig{
+				BaseURL: mustParseURL(t, server.URL), TunnelID: types.TunnelID("cli-tunnel"), APIKey: "runtime-key",
+				SuppressRawHTTPLogging: suppress,
+			}, nil, logger, &config.LoggingConfig{HTTPRawUnsafe: true}, testMeterProvider)
+			require.NoError(t, err)
+			req, err := http.NewRequest(http.MethodPost, server.URL+"/v1/tunnels/cli-tunnel/response", strings.NewReader(`{"headers":{"Authorization":"Bearer `+requestSecret+`"}}`))
+			require.NoError(t, err)
+			response, err := transport.RoundTrip(req)
+			require.NoError(t, err)
+			defer func() { require.NoError(t, response.Body.Close()) }()
+			body, err := io.ReadAll(response.Body)
+			require.NoError(t, err)
+			require.Contains(t, string(body), responseSecret)
+			for _, marker := range []string{requestSecret, responseSecret, "raw http request", "raw http response"} {
+				if suppress {
+					require.NotContains(t, logs.String(), marker)
+				} else {
+					require.Contains(t, logs.String(), marker, "legacy unsafe logging must remain unchanged")
+				}
+			}
+		})
+	}
 }

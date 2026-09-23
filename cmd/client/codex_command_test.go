@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -18,6 +19,7 @@ import (
 )
 
 func TestCodexCommandHelperProcess(t *testing.T) {
+	t.Parallel()
 	if os.Getenv("GO_WANT_CODEX_HELPER") != "1" {
 		return
 	}
@@ -91,6 +93,8 @@ func TestCodexCommandHelperProcess(t *testing.T) {
 }
 
 func TestCodexStatusJSONReportsBridgeAndPluginState(t *testing.T) {
+	t.Parallel()
+
 	codexHome := t.TempDir()
 	fakeTunnelClient := filepath.Join(t.TempDir(), "tunnel-client")
 	require.NoError(t, os.WriteFile(fakeTunnelClient, []byte("#!/bin/sh\nexit 0\n"), 0o755))
@@ -100,9 +104,8 @@ func TestCodexStatusJSONReportsBridgeAndPluginState(t *testing.T) {
 	require.NoError(t, err)
 
 	codexBin := writeFakeCodexScript(t)
-	t.Setenv("PATH", filepath.Dir(codexBin)+string(os.PathListSeparator)+os.Getenv("PATH"))
 
-	stdout, stderr, err := executeCommand(t, map[string]string{
+	stdout, stderr, err := executeCommandWithCodex(t, codexBin, map[string]string{
 		"CODEX_HOME": codexHome,
 		"HOME":       t.TempDir(),
 	}, "codex", "status", "--json")
@@ -122,6 +125,8 @@ func TestCodexStatusJSONReportsBridgeAndPluginState(t *testing.T) {
 }
 
 func TestCodexStatusJSONReportsMarketplaceInstallAndStaleConfig(t *testing.T) {
+	t.Parallel()
+
 	codexHome := t.TempDir()
 	pluginDir := writeMarketplacePluginFixture(t, codexHome, "example-marketplace", false)
 	config := `[plugins."tunnel-mcp@example-marketplace"]
@@ -133,9 +138,8 @@ enabled = true
 	require.NoError(t, os.WriteFile(filepath.Join(codexHome, "config.toml"), []byte(config), 0o644))
 
 	codexBin := writeFakeCodexScript(t)
-	t.Setenv("PATH", filepath.Dir(codexBin)+string(os.PathListSeparator)+os.Getenv("PATH"))
 
-	stdout, stderr, err := executeCommand(t, map[string]string{
+	stdout, stderr, err := executeCommandWithCodex(t, codexBin, map[string]string{
 		"CODEX_HOME": codexHome,
 		"HOME":       t.TempDir(),
 	}, "codex", "status", "--json")
@@ -153,6 +157,8 @@ enabled = true
 }
 
 func TestCodexDiagnoseJSONReportsPluginStateAndBridgeSeparately(t *testing.T) {
+	t.Parallel()
+
 	codexHome := t.TempDir()
 	pluginDir := writeMarketplacePluginFixture(t, codexHome, "example-marketplace", false)
 	config := `[plugins."tunnel-mcp@example-marketplace"]
@@ -161,11 +167,10 @@ enabled = true
 	require.NoError(t, os.WriteFile(filepath.Join(codexHome, "config.toml"), []byte(config), 0o644))
 
 	codexBin := writeFakeCodexScript(t)
-	t.Setenv("PATH", filepath.Dir(codexBin)+string(os.PathListSeparator)+os.Getenv("PATH"))
 	stateRoot := filepath.Join(t.TempDir(), "state")
 	profileDir := filepath.Join(t.TempDir(), "profiles")
 
-	stdout, stderr, err := executeCommand(t, map[string]string{
+	stdout, stderr, err := executeCommandWithCodex(t, codexBin, map[string]string{
 		"CODEX_HOME":                codexHome,
 		"HOME":                      t.TempDir(),
 		"TUNNEL_CLIENT_STATE_DIR":   stateRoot,
@@ -186,6 +191,8 @@ enabled = true
 }
 
 func TestCodexStatusTextLabelsPluginStateAsOnDisk(t *testing.T) {
+	t.Parallel()
+
 	codexHome := t.TempDir()
 	fakeTunnelClient := filepath.Join(t.TempDir(), "tunnel-client")
 	require.NoError(t, os.WriteFile(fakeTunnelClient, []byte("#!/bin/sh\nexit 0\n"), 0o755))
@@ -195,9 +202,8 @@ func TestCodexStatusTextLabelsPluginStateAsOnDisk(t *testing.T) {
 	require.NoError(t, err)
 
 	codexBin := writeFakeCodexScript(t)
-	t.Setenv("PATH", filepath.Dir(codexBin)+string(os.PathListSeparator)+os.Getenv("PATH"))
 
-	stdout, stderr, err := executeCommand(t, map[string]string{
+	stdout, stderr, err := executeCommandWithCodex(t, codexBin, map[string]string{
 		"CODEX_HOME": codexHome,
 		"HOME":       t.TempDir(),
 	}, "codex", "status")
@@ -212,12 +218,13 @@ func TestCodexStatusTextLabelsPluginStateAsOnDisk(t *testing.T) {
 }
 
 func TestCodexStatusTextClarifiesReadyCodexWithMissingOnDiskPlugin(t *testing.T) {
+	t.Parallel()
+
 	codexHome := t.TempDir()
 
 	codexBin := writeFakeCodexScript(t)
-	t.Setenv("PATH", filepath.Dir(codexBin)+string(os.PathListSeparator)+os.Getenv("PATH"))
 
-	stdout, stderr, err := executeCommand(t, map[string]string{
+	stdout, stderr, err := executeCommandWithCodex(t, codexBin, map[string]string{
 		"CODEX_HOME": codexHome,
 		"HOME":       t.TempDir(),
 	}, "codex", "status")
@@ -228,6 +235,8 @@ func TestCodexStatusTextClarifiesReadyCodexWithMissingOnDiskPlugin(t *testing.T)
 }
 
 func TestCodexStatusTextSeparatesPluginStateAfterUninstall(t *testing.T) {
+	t.Parallel()
+
 	codexHome := t.TempDir()
 	fakeTunnelClient := filepath.Join(t.TempDir(), "tunnel-client")
 	require.NoError(t, os.WriteFile(fakeTunnelClient, []byte("#!/bin/sh\nexit 0\n"), 0o755))
@@ -235,7 +244,6 @@ func TestCodexStatusTextSeparatesPluginStateAfterUninstall(t *testing.T) {
 	require.NoError(t, err)
 
 	codexBin := writeFakeCodexScript(t)
-	t.Setenv("PATH", filepath.Dir(codexBin)+string(os.PathListSeparator)+os.Getenv("PATH"))
 
 	stdout, stderr, err := executeCommand(t, map[string]string{
 		"CODEX_HOME": codexHome,
@@ -244,7 +252,7 @@ func TestCodexStatusTextSeparatesPluginStateAfterUninstall(t *testing.T) {
 	require.NoError(t, err, stderr)
 	require.Contains(t, stdout, "Removed on-disk tunnel-mcp plugin bundle")
 
-	stdout, stderr, err = executeCommand(t, map[string]string{
+	stdout, stderr, err = executeCommandWithCodex(t, codexBin, map[string]string{
 		"CODEX_HOME": codexHome,
 		"HOME":       t.TempDir(),
 	}, "codex", "status")
@@ -259,36 +267,35 @@ func TestCodexStatusTextSeparatesPluginStateAfterUninstall(t *testing.T) {
 }
 
 func TestCodexStatusJSONReportsBridgeReadyWhenAssistantProbeStalls(t *testing.T) {
-	originalTimeout := codexStatusAssistantProbeTimeout
-	codexStatusAssistantProbeTimeout = 50 * time.Millisecond
-	t.Cleanup(func() {
-		codexStatusAssistantProbeTimeout = originalTimeout
-	})
-	t.Setenv("GO_WANT_CODEX_STALL_THREAD_START", "1")
+	t.Parallel()
 
-	codexBin := writeFakeCodexScript(t)
-	t.Setenv("PATH", filepath.Dir(codexBin)+string(os.PathListSeparator)+os.Getenv("PATH"))
+	codexBin := writeFakeCodexScript(t, "GO_WANT_CODEX_STALL_THREAD_START=1")
 
-	stdout, stderr, err := executeCommand(t, map[string]string{
+	stdout, stderr, err := executeCommandWithCodexTimeouts(t, codexBin, map[string]string{
 		"HOME": t.TempDir(),
-	}, "codex", "status", "--json")
+	}, codexCommandTimeouts{statusAssistantProbe: 50 * time.Millisecond}, "codex", "status", "--json")
 
 	require.NoError(t, err, stderr)
 	require.Contains(t, stdout, `"state": "bridge_ready"`)
 	require.Contains(t, stdout, `"bridge_ready": true`)
 	require.Contains(t, stdout, `"assistant_state": "unavailable"`)
 	require.Regexp(t, `"assistant_error": "thread/start timed out after [0-9]+ms`, stdout)
-	require.Contains(t, stdout, `recent stderr: thread/start is stuck`)
+	// The stderr reader is asynchronous; process/ready is published before
+	// the probe starts. Bridge tests verify inclusion of captured stderr.
+	require.Contains(t, stdout, `recent bridge events: process/ready codex app-server ready`)
 }
 
 func TestCodexInstallPrefersHostDefaultWhenMultipleInstallersAreAvailable(t *testing.T) {
+	t.Parallel()
+
 	binDir := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(binDir, "brew"), []byte("#!/bin/sh\nexit 0\n"), 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(binDir, "npm"), []byte("#!/bin/sh\nexit 0\n"), 0o755))
-	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 
 	var stdout bytes.Buffer
-	root := newRootCommand(func(string) (string, bool) { return "", false }, &stdout, &bytes.Buffer{})
+	root := newRootCommandWithLookPath(func(string) (string, bool) { return "", false }, &stdout, &bytes.Buffer{}, func(name string) (string, error) {
+		return exec.LookPath(filepath.Join(binDir, name))
+	})
 	root.SetArgs([]string{"codex", "install"})
 	require.NoError(t, root.Execute())
 
@@ -302,11 +309,13 @@ func TestCodexInstallPrefersHostDefaultWhenMultipleInstallersAreAvailable(t *tes
 }
 
 func TestCodexAssistantRunsPromptArgument(t *testing.T) {
+	t.Parallel()
+
 	codexBin := writeFakeCodexScript(t)
-	t.Setenv("PATH", filepath.Dir(codexBin)+string(os.PathListSeparator)+os.Getenv("PATH"))
 
 	stdout, stderr, err := executeCommand(t, map[string]string{
-		"HOME": t.TempDir(),
+		"HOME":                               t.TempDir(),
+		"TUNNEL_CLIENT_CODEX_APP_SERVER_CMD": codexBin,
 	}, "codex", "assistant", "describe", "the", "tunnel")
 
 	require.NoError(t, err, stderr)
@@ -316,11 +325,13 @@ func TestCodexAssistantRunsPromptArgument(t *testing.T) {
 }
 
 func TestCodexAssistantReadsPromptFromStdin(t *testing.T) {
+	t.Parallel()
+
 	codexBin := writeFakeCodexScript(t)
-	t.Setenv("PATH", filepath.Dir(codexBin)+string(os.PathListSeparator)+os.Getenv("PATH"))
 
 	stdout, stderr, err := executeCommandWithInput(t, map[string]string{
-		"HOME": t.TempDir(),
+		"HOME":                               t.TempDir(),
+		"TUNNEL_CLIENT_CODEX_APP_SERVER_CMD": codexBin,
 	}, "stdin prompt for codex\n", "codex", "assistant")
 
 	require.NoError(t, err, stderr)
@@ -330,19 +341,13 @@ func TestCodexAssistantReadsPromptFromStdin(t *testing.T) {
 }
 
 func TestCodexAssistantReportsTurnStallDiagnostics(t *testing.T) {
-	originalTimeout := codexAssistantTurnIdleTimeout
-	codexAssistantTurnIdleTimeout = 50 * time.Millisecond
-	t.Cleanup(func() {
-		codexAssistantTurnIdleTimeout = originalTimeout
-	})
-	t.Setenv("GO_WANT_CODEX_STALL_AFTER_TURN_START", "1")
+	t.Parallel()
 
-	codexBin := writeFakeCodexScript(t)
-	t.Setenv("PATH", filepath.Dir(codexBin)+string(os.PathListSeparator)+os.Getenv("PATH"))
+	codexBin := writeFakeCodexScript(t, "GO_WANT_CODEX_STALL_AFTER_TURN_START=1")
 
-	_, stderr, err := executeCommand(t, map[string]string{
+	_, stderr, err := executeCommandWithCodexTimeouts(t, codexBin, map[string]string{
 		"HOME": t.TempDir(),
-	}, "codex", "assistant", "describe", "the", "tunnel")
+	}, codexCommandTimeouts{assistantTurnIdle: 50 * time.Millisecond}, "codex", "assistant", "describe", "the", "tunnel")
 
 	require.Error(t, err)
 	require.Contains(t, stderr, "waiting for response")
@@ -352,14 +357,15 @@ func TestCodexAssistantReportsTurnStallDiagnostics(t *testing.T) {
 }
 
 func TestCodexAssistantUsesManagedCompatibleTurnDefaults(t *testing.T) {
-	capturePath := filepath.Join(t.TempDir(), "turn_start.json")
-	t.Setenv("GO_WANT_CODEX_TURN_START_CAPTURE", capturePath)
+	t.Parallel()
 
-	codexBin := writeFakeCodexScript(t)
-	t.Setenv("PATH", filepath.Dir(codexBin)+string(os.PathListSeparator)+os.Getenv("PATH"))
+	capturePath := filepath.Join(t.TempDir(), "turn_start.json")
+
+	codexBin := writeFakeCodexScript(t, "GO_WANT_CODEX_TURN_START_CAPTURE="+capturePath)
 
 	_, stderr, err := executeCommand(t, map[string]string{
-		"HOME": t.TempDir(),
+		"HOME":                               t.TempDir(),
+		"TUNNEL_CLIENT_CODEX_APP_SERVER_CMD": codexBin,
 	}, "codex", "assistant", "describe", "the", "tunnel")
 
 	require.NoError(t, err, stderr)
@@ -370,14 +376,15 @@ func TestCodexAssistantUsesManagedCompatibleTurnDefaults(t *testing.T) {
 }
 
 func TestCodexAssistantInjectsPackagedKnowledgeWhenRepoDocsMayBeAbsent(t *testing.T) {
-	capturePath := filepath.Join(t.TempDir(), "inject_items.json")
-	t.Setenv("GO_WANT_CODEX_INJECT_CAPTURE", capturePath)
+	t.Parallel()
 
-	codexBin := writeFakeCodexScript(t)
-	t.Setenv("PATH", filepath.Dir(codexBin)+string(os.PathListSeparator)+os.Getenv("PATH"))
+	capturePath := filepath.Join(t.TempDir(), "inject_items.json")
+
+	codexBin := writeFakeCodexScript(t, "GO_WANT_CODEX_INJECT_CAPTURE="+capturePath)
 
 	_, stderr, err := executeCommand(t, map[string]string{
-		"HOME": t.TempDir(),
+		"HOME":                               t.TempDir(),
+		"TUNNEL_CLIENT_CODEX_APP_SERVER_CMD": codexBin,
 	}, "codex", "assistant", "--cwd", "/tmp", "How", "do", "I", "connect", "this", "tunnel", "to", "ChatGPT?")
 
 	require.NoError(t, err, stderr)
@@ -409,15 +416,16 @@ func TestCodexAssistantInjectsPackagedKnowledgeWhenRepoDocsMayBeAbsent(t *testin
 }
 
 func TestCodexAssistantInjectsBundledPluginReferences(t *testing.T) {
-	capturePath := filepath.Join(t.TempDir(), "inject_items.json")
-	t.Setenv("GO_WANT_CODEX_INJECT_CAPTURE", capturePath)
+	t.Parallel()
 
-	codexBin := writeFakeCodexScript(t)
-	t.Setenv("PATH", filepath.Dir(codexBin)+string(os.PathListSeparator)+os.Getenv("PATH"))
+	capturePath := filepath.Join(t.TempDir(), "inject_items.json")
+
+	codexBin := writeFakeCodexScript(t, "GO_WANT_CODEX_INJECT_CAPTURE="+capturePath)
 
 	prompt := "How do I install the codex plugin and set up tunnel-client from the binary?"
 	_, stderr, err := executeCommand(t, map[string]string{
-		"HOME": t.TempDir(),
+		"HOME":                               t.TempDir(),
+		"TUNNEL_CLIENT_CODEX_APP_SERVER_CMD": codexBin,
 	}, "codex", "assistant", "--cwd", "/tmp", "How", "do", "I", "install", "the", "codex", "plugin", "and", "set", "up", "tunnel-client", "from", "the", "binary?")
 
 	require.NoError(t, err, stderr)
@@ -447,15 +455,16 @@ func TestCodexAssistantInjectsBundledPluginReferences(t *testing.T) {
 }
 
 func TestCodexAssistantInjectsBundledBinaryAcquisitionGuidance(t *testing.T) {
-	capturePath := filepath.Join(t.TempDir(), "inject_items.json")
-	t.Setenv("GO_WANT_CODEX_INJECT_CAPTURE", capturePath)
+	t.Parallel()
 
-	codexBin := writeFakeCodexScript(t)
-	t.Setenv("PATH", filepath.Dir(codexBin)+string(os.PathListSeparator)+os.Getenv("PATH"))
+	capturePath := filepath.Join(t.TempDir(), "inject_items.json")
+
+	codexBin := writeFakeCodexScript(t, "GO_WANT_CODEX_INJECT_CAPTURE="+capturePath)
 
 	prompt := "The tunnel-mcp plugin is installed but tunnel-client is missing. How do I download and install the binary?"
 	_, stderr, err := executeCommand(t, map[string]string{
-		"HOME": t.TempDir(),
+		"HOME":                               t.TempDir(),
+		"TUNNEL_CLIENT_CODEX_APP_SERVER_CMD": codexBin,
 	}, "codex", "assistant", "--cwd", "/tmp", "The", "tunnel-mcp", "plugin", "is", "installed", "but", "tunnel-client", "is", "missing.", "How", "do", "I", "download", "and", "install", "the", "binary?")
 
 	require.NoError(t, err, stderr)
@@ -495,6 +504,7 @@ func TestCodexAssistantInjectsBundledBinaryAcquisitionGuidance(t *testing.T) {
 }
 
 func TestCodexHelpIncludesAssistantSubcommand(t *testing.T) {
+	t.Parallel()
 	var stdout bytes.Buffer
 	root := newRootCommand(func(string) (string, bool) { return "", false }, &stdout, &bytes.Buffer{})
 	root.SetArgs([]string{"codex", "--help"})
@@ -505,6 +515,7 @@ func TestCodexHelpIncludesAssistantSubcommand(t *testing.T) {
 }
 
 func TestCodexPluginCommandInstallAndLegacyAliasBothWork(t *testing.T) {
+	t.Parallel()
 	codexHome := t.TempDir()
 
 	stdout, stderr, err := executeCommand(t, map[string]string{
@@ -525,42 +536,50 @@ func TestCodexPluginCommandInstallAndLegacyAliasBothWork(t *testing.T) {
 }
 
 func TestAssistantWorkingDirectoryPrefersNestedTunnelClientWorkspace(t *testing.T) {
+	t.Parallel()
+
 	monorepoRoot := t.TempDir()
 	workspace := filepath.Join(monorepoRoot, "api", "tunnel-client")
 	require.NoError(t, os.MkdirAll(filepath.Join(workspace, "cmd", "client"), 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(workspace, "go.mod"), []byte("module example.com/tunnel-client\n"), 0o644))
 
-	t.Setenv("BUILD_WORKING_DIRECTORY", monorepoRoot)
-	require.Equal(t, workspace, assistantWorkingDirectory(""))
+	require.Equal(t, workspace, assistantWorkingDirectoryWithLookupEnv("", lookupEnvMap(map[string]string{
+		"BUILD_WORKING_DIRECTORY": monorepoRoot,
+	})))
 }
 
 func TestAssistantWorkingDirectoryPrefersStandaloneTunnelClientWorkspace(t *testing.T) {
+	t.Parallel()
+
 	workspace := t.TempDir()
 	require.NoError(t, os.MkdirAll(filepath.Join(workspace, "cmd", "client"), 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(workspace, "go.mod"), []byte("module example.com/tunnel-client\n"), 0o644))
 
-	t.Setenv("BUILD_WORKING_DIRECTORY", workspace)
-	require.Equal(t, workspace, assistantWorkingDirectory(""))
+	require.Equal(t, workspace, assistantWorkingDirectoryWithLookupEnv("", lookupEnvMap(map[string]string{
+		"BUILD_WORKING_DIRECTORY": workspace,
+	})))
 }
 
 func TestAssistantWorkingDirectoryRespectsExplicitOverride(t *testing.T) {
+	t.Parallel()
 	require.Equal(t, "/tmp/custom-cwd", assistantWorkingDirectory("/tmp/custom-cwd"))
 }
 
 func TestCodexAssistantUsesStandaloneWorkspaceAsThreadCWD(t *testing.T) {
+	t.Parallel()
+
 	workspace := t.TempDir()
 	require.NoError(t, os.MkdirAll(filepath.Join(workspace, "cmd", "client"), 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(workspace, "go.mod"), []byte("module example.com/tunnel-client\n"), 0o644))
 
 	capturePath := filepath.Join(t.TempDir(), "thread_start.json")
-	t.Setenv("BUILD_WORKING_DIRECTORY", workspace)
-	t.Setenv("GO_WANT_CODEX_THREAD_START_CAPTURE", capturePath)
 
-	codexBin := writeFakeCodexScript(t)
-	t.Setenv("PATH", filepath.Dir(codexBin)+string(os.PathListSeparator)+os.Getenv("PATH"))
+	codexBin := writeFakeCodexScript(t, "GO_WANT_CODEX_THREAD_START_CAPTURE="+capturePath)
 
 	stdout, stderr, err := executeCommand(t, map[string]string{
-		"HOME": t.TempDir(),
+		"HOME":                               t.TempDir(),
+		"TUNNEL_CLIENT_CODEX_APP_SERVER_CMD": codexBin,
+		"BUILD_WORKING_DIRECTORY":            workspace,
 	}, "codex", "assistant", "describe", "the", "workspace")
 
 	require.NoError(t, err, stderr)
@@ -574,6 +593,7 @@ func TestCodexAssistantUsesStandaloneWorkspaceAsThreadCWD(t *testing.T) {
 }
 
 func TestBuildCodexCLIDeveloperInstructionsNarrowsScopeToTunnelClient(t *testing.T) {
+	t.Parallel()
 	instructions := buildCodexCLIDeveloperInstructions("/workspace/api/tunnel-client", "")
 
 	require.Contains(t, instructions, "Treat the request as being about tunnel-client")
@@ -582,6 +602,7 @@ func TestBuildCodexCLIDeveloperInstructionsNarrowsScopeToTunnelClient(t *testing
 }
 
 func TestHandleCodexAssistantSlashCommandShowsAndUpdatesModelSettings(t *testing.T) {
+	t.Parallel()
 	options := codexAssistantOptions{Effort: defaultCodexAssistantEffort}
 	var stderr bytes.Buffer
 
@@ -607,6 +628,7 @@ func TestHandleCodexAssistantSlashCommandShowsAndUpdatesModelSettings(t *testing
 }
 
 func TestHandleCodexAssistantSlashCommandRejectsUnknownReasoning(t *testing.T) {
+	t.Parallel()
 	options := codexAssistantOptions{Effort: defaultCodexAssistantEffort}
 	var stderr bytes.Buffer
 
@@ -615,8 +637,40 @@ func TestHandleCodexAssistantSlashCommandRejectsUnknownReasoning(t *testing.T) {
 	require.EqualError(t, err, `unknown reasoning "turbo"; expected one of: low, medium, high`)
 }
 
-func writeFakeCodexScript(t *testing.T) string {
+func executeCommandWithCodex(t *testing.T, codexBin string, env map[string]string, args ...string) (string, string, error) {
 	t.Helper()
+	return executeCommandWithCodexTimeouts(t, codexBin, env, codexCommandTimeouts{}, args...)
+}
+
+func executeCommandWithCodexTimeouts(t *testing.T, codexBin string, env map[string]string, timeouts codexCommandTimeouts, args ...string) (string, string, error) {
+	t.Helper()
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	root := newRootCommandWithCodexTimeouts(func(key string) (string, bool) {
+		if key == "TUNNEL_CLIENT_CODEX_APP_SERVER_CMD" {
+			return codexBin, true
+		}
+		value, ok := env[key]
+		return value, ok
+	}, &stdout, &stderr, func(name string) (string, error) {
+		if name == "codex" {
+			return exec.LookPath(codexBin)
+		}
+		return exec.LookPath(name)
+	}, timeouts)
+	root.SetArgs(args)
+	err := root.Execute()
+	return stdout.String(), stderr.String(), err
+}
+
+func writeFakeCodexScript(t *testing.T, env ...string) string {
+	t.Helper()
+	var assignments strings.Builder
+	for _, entry := range env {
+		key, value, ok := strings.Cut(entry, "=")
+		require.True(t, ok, "invalid helper environment entry: %q", entry)
+		fmt.Fprintf(&assignments, "%s=%s ", key, shellSingleQuote(value))
+	}
 	scriptPath := filepath.Join(t.TempDir(), "codex")
 	script := fmt.Sprintf(`#!/bin/sh
 set -eu
@@ -630,14 +684,14 @@ case "${1:-}" in
       echo "usage: codex app-server"
       exit 0
     fi
-    GO_WANT_CODEX_HELPER=1 exec %q -test.run=TestCodexCommandHelperProcess --
+    %sGO_WANT_CODEX_HELPER=1 exec %s -test.run=TestCodexCommandHelperProcess --
     ;;
   *)
     echo "unexpected codex args: $*" >&2
     exit 1
     ;;
 esac
-`, os.Args[0])
+`, assignments.String(), shellSingleQuote(os.Args[0]))
 	require.NoError(t, os.WriteFile(scriptPath, []byte(script), 0o755))
 	return scriptPath
 }

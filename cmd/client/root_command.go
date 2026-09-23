@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"io"
+	"os/exec"
 
 	"github.com/spf13/cobra"
 
@@ -11,6 +12,17 @@ import (
 )
 
 func newRootCommand(lookupEnv func(string) (string, bool), stdout io.Writer, stderr io.Writer) *cobra.Command {
+	return newRootCommandWithLookPath(lookupEnv, stdout, stderr, exec.LookPath)
+}
+
+func newRootCommandWithLookPath(lookupEnv func(string) (string, bool), stdout io.Writer, stderr io.Writer, lookPath func(string) (string, error)) *cobra.Command {
+	return newRootCommandWithCodexTimeouts(lookupEnv, stdout, stderr, lookPath, codexCommandTimeouts{})
+}
+
+func newRootCommandWithCodexTimeouts(lookupEnv func(string) (string, bool), stdout io.Writer, stderr io.Writer, lookPath func(string) (string, error), timeouts codexCommandTimeouts) *cobra.Command {
+	if lookPath == nil {
+		lookPath = exec.LookPath
+	}
 	rootCmd := &cobra.Command{
 		Use:           "tunnel-client",
 		Short:         "Tunnel client for the OpenAI MCP control plane",
@@ -30,7 +42,7 @@ func newRootCommand(lookupEnv func(string) (string, bool), stdout io.Writer, std
 	rootCmd.AddCommand(newRunCommand(lookupEnv))
 	rootCmd.AddCommand(newCloudflaredCommand(stdout, stderr))
 	rootCmd.AddCommand(newDevCommand(stdout, stderr))
-	rootCmd.AddCommand(newCodexCommand(lookupEnv, stdout, stderr))
+	rootCmd.AddCommand(newCodexCommand(lookupEnv, stdout, stderr, lookPath, timeouts))
 	rootCmd.AddCommand(newProfilesCommand(lookupEnv, stdout, stderr))
 	rootCmd.AddCommand(newAdminProfilesCommand(lookupEnv, stdout, stderr))
 	rootCmd.AddCommand(newRuntimesCommand(lookupEnv, stdout, stderr))

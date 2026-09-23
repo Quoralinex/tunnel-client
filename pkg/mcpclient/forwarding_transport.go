@@ -59,26 +59,26 @@ type ResponseDeadlineRetiringConnection interface {
 	RetireResponseDeadline() bool
 }
 
-// ForwardingWriteResult is the downstream HTTP result observed while writing
-// an MCP message.
+// ForwardingWriteResult is the result of forwarding an MCP message, including
+// a local lifecycle rejection before the message reaches the server.
 type ForwardingWriteResult struct {
 	StatusCode      int
 	ResponseHeaders http.Header
 	PreservedError  *PreservedMCPError
 }
 
-// PreservedMCPError is a recognized target-owned JSON-RPC error response. Its
+// PreservedMCPError is a recognized JSON-RPC error response. Its
 // payload stays opaque so exact code, message, data, and future fields survive
-// the tunnel unchanged.
+// the tunnel unchanged. Locally generated lifecycle errors identify their origin
+// in the error data.
 type PreservedMCPError struct {
 	payload []byte
 	code    int64
 }
 
-// NewPreservedMCPError constructs an opaque preserved response. Normal runtime
-// callers receive these only after forwardingConnection validates the target
-// JSON-RPC response; the constructor also supports alternate ForwardingConnection
-// implementations and focused dispatcher tests.
+// NewPreservedMCPError constructs an opaque response after validating a target
+// JSON-RPC error or generating a local lifecycle error. It also supports alternate
+// ForwardingConnection implementations and focused dispatcher tests.
 func NewPreservedMCPError(payload []byte, code int64) *PreservedMCPError {
 	return &PreservedMCPError{
 		payload: append([]byte(nil), payload...),
@@ -86,7 +86,7 @@ func NewPreservedMCPError(payload []byte, code int64) *PreservedMCPError {
 	}
 }
 
-// Payload returns a defensive copy of the exact target JSON-RPC payload.
+// Payload returns a defensive copy of the exact JSON-RPC payload.
 func (e *PreservedMCPError) Payload() []byte {
 	if e == nil {
 		return nil

@@ -13,6 +13,8 @@ import (
 )
 
 func TestBridgeSupportsLoginThreadAndTurn(t *testing.T) {
+	t.Parallel()
+
 	bridge := newMockBridge(t)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -75,6 +77,8 @@ func TestBridgeSupportsLoginThreadAndTurn(t *testing.T) {
 }
 
 func TestBridgeStartThreadTimeoutIncludesRecentDiagnostics(t *testing.T) {
+	t.Parallel()
+
 	bridge := NewBridge(nil, nil)
 	bridge.mu.Lock()
 	bridge.ready = true
@@ -101,6 +105,8 @@ func TestBridgeStartThreadTimeoutIncludesRecentDiagnostics(t *testing.T) {
 }
 
 func TestBridgeStartTurnTimeoutIncludesRecentDiagnostics(t *testing.T) {
+	t.Parallel()
+
 	bridge := NewBridge(nil, nil)
 	bridge.mu.Lock()
 	bridge.ready = true

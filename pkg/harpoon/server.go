@@ -21,6 +21,8 @@ import (
 
 const fullInstructions = "Harpoon provides a constrained outbound HTTP client. Use list_targets to see allowlisted targets and call_target to make GET/POST/PUT requests with strict size, timeout, and redirect limits. get_oauth_target_audience is a narrow opt-in lookup for OAuth token-endpoint private_key_jwt audiences. Harpoon cannot reach arbitrary hosts or paths outside the configured allowlist."
 
+const fullTemplateInstructions = "Harpoon provides a constrained outbound HTTP client. Use list_targets to see allowlisted targets. For exact targets, use call_target to make GET/POST/PUT requests with strict size, timeout, and redirect limits. For entries with template_version and parameters_schema, use call_target without method, with the label and all parameters declared by parameters_schema; each value must satisfy that schema. Use the discovered invocation.input_schema for all arguments, including the required operation constant on every write. Templates use an operator-fixed GET, POST, or PUT method and destination. GET is bodyless; writes enforce the advertised body policy. Templates do not follow redirects or automatically replay writes. get_oauth_target_audience is a narrow opt-in lookup for OAuth token-endpoint private_key_jwt audiences. Harpoon cannot reach arbitrary hosts or paths outside the configured allowlist."
+
 // Server is the full-client adapter over the dependency-clean runtime core.
 // It adds only the admin call receipt and OAuth audience capabilities that are
 // intentionally absent from the customer runtime binaries.
@@ -80,9 +82,16 @@ func NewServer(cfg *config.HarpoonConfig, registry *Registry, buffer *CallBuffer
 		cfg:        cfg,
 		callBuffer: buffer,
 	}
+	instructions := fullInstructions
+	for _, target := range registry.Targets() {
+		if target.IsTemplate() {
+			instructions = fullTemplateInstructions
+			break
+		}
+	}
 	coreOpts := append([]runtimeharpoon.ServerOption(nil), opts...)
 	coreOpts = append(coreOpts,
-		runtimeharpoon.WithInstructions(fullInstructions),
+		runtimeharpoon.WithInstructions(instructions),
 		runtimeharpoon.WithToolRegistrar(server.registerOAuthAudienceTool),
 		runtimeharpoon.WithCallObserver(server.recordCall),
 	)
@@ -145,8 +154,7 @@ func (s *Server) oauthTargetAudienceHandler() mcp.ToolHandlerFor[map[string]any,
 		}
 		resp, err := s.getOAuthTargetAudience(params)
 		if err != nil {
-			var toolErr *audienceToolError
-			if errors.As(err, &toolErr) {
+			if toolErr, ok := errors.AsType[*audienceToolError](err); ok {
 				return audienceToolErrorResult(toolErr.label, toolErr.message), nil, nil
 			}
 			return audienceToolErrorResult(params.Label, "failed to resolve audience"), nil, nil
